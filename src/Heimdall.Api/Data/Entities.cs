@@ -40,12 +40,53 @@ public class Machine
     public double? HardwareDiskGb { get; set; }
     public string? HardwareBrand { get; set; }
     public string? HardwareModel { get; set; }
+    /// <summary>Preferred display / asset serial (hostname-derived when BIOS is generic).</summary>
     public string? HardwareSerialNumber { get; set; }
+    /// <summary>Raw BIOS serial when distinct from asset serial.</summary>
+    public string? BiosSerial { get; set; }
+    /// <summary>Serial parsed from hostname (city + DT/LT + remainder).</summary>
+    public string? AssetSerial { get; set; }
+    public string? HostnameCityCode { get; set; }
+    /// <summary>DT = desktop, LT = laptop when present in hostname.</summary>
+    public string? HostnameChassisHint { get; set; }
     /// <summary>When true, agent heartbeat must not overwrite hardware inventory fields.</summary>
     public bool HardwareManualOverride { get; set; }
+    /// <summary>PSU rated wattage — manual only; not available via WMI.</summary>
+    public int? PsuWatts { get; set; }
+    /// <summary>Optional live draw stub — agent does not measure desktops reliably; leave null.</summary>
+    public int? PowerDrawWatts { get; set; }
+    /// <summary>Optional $/hr for ops. support sessions (POC cost context).</summary>
+    public decimal? SupportHourlyRate { get; set; }
+    /// <summary>WMI/registry OS install date — often moves on Windows feature update.</summary>
+    public DateTimeOffset? OsInstallDateUtc { get; set; }
+    /// <summary>Creation time of %SystemRoot% — often closer to original image.</summary>
+    public DateTimeOffset? WindowsFolderCreatedUtc { get; set; }
+    /// <summary>HKLM Cryptography MachineGuid — changes on OS reimage.</summary>
+    public string? MachineGuid { get; set; }
+    /// <summary>SMBIOS UUID — hardware; usually survives reimage.</summary>
+    public string? SmbiosUuid { get; set; }
+    /// <summary>Most recent reimage detection (MachineGuid change for same hostname).</summary>
+    public DateTimeOffset? LastReimagedUtc { get; set; }
 
     public List<UserSession> Sessions { get; set; } = [];
     public List<ProcessRun> ProcessRuns { get; set; } = [];
+    public List<MachineIdentityEvent> IdentityEvents { get; set; } = [];
+}
+
+/// <summary>POC identity history: reimage / MachineGuid change for a hostname.</summary>
+public class MachineIdentityEvent
+{
+    public int Id { get; set; }
+    public int MachineId { get; set; }
+    public Machine Machine { get; set; } = null!;
+    /// <summary>Reimaged | GuidChanged | FirstSeen</summary>
+    public required string EventType { get; set; }
+    public string? OldMachineGuid { get; set; }
+    public string? NewMachineGuid { get; set; }
+    public string? OldSmbiosUuid { get; set; }
+    public string? NewSmbiosUuid { get; set; }
+    public DateTimeOffset ObservedAtUtc { get; set; }
+    public string? Detail { get; set; }
 }
 
 public enum AppAnalysisStatus

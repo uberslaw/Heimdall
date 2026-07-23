@@ -1,31 +1,53 @@
+using System.Globalization;
 using System.Management;
 using System.Runtime.Versioning;
+using Heimdall.Shared;
+using Microsoft.Win32;
 
 namespace Heimdall.Agent.Collectors;
 
 /// <summary>
-/// Best-effort WMI hardware inventory for Cost page enrichment.
+/// Best-effort WMI / registry hardware inventory for Cost page enrichment.
 /// Call on a slow cadence (config refresh / daily), not every sample.
+/// PSU rated wattage and live power draw are NOT available via WMI for desktops — enter PsuWatts manually on Cost.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class HardwareInventoryCollector
 {
     public sealed record Snapshot(
-        string? SerialNumber,
+        string? BiosSerial,
+        string? AssetSerial,
+        string? PreferredSerial,
         string? Brand,
         string? Model,
         string? Cpu,
         double? RamGb,
         double? DiskGb,
-        string? Gpu);
+        string? Gpu,
+        string? HostnameCityCode,
+        string? HostnameChassisHint,
+        string? MachineGuid,
+        string? SmbiosUuid,
+        DateTimeOffset? OsInstallDateUtc,
+        DateTimeOffset? WindowsFolderCreatedUtc);
 
-    public static Snapshot? TryCollect()
+    public static Snapshot? TryCollect(string hostname, string? hostnameSerialPattern = null)
     {
         try
         {
-            var serial = FirstNonEmpty(
+            var rawBios = FirstRaw(
                 QueryFirst("SELECT SerialNumber FROM Win32_BIOS", "SerialNumber"),
                 QueryFirst("SELECT IdentifyingNumber FROM Win32_ComputerSystemProduct", "IdentifyingNumber"));
+
+            var biosSerial = Clean(rawBios);
+            if (HostnameSerialParser.IsGenericBiosSerial(biosSerial))
+                biosSerial = null;
+
+            var hostParse = HostnameSerialParser.Parse(hostname, hostnameSerialPattern);
+            var preferred = HostnameSerialParser.PreferAssetSerial(
+                biosSerial ?? rawBios,
+                hostParse.AssetSerial,
+                hostParse.Matched);
 
             var brand = QueryFirst("SELECT Manufacturer FROM Win32_ComputerSystem", "Manufacturer");
             var model = QueryFirst("SELECT Model FROM Win32_ComputerSystem", "Model");
@@ -33,15 +55,138 @@ public static class HardwareInventoryCollector
             var ramGb = TryRamGb();
             var diskGb = TryDiskGb();
             var gpu = TryGpuNames();
+            var machineGuid = TryMachineGuid();
+            var smbiosUuid = Clean(QueryFirst("SELECT UUID FROM Win32_ComputerSystemProduct", "UUID"));
+            if (IsPlaceholderSmbiosUuid(smbiosUuid))
+                smbiosUuid = null;
+
+            var osInstall = TryOsInstallDateUtc();
+            var winFolder = TryWindowsFolderCreatedUtc();
 
             return new Snapshot(
-                Clean(serial),
+                biosSerial,
+                hostParse.AssetSerial,
+                preferred,
                 Clean(brand),
                 Clean(model),
                 Clean(cpu),
                 ramGb,
                 diskGb,
-                Clean(gpu));
+                Clean(gpu),
+                hostParse.CityCode,
+                hostParse.ChassisHint,
+                machineGuid,
+                smbiosUuid,
+                osInstall,
+                winFolder);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool IsPlaceholderSmbiosUuid(string? uuid)
+    {
+        if (string.IsNullOrWhiteSpace(uuid))
+            return true;
+        var u = uuid.Trim();
+        return u.Equals("00000000-0000-0000-0000-000000000000", StringComparison.OrdinalIgnoreCase)
+               || u.Equals("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? TryMachineGuid()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Cryptography");
+            var value = key?.GetValue("MachineGuid")?.ToString();
+            return Clean(value);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static DateTimeOffset? TryOsInstallDateUtc()
+    {
+        // WMI InstallDate often resets on feature updates — store separately from Windows folder created.
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT InstallDate FROM Win32_OperatingSystem");
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                var raw = obj["InstallDate"]?.ToString();
+                var parsed = ParseCimDateTime(raw);
+                if (parsed is not null)
+                    return parsed;
+            }
+        }
+        catch
+        {
+            // fall through to registry
+        }
+
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
+            var install = key?.GetValue("InstallDate");
+            if (install is int unix)
+                return DateTimeOffset.FromUnixTimeSeconds(unix);
+            if (install is long unixL)
+                return DateTimeOffset.FromUnixTimeSeconds(unixL);
+            if (install is not null && long.TryParse(install.ToString(), out var p))
+                return DateTimeOffset.FromUnixTimeSeconds(p);
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return null;
+    }
+
+    private static DateTimeOffset? TryWindowsFolderCreatedUtc()
+    {
+        try
+        {
+            var root = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                return null;
+            var created = Directory.GetCreationTimeUtc(root);
+            if (created.Year < 1990)
+                return null;
+            return new DateTimeOffset(DateTime.SpecifyKind(created, DateTimeKind.Utc));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Parse WMI CIM_DATETIME (yyyyMMddHHmmss.ffffff±UUU).</summary>
+    private static DateTimeOffset? ParseCimDateTime(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || raw.Length < 14)
+            return null;
+
+        try
+        {
+            var dt = ManagementDateTimeConverter.ToDateTime(raw);
+            return new DateTimeOffset(dt.ToUniversalTime());
+        }
+        catch
+        {
+            // Manual fallback
+        }
+
+        try
+        {
+            if (!DateTime.TryParseExact(raw[..14], "yyyyMMddHHmmss", CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeLocal, out var local))
+                return null;
+            return new DateTimeOffset(local.ToUniversalTime());
         }
         catch
         {
@@ -78,7 +223,6 @@ public static class HardwareInventoryCollector
     {
         try
         {
-            // Prefer physical disks; fall back to fixed logical drives
             ulong total = 0;
             using (var searcher = new ManagementObjectSearcher("SELECT Size FROM Win32_DiskDrive WHERE MediaType IS NOT NULL"))
             {
@@ -125,7 +269,6 @@ public static class HardwareInventoryCollector
             {
                 var name = Clean(obj["Name"]?.ToString());
                 if (name is null) continue;
-                // Skip generic Microsoft Basic / Remote Desktop adapters when real GPU exists
                 if (name.Contains("Microsoft Basic", StringComparison.OrdinalIgnoreCase) ||
                     name.Contains("Remote Desktop", StringComparison.OrdinalIgnoreCase))
                     continue;
@@ -164,16 +307,12 @@ public static class HardwareInventoryCollector
         return null;
     }
 
-    private static string? FirstNonEmpty(params string?[] values)
+    private static string? FirstRaw(params string?[] values)
     {
         foreach (var v in values)
         {
-            if (!string.IsNullOrWhiteSpace(v) &&
-                !v.Equals("To Be Filled By O.E.M.", StringComparison.OrdinalIgnoreCase) &&
-                !v.Equals("Default string", StringComparison.OrdinalIgnoreCase) &&
-                !v.Equals("None", StringComparison.OrdinalIgnoreCase) &&
-                !v.Equals("System Serial Number", StringComparison.OrdinalIgnoreCase))
-                return v;
+            if (!string.IsNullOrWhiteSpace(v))
+                return v.Trim();
         }
 
         return null;
@@ -187,4 +326,3 @@ public static class HardwareInventoryCollector
         return t.Length == 0 ? null : t;
     }
 }
-

@@ -38,7 +38,7 @@ public sealed class Worker(
         _queue = new OfflineQueue(queuePath);
 
         logger.LogInformation("Heimdall agent starting on {Hostname}", hostname);
-        RefreshHardware(force: true);
+        RefreshHardware(hostname, force: true);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -58,7 +58,7 @@ public sealed class Worker(
                 }
                 _nextConfigRefresh = now.AddSeconds(Math.Max(60, _config.ConfigRefreshSeconds));
                 // Re-scan hardware on config refresh cadence (not every sample)
-                RefreshHardware(force: false);
+                RefreshHardware(hostname, force: false);
             }
 
             if (now >= _nextSample)
@@ -96,7 +96,7 @@ public sealed class Worker(
     }
 
     [SupportedOSPlatform("windows")]
-    private void RefreshHardware(bool force)
+    private void RefreshHardware(string hostname, bool force)
     {
         var now = DateTimeOffset.UtcNow;
         if (!force && now < _nextHardwareRefresh)
@@ -104,11 +104,14 @@ public sealed class Worker(
 
         try
         {
-            _hardware = HardwareInventoryCollector.TryCollect();
+            var pattern = configuration["Heimdall:HostnameSerialPattern"];
+            _hardware = HardwareInventoryCollector.TryCollect(hostname, pattern);
             if (_hardware is not null)
                 logger.LogInformation(
-                    "Hardware inventory: {Brand} {Model} serial={Serial} CPU={Cpu} RAM={Ram}GB disk={Disk}GB GPU={Gpu}",
-                    _hardware.Brand, _hardware.Model, _hardware.SerialNumber,
+                    "Hardware inventory: {Brand} {Model} asset={Asset} bios={Bios} city={City} chassis={Chassis} guid={Guid} uuid={Uuid} CPU={Cpu} RAM={Ram}GB disk={Disk}GB GPU={Gpu}",
+                    _hardware.Brand, _hardware.Model, _hardware.AssetSerial, _hardware.BiosSerial,
+                    _hardware.HostnameCityCode, _hardware.HostnameChassisHint,
+                    _hardware.MachineGuid, _hardware.SmbiosUuid,
                     _hardware.Cpu, _hardware.RamGb, _hardware.DiskGb, _hardware.Gpu);
         }
         catch (Exception ex)
@@ -160,13 +163,21 @@ public sealed class Worker(
                 IsInUse = _sessions.ActiveCount > 0,
                 ActiveSessionCount = _sessions.ActiveCount,
                 AgentVersion = "0.1.0",
-                HardwareSerialNumber = hw?.SerialNumber,
+                HardwareSerialNumber = hw?.PreferredSerial,
                 HardwareBrand = hw?.Brand,
                 HardwareModel = hw?.Model,
                 HardwareCpu = hw?.Cpu,
                 HardwareRamGb = hw?.RamGb,
                 HardwareDiskGb = hw?.DiskGb,
-                HardwareGpu = hw?.Gpu
+                HardwareGpu = hw?.Gpu,
+                BiosSerial = hw?.BiosSerial,
+                AssetSerial = hw?.AssetSerial,
+                HostnameCityCode = hw?.HostnameCityCode,
+                HostnameChassisHint = hw?.HostnameChassisHint,
+                MachineGuid = hw?.MachineGuid,
+                SmbiosUuid = hw?.SmbiosUuid,
+                OsInstallDateUtc = hw?.OsInstallDateUtc,
+                WindowsFolderCreatedUtc = hw?.WindowsFolderCreatedUtc
             },
             Sessions = sessions,
             ProcessRuns = processes,

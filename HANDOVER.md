@@ -1,8 +1,8 @@
 # Heimdall handover
 
 **Audience:** a fresh Cursor agent (or human) with **no prior chat history**.  
-**Date of this handover:** 2026-07-23  
-**Purpose:** continue POC work tomorrow on another computer without losing product intent, paths, or gotchas.
+**Date of this handover:** 2026-07-24  
+**Purpose:** continue POC work on another computer without losing product intent, paths, or gotchas.
 
 ---
 
@@ -14,9 +14,9 @@
 | **GitHub** | https://github.com/uberslaw/Heimdall |
 | Older / stale copy (do not treat as source of truth) | `C:\Users\christopher.owen\Arup\Heimdall` |
 
-**Always open the Cursor path** (`C:\Users\christopher.owen\Cursor\Heimdall`), or `git clone` / RepoSync from GitHub. Chat workspaces may still point at the Arup folder — that copy has historically been incomplete (e.g. no commits / older tree). Prefer Cursor\Heimdall.
+**Always open the Cursor path** (`C:\Users\christopher.owen\Cursor\Heimdall`), or `git clone` / RepoSync from GitHub. Chat workspaces may still point at the Arup folder — that copy has historically been incomplete. Prefer Cursor\Heimdall.
 
-User typically syncs with **RepoSync**, not necessarily GitHub Desktop.
+User typically syncs with **RepoSync**, not necessarily GitHub Desktop. **Feature work lands on `origin/main`** for cross-machine continuity.
 
 ---
 
@@ -26,18 +26,18 @@ POC **workstation usage tracker** to justify modelling / remote machine cost ver
 
 Three pieces:
 
-1. **Agent** — Windows Service that collects sessions, processes, heartbeats (and hardware inventory where implemented)
+1. **Agent** — Windows Service that collects sessions, processes, heartbeats, hardware inventory, OS install signals, MachineGuid / SMBIOS UUID
 2. **ASP.NET Core Razor Pages API + dashboard** — ingest, config, analytics UI
 3. **SQLite** — POC database (zero SQL Server install)
 
-Goal: clearer session + app utilisation than CADFX, with server-side config and minimal agent overhead.
+Goal: clearer session + app utilisation than CADFX, with **hardware purchase cost** and support-time context — not just app license $/yr.
 
 ---
 
 ## Stack
 
 | Piece | Tech |
-|-------|------|
+|------|------|
 | Runtime / SDK | **.NET 10** |
 | Agent | .NET 10 **Windows Service** |
 | API + dashboard | ASP.NET Core **Razor Pages** |
@@ -55,8 +55,8 @@ Live repo: https://github.com/uberslaw/Heimdall
 ```
 src/Heimdall.Agent    Windows service collector
 src/Heimdall.Api      Ingest API + Razor dashboard
-src/Heimdall.Shared   DTOs / contracts
-scripts/              Installers, diagnostics, repair tools
+src/Heimdall.Shared   DTOs / contracts / hostname serial + ops. helpers
+scripts/              Installers, diagnostics, SOE inspect, repair tools
 docs/BACKLOG.md       Parked product ideas (Flight Recorder, etc.)
 INSTALL.md            Full install / verify / troubleshoot guide
 HANDOVER.md           This file
@@ -104,11 +104,15 @@ scripts\Install-Agent.cmd
 scripts\Collect-Diagnostics.cmd
 ```
 
-Output under `%LOCALAPPDATA%\Heimdall\` (e.g. `diagnostics-*.zip`).
+### SOE golden-image program list
+
+```text
+scripts\Inspect-SoeInstalledPrograms.cmd
+```
+
+CSV + log under `%LOCALAPPDATA%\Heimdall\`. Review → Config SOE excludes / Autogenerate. See [INSTALL.md](INSTALL.md).
 
 ### Repair mojibake session usernames
-
-If old session rows show garbled Windows account names:
 
 ```powershell
 .\scripts\Repair-SessionMojibake.ps1
@@ -126,23 +130,31 @@ Dashboard nav (on `main`): Machines | Sessions | Applications | App lists | Cost
 
 | Area | What it does |
 |------|----------------|
-| **Machines** | Fleet view; **utilisation period** selectable **1 day → 1 year** (`?range=…`; default often 7d). Avg util / per-machine % for that window. |
-| **Sessions** | Local vs RDP logons; start/end; active vs disconnected; Team column when mapped. |
-| **Apps / Track Software** | Allowlisted / known / discovered / custom titles; scoped tracking (Region → Office → Machine tree). |
-| **App lists + Analyze** | App lists with **approval-gated Analyze** (all / selected / team list). **No silent auto-track.** |
-| **Config** | Scoped sampling / upload intervals, CPU floor, known apps, include/exclude, **SOE autogenerate**, **Browse…**, **Pause**, **metric threshold policies** (high RAM / GPU / disk) by All / Region / Office / Group / Machine. Agents refresh config ~every 5 minutes via `GET /api/config/{hostname}`. |
-| **Teams** | CSV upload (+ manual CRUD); map Windows usernames → teams. Template on Teams page / `/templates/heimdall-teams-template.csv`. |
-| **Stats** | Scoped analytics: logons, durations, app time/CPU rankings, RDP disconnected time, day-of-week patterns. GPU/disk columns wait on agent samples. |
-| **Socratize** | Per-machine retrospective cost-justification Q&A from collected data (default ~30 days). **Flight Recorder** teaser parked (not built). |
-| **Utilization** | Utilisation weights / related util configuration UI. |
-| **Cost** | Purchase / warranty / hardware inventory; **WMI serial & hardware autodetection** fills blanks; manual edit wins. Dell/HP **warranty API** not wired (official APIs later — no scraping). |
-| **Metric thresholds** | Defined in Config, delivered to agents; collection of some metrics still stubbed on agent. |
+| **Machines** | Fleet view; utilisation period; **Reimaged** badge when MachineGuid changed |
+| **Sessions** | Local vs RDP logons; start/end; active vs disconnected; Team column when mapped |
+| **Apps / Track Software** | Allowlisted / known / discovered / custom titles; scoped tracking |
+| **App lists + Analyze** | Approval-gated Analyze — **no silent auto-track** |
+| **Config** | Sampling, known apps, SOE autogenerate, metric thresholds, pause |
+| **Teams** | CSV upload + CRUD; username → team |
+| **Stats** | Scoped analytics (logons, apps, RDP disconnected, patterns) |
+| **Socratize** | Per-machine cost-justification Q&A from collected data |
+| **Utilization** | Utilisation weights; **app license $/yr** (secondary to hardware cost) |
+| **Cost** | **Hardware purchase cost** focus; user vs **`ops.` support hours** (30d); optional SupportHourlyRate; WMI hardware autodetection + manual; **PSU watts manual only**; BIOS vs hostname asset serial; OS install + Windows folder created dates; reimage identity history |
+| **Metric thresholds** | Config → agents; some metric sampling still stubbed |
 
-### Critical: GitHub `main` as of 2026-07-23 (post-push)
+### Hardware / identity (2026-07-24)
 
-Cost, Utilization, App lists, hardware inventory collector, mojibake encoding helper, repair script, scoped Config sampling, Socratize table work, and related API/agent/Shared edits are **committed and pushed to `origin/main`**.
-
-**On another PC:** `git pull` / RepoSync from https://github.com/uberslaw/Heimdall, then open this file. Spot-check Cost / App lists / Utilization / `scripts/Repair-SessionMojibake.ps1` if anything looks stale.
+| Signal | Auto (agent) | Manual | Notes |
+|--------|--------------|--------|-------|
+| Brand, Model, CPU, GPU, RAM, Disk | Yes (WMI) | Yes | Manual override blocks agent fills |
+| Serial | BIOS + **hostname parse** | Yes | Pattern: 3-letter city + optional DT/LT + serial (`BNEDT…`). Config: `Heimdall:HostnameSerialPattern`. Prefer hostname when BIOS is OEM placeholder. BIOS kept separately |
+| **PSU rated W** | No | Yes (`PsuWatts`) | Not in WMI |
+| **Power draw W** | No | Stub field only | NVML/RAPL vendor-specific — **not reliable via agent** |
+| OS install date | WMI/registry | — | May move on feature update |
+| Windows folder created | `%SystemRoot%` created | — | Often closer to original image |
+| MachineGuid | Registry | — | Changes on **reimage** |
+| SmbiosUuid | WMI | — | Usually survives reimage |
+| Support hours | From sessions | Rate optional | Username `ops.*` / domain `OPS` |
 
 ---
 
@@ -150,47 +162,45 @@ Cost, Utilization, App lists, hardware inventory collector, mojibake encoding he
 
 | Topic | Detail |
 |-------|--------|
-| **Mojibake usernames** | Encoding fix shipped in agent/Shared; **restart agent**. Repair historical DB rows with `scripts\Repair-SessionMojibake.ps1`. |
-| **RDP vs local** | Classification is by **protocol**. RDP-to-self still counts as **RDP**. |
-| **Browse…** | Browser-local file picker; typically **basename only** (not a full server-side path browser). |
-| **GPU / disk samples** | Thresholds exist; agent sampling often still stubbed → Stats GPU/disk rankings empty until populated. |
-| **Flight Recorder / Deep Observe** | Named + teased on Socratize; **backlog / not built**. |
-| **Dell / HP warranty API** | Cost page + hardware autodetection; **official APIs later**. Do **not** scrape vendor sites. |
-| **Process open / duration** | Times can look **huge** if duration is derived from `StartTime` of long-lived processes — verify/fix if still inflated. |
-| **SQLite + `DateTimeOffset`** | Prefer **filter/order in memory** where EF/SQLite translation is unreliable. |
-| **Wrong folder** | Cursor chat may open **Arup\Heimdall** — use **`C:\Users\christopher.owen\Cursor\Heimdall`**. |
-| **POC auth** | API key only; dashboard is trusted-LAN / POC, not production identity. |
+| **Mojibake usernames** | Encoding fix shipped; **restart agent**. Repair DB with `scripts\Repair-SessionMojibake.ps1`. |
+| **RDP vs local** | Classification by **protocol**. RDP-to-self still **RDP**. |
+| **PSU / power draw** | Rated wattage = manual. Live draw = **not** collected (impossible reliably for desktops via agent POC). |
+| **OS InstallDate** | Feature updates often rewrite WMI/registry InstallDate — show both signals on Cost. |
+| **GPU / disk samples** | Thresholds exist; agent sampling often still stubbed. |
+| **Dell / HP warranty API** | Not wired — official APIs later; **no scraping**. |
+| **SQLite + DateTimeOffset** | Prefer filter/order in memory where EF translation is unreliable. |
+| **Wrong folder** | Use **`C:\Users\christopher.owen\Cursor\Heimdall`**, not Arup. |
+| **POC auth** | API key only; trusted-LAN / POC. |
 
 ---
 
 ## Product decisions / naming to keep
 
-1. **Socratize** = retrospective interrogation of *already collected* data for **one machine** (cost-justification brief). Keep the name.
-2. **Flight Recorder / Deep Observe** = future **high-cardinality capture** while a watched process runs (e.g. `tuflow.exe` + network context), ring buffer → later AI / incident analysis. **Do not lose the name**; it is **not** the same as today’s Socratize. See [docs/BACKLOG.md](docs/BACKLOG.md).
-3. **App analysis requires approval** (all / selected / team list) — **never** silently auto-track new software.
-4. **No scraping HP/Dell** for warranty — use **official APIs** when keys/access exist.
+1. **Socratize** = retrospective interrogation of *already collected* data for **one machine**.
+2. **Flight Recorder / Deep Observe** = future high-cardinality capture — **backlog / not built**. See [docs/BACKLOG.md](docs/BACKLOG.md).
+3. **App analysis requires approval** — never silently auto-track.
+4. **No scraping HP/Dell** for warranty.
+5. **Hardware cost** is the primary Cost-page story; app license $/yr lives on Utilization.
 
 ---
 
-## Suggested next steps for tomorrow
+## Suggested next steps
 
-1. **Clone/pull on target PC** via RepoSync or `git clone https://github.com/uberslaw/Heimdall.git` — prefer path under Cursor or document the clone location.
-2. **Install API + agent** on candidate machines (`scripts\Install-Api.cmd` / `Install-Agent.cmd`); use `Collect-Diagnostics.cmd` if anything fails.
-3. **Confirm `origin/main` is current** after pull (`git status`, spot-check Cost / App lists / Utilization / `scripts/Repair-SessionMojibake.ps1`). Feature work from the Cursor tree was pushed 2026-07-23.
-4. If keys available: **wire Dell warranty API**; spike **Flight Recorder**; **fix process duration** if still inflated from long-lived `StartTime`.
-5. **Demo vs CADFX** with real collected data (sessions, util period, Socratize brief, tracked apps).
+1. Pull / RepoSync `origin/main` on the next PC; open Cursor\Heimdall.
+2. Redeploy API + agent so new heartbeat fields (Guid, OS dates, hostname serial) populate.
+3. Run `Inspect-SoeInstalledPrograms` on a golden image; feed SOE excludes.
+4. If keys available: Dell warranty API; Flight Recorder spike; fix inflated process durations if still an issue.
+5. Demo vs CADFX with real purchase cost + support hours + Socratize.
 
 ---
 
 ## For the next Cursor agent
 
-- Open folder **`C:\Users\christopher.owen\Cursor\Heimdall`**, or clone from https://github.com/uberslaw/Heimdall
-- Read **HANDOVER.md** → **INSTALL.md** → **docs/BACKLOG.md** before coding
-- Prefer **multitask / background agents** for large changes
-- User uses **RepoSync**; do not assume GitHub Desktop
+- Open **`C:\Users\christopher.owen\Cursor\Heimdall`** (or clone from GitHub)
+- Read **HANDOVER.md** → **INSTALL.md** → **docs/BACKLOG.md**
+- User wants **commit + push to `origin/main`** for cross-machine continuity when finishing a slice
 - Never update git config; no force-push; do not commit secrets
-- Preserve product names: **Socratize**, **Flight Recorder / Deep Observe**
-- Approval-gated Analyze; no HP/Dell scraping
+- Preserve names: **Socratize**, **Flight Recorder / Deep Observe**
 
 ---
 
@@ -209,6 +219,7 @@ dotnet run
 .\scripts\Install-Api.cmd
 .\scripts\Install-Agent.cmd
 .\scripts\Collect-Diagnostics.cmd
+.\scripts\Inspect-SoeInstalledPrograms.cmd
 
 # Mojibake repair
 .\scripts\Repair-SessionMojibake.ps1

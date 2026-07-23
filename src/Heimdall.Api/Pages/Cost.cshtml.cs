@@ -1,4 +1,5 @@
 using Heimdall.Api.Data;
+using Heimdall.Shared;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
@@ -8,10 +9,14 @@ namespace Heimdall.Api.Pages;
 public class CostModel(HeimdallDbContext db) : PageModel
 {
     public IReadOnlyList<CostRow> Rows { get; private set; } = [];
+    public IReadOnlyList<IdentityEventRow> IdentityHistory { get; private set; } = [];
     public int ActiveWarrantyCount { get; private set; }
     public int ExpiredWarrantyCount { get; private set; }
     public int UnknownWarrantyCount { get; private set; }
     public decimal? TotalPurchaseCost { get; private set; }
+    public double TotalUserHours30d { get; private set; }
+    public double TotalSupportHours30d { get; private set; }
+    public int ReimagedCount { get; private set; }
 
     [BindProperty]
     public int? EditingMachineId { get; set; }
@@ -48,6 +53,18 @@ public class CostModel(HeimdallDbContext db) : PageModel
 
     [BindProperty]
     public string? HardwareSerialNumber { get; set; }
+
+    [BindProperty]
+    public string? BiosSerial { get; set; }
+
+    [BindProperty]
+    public string? AssetSerial { get; set; }
+
+    [BindProperty]
+    public int? PsuWatts { get; set; }
+
+    [BindProperty]
+    public decimal? SupportHourlyRate { get; set; }
 
     [BindProperty]
     public bool HardwareManualOverride { get; set; } = true;
@@ -93,6 +110,10 @@ public class CostModel(HeimdallDbContext db) : PageModel
         machine.HardwareBrand = NullIfEmpty(HardwareBrand);
         machine.HardwareModel = NullIfEmpty(HardwareModel);
         machine.HardwareSerialNumber = NullIfEmpty(HardwareSerialNumber);
+        machine.BiosSerial = NullIfEmpty(BiosSerial);
+        machine.AssetSerial = NullIfEmpty(AssetSerial);
+        machine.PsuWatts = PsuWatts;
+        machine.SupportHourlyRate = SupportHourlyRate;
         // Saving from Cost UI opts into manual override so agent won't clobber
         machine.HardwareManualOverride = HardwareManualOverride;
 
@@ -133,8 +154,25 @@ public class CostModel(HeimdallDbContext db) : PageModel
         HardwareBrand = m.HardwareBrand;
         HardwareModel = m.HardwareModel;
         HardwareSerialNumber = m.HardwareSerialNumber;
+        BiosSerial = m.BiosSerial;
+        AssetSerial = m.AssetSerial;
+        PsuWatts = m.PsuWatts;
+        SupportHourlyRate = m.SupportHourlyRate;
         // Default checked so a Cost-page save protects agent-reported blanks unless cleared
         HardwareManualOverride = true;
+
+        IdentityHistory = (await db.MachineIdentityEvents.AsNoTracking()
+                .Where(e => e.MachineId == id)
+                .OrderByDescending(e => e.ObservedAtUtc)
+                .Take(20)
+                .ToListAsync())
+            .Select(e => new IdentityEventRow(
+                e.EventType,
+                e.ObservedAtUtc,
+                e.OldMachineGuid,
+                e.NewMachineGuid,
+                e.Detail))
+            .ToList();
     }
 
     private async Task LoadAsync()
@@ -151,14 +189,33 @@ public class CostModel(HeimdallDbContext db) : PageModel
         foreach (var m in machines)
         {
             var status = ResolveWarranty(m.WarrantyStartDate, m.WarrantyEndDate, today);
-            var activeSeconds = sessions.Where(s => s.MachineId == m.Id).Sum(s => s.ActiveSeconds);
-            decimal? costPerHour = null;
-            if (m.PurchaseCost is > 0 && activeSeconds > 0)
+            var machineSessions = sessions.Where(s => s.MachineId == m.Id).ToList();
+            long userSeconds = 0;
+            long supportSeconds = 0;
+            foreach (var s in machineSessions)
             {
-                var hours = activeSeconds / 3600.0m;
-                if (hours > 0)
-                    costPerHour = Math.Round(m.PurchaseCost.Value / hours, 2);
+                if (SupportAccount.IsOpsSupport(s.Username, s.Domain))
+                    supportSeconds += s.ActiveSeconds;
+                else
+                    userSeconds += s.ActiveSeconds;
             }
+
+            var totalActive = userSeconds + supportSeconds;
+            decimal? costPerUserHour = null;
+            if (m.PurchaseCost is > 0 && userSeconds > 0)
+            {
+                var hours = userSeconds / 3600.0m;
+                if (hours > 0)
+                    costPerUserHour = Math.Round(m.PurchaseCost.Value / hours, 2);
+            }
+
+            decimal? supportCostEstimate = null;
+            if (m.SupportHourlyRate is > 0 && supportSeconds > 0)
+                supportCostEstimate = Math.Round(m.SupportHourlyRate.Value * (supportSeconds / 3600.0m), 2);
+
+            double? userToSupportRatio = null;
+            if (supportSeconds > 0)
+                userToSupportRatio = Math.Round(userSeconds / (double)supportSeconds, 2);
 
             rows.Add(new CostRow(
                 m.Id,
@@ -173,13 +230,28 @@ public class CostModel(HeimdallDbContext db) : PageModel
                 m.HardwareBrand,
                 m.HardwareModel,
                 m.HardwareSerialNumber,
+                m.BiosSerial,
+                m.AssetSerial,
+                m.HostnameCityCode,
+                m.HostnameChassisHint,
                 m.HardwareCpu,
                 m.HardwareRamGb,
                 m.HardwareDiskGb,
                 m.HardwareGpu,
+                m.PsuWatts,
+                m.SupportHourlyRate,
                 m.HardwareManualOverride,
-                activeSeconds,
-                costPerHour));
+                userSeconds,
+                supportSeconds,
+                totalActive,
+                costPerUserHour,
+                supportCostEstimate,
+                userToSupportRatio,
+                m.OsInstallDateUtc,
+                m.WindowsFolderCreatedUtc,
+                m.LastReimagedUtc,
+                m.MachineGuid,
+                m.SmbiosUuid));
         }
 
         if (!string.IsNullOrWhiteSpace(Q))
@@ -190,6 +262,8 @@ public class CostModel(HeimdallDbContext db) : PageModel
                 (r.Brand?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
                 (r.Model?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
                 (r.SerialNumber?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (r.AssetSerial?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (r.BiosSerial?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
                 (r.Cpu?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
                 (r.Gpu?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
         }
@@ -206,6 +280,9 @@ public class CostModel(HeimdallDbContext db) : PageModel
         ExpiredWarrantyCount = rows.Count(r => r.WarrantyStatus == "Expired");
         UnknownWarrantyCount = rows.Count(r => r.WarrantyStatus == "Unknown");
         TotalPurchaseCost = rows.Where(r => r.PurchaseCost is not null).Sum(r => r.PurchaseCost!.Value);
+        TotalUserHours30d = Math.Round(rows.Sum(r => r.UserSeconds30d) / 3600.0, 1);
+        TotalSupportHours30d = Math.Round(rows.Sum(r => r.SupportSeconds30d) / 3600.0, 1);
+        ReimagedCount = rows.Count(r => r.LastReimagedUtc is not null);
     }
 
     public static string ResolveWarranty(DateOnly? start, DateOnly? end, DateOnly today)
@@ -228,6 +305,13 @@ public class CostModel(HeimdallDbContext db) : PageModel
     private static string? NullIfEmpty(string? s) =>
         string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
+    public sealed record IdentityEventRow(
+        string EventType,
+        DateTimeOffset ObservedAtUtc,
+        string? OldMachineGuid,
+        string? NewMachineGuid,
+        string? Detail);
+
     public sealed record CostRow(
         int Id,
         string Hostname,
@@ -241,12 +325,26 @@ public class CostModel(HeimdallDbContext db) : PageModel
         string? Brand,
         string? Model,
         string? SerialNumber,
+        string? BiosSerial,
+        string? AssetSerial,
+        string? CityCode,
+        string? ChassisHint,
         string? Cpu,
         double? RamGb,
         double? DiskGb,
         string? Gpu,
+        int? PsuWatts,
+        decimal? SupportHourlyRate,
         bool ManualOverride,
+        long UserSeconds30d,
+        long SupportSeconds30d,
         long ActiveSeconds30d,
-        decimal? CostPerActiveHour);
+        decimal? CostPerUserHour,
+        decimal? SupportCostEstimate,
+        double? UserToSupportRatio,
+        DateTimeOffset? OsInstallDateUtc,
+        DateTimeOffset? WindowsFolderCreatedUtc,
+        DateTimeOffset? LastReimagedUtc,
+        string? MachineGuid,
+        string? SmbiosUuid);
 }
-

@@ -74,7 +74,8 @@ public class IndexModel(HeimdallDbContext db) : PageModel
                 lastUser?.SessionType,
                 machineSessions.Count(s => s.State != SessionState.Ended),
                 m.AppAnalysisStatus,
-                m.PendingAppAnalysis
+                m.PendingAppAnalysis,
+                m.LastReimagedUtc
             ));
         }
 
@@ -102,5 +103,6 @@ public class IndexModel(HeimdallDbContext db) : PageModel
         SessionType? LastSessionType,
         int OpenSessions,
         AppAnalysisStatus AnalysisStatus,
-        bool PendingAppAnalysis);
+        bool PendingAppAnalysis,
+        DateTimeOffset? LastReimagedUtc);
 }

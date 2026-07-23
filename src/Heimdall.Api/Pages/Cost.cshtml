@@ -6,7 +6,9 @@
 }
 
 <h1 class="hd-title">Cost</h1>
-<p class="hd-sub">Purchase cost, warranty &amp; hardware inventory · agent autodetection fills blanks · manual edit wins</p>
+<p class="hd-sub">
+    Hardware purchase cost · user vs <code>ops.</code> support hours · inventory · reimage identity
+</p>
 
 @if (TempData["Message"] is string msg)
 {
@@ -23,16 +25,24 @@
         <div class="value">@Model.Rows.Count</div>
     </div>
     <div class="hd-stat">
+        <div class="label">Purchase total</div>
+        <div class="value">@(Model.TotalPurchaseCost is null ? "—" : Model.TotalPurchaseCost.Value.ToString("N0"))</div>
+    </div>
+    <div class="hd-stat">
+        <div class="label">User hours (30d)</div>
+        <div class="value">@Model.TotalUserHours30d.ToString("0.#")</div>
+    </div>
+    <div class="hd-stat">
+        <div class="label">Support hours (30d)</div>
+        <div class="value">@Model.TotalSupportHours30d.ToString("0.#")</div>
+    </div>
+    <div class="hd-stat">
         <div class="label">Warranty active</div>
         <div class="value">@Model.ActiveWarrantyCount</div>
     </div>
     <div class="hd-stat">
-        <div class="label">Expired</div>
-        <div class="value">@Model.ExpiredWarrantyCount</div>
-    </div>
-    <div class="hd-stat">
-        <div class="label">Purchase total</div>
-        <div class="value">@(Model.TotalPurchaseCost is null ? "—" : Model.TotalPurchaseCost.Value.ToString("N0"))</div>
+        <div class="label">Reimaged</div>
+        <div class="value">@Model.ReimagedCount</div>
     </div>
 </div>
 
@@ -69,6 +79,7 @@
                 <h2 class="h5 mb-1">Edit · @(editing?.Hostname ?? $"#{Model.EditingMachineId}")</h2>
                 <p class="text-secondary small mb-0">
                     Agent fills empty hardware fields on heartbeat unless manual override is on.
+                    Hostname serial pattern: 3-letter city + optional DT/LT + serial (e.g. <code>BNEDTABC123</code>) — configurable via <code>Heimdall:HostnameSerialPattern</code>.
                 </p>
             </div>
             <a class="btn btn-ghost btn-sm" asp-page="/Cost" asp-route-q="@Model.Q" asp-route-warranty="@Model.Warranty">Cancel</a>
@@ -76,7 +87,7 @@
 
         <div class="row g-3">
             <div class="col-md-3">
-                <label class="form-label">Purchase cost</label>
+                <label class="form-label">Purchase cost (hardware)</label>
                 <input class="form-control" asp-for="PurchaseCost" type="number" step="0.01" min="0" placeholder="e.g. 4200" />
             </div>
             <div class="col-md-2">
@@ -84,10 +95,15 @@
                 <input class="form-control" asp-for="PurchaseCurrency" maxlength="8" placeholder="AUD" />
             </div>
             <div class="col-md-3">
+                <label class="form-label">Support rate ($/hr)</label>
+                <input class="form-control" asp-for="SupportHourlyRate" type="number" step="0.01" min="0" placeholder="optional" />
+                <div class="form-text">Applied to <code>ops.</code> sessions · optional</div>
+            </div>
+            <div class="col-md-2">
                 <label class="form-label">Warranty start</label>
                 <input class="form-control" asp-for="WarrantyStartDate" type="date" />
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <label class="form-label">Warranty end</label>
                 <input class="form-control" asp-for="WarrantyEndDate" type="date" />
             </div>
@@ -105,14 +121,23 @@
                 <input class="form-control" asp-for="HardwareModel" />
             </div>
             <div class="col-md-3">
-                <label class="form-label">Serial number</label>
+                <label class="form-label">Asset serial (display)</label>
                 <input class="form-control" asp-for="HardwareSerialNumber" />
+                <div class="form-text">Prefers hostname serial when BIOS is generic</div>
             </div>
             <div class="col-md-3">
                 <label class="form-label">GPU</label>
                 <input class="form-control" asp-for="HardwareGpu" />
             </div>
-            <div class="col-md-5">
+            <div class="col-md-3">
+                <label class="form-label">BIOS serial</label>
+                <input class="form-control" asp-for="BiosSerial" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Hostname serial</label>
+                <input class="form-control" asp-for="AssetSerial" />
+            </div>
+            <div class="col-md-4">
                 <label class="form-label">CPU</label>
                 <input class="form-control" asp-for="HardwareCpu" />
             </div>
@@ -124,13 +149,47 @@
                 <label class="form-label">Disk (GB)</label>
                 <input class="form-control" asp-for="HardwareDiskGb" type="number" step="1" min="0" />
             </div>
-            <div class="col-md-3 d-flex align-items-end">
+            <div class="col-md-2">
+                <label class="form-label">PSU (W)</label>
+                <input class="form-control" asp-for="PsuWatts" type="number" step="1" min="0" placeholder="manual" />
+                <div class="form-text">Rated wattage only — draw not measurable via agent</div>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
                 <div class="form-check mb-2">
                     <input class="form-check-input" asp-for="HardwareManualOverride" />
                     <label class="form-check-label" asp-for="HardwareManualOverride">Manual override (block agent)</label>
                 </div>
             </div>
         </div>
+
+        @if (editing is not null)
+        {
+            <div class="row g-3 mt-1 small text-secondary">
+                <div class="col-md-4">
+                    <strong>OS install (WMI/registry)</strong><br />
+                    @(editing.OsInstallDateUtc?.ToString("u") ?? "—")
+                    <div class="form-text">May move on Windows feature update</div>
+                </div>
+                <div class="col-md-4">
+                    <strong>Windows folder created</strong><br />
+                    @(editing.WindowsFolderCreatedUtc?.ToString("u") ?? "—")
+                    <div class="form-text">Often closer to original image</div>
+                </div>
+                <div class="col-md-4">
+                    <strong>Identity</strong><br />
+                    Guid: <code>@(editing.MachineGuid ?? "—")</code><br />
+                    SMBIOS: <code>@(editing.SmbiosUuid ?? "—")</code>
+                    @if (editing.LastReimagedUtc is DateTimeOffset ri)
+                    {
+                        <div><span class="badge-pill badge-rdp">Reimaged @ri.ToLocalTime().ToString("d")</span></div>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(editing.CityCode) || !string.IsNullOrWhiteSpace(editing.ChassisHint))
+                    {
+                        <div>Hostname: @(editing.CityCode) @(editing.ChassisHint)</div>
+                    }
+                </div>
+            </div>
+        }
 
         <div class="d-flex flex-wrap gap-2 mt-3 align-items-center">
             <button type="submit" class="btn btn-hd">Save</button>
@@ -148,9 +207,38 @@
                 </button>
             }
             <span class="text-secondary small">
-                Warranty lookup is parked — use vendor official APIs with serial, not scraping.
+                Power draw is not reliably measurable via the agent (NVML/RAPL are vendor-specific) — enter PSU rating manually.
             </span>
         </div>
+
+        @if (Model.IdentityHistory.Count > 0)
+        {
+            <hr class="border-secondary opacity-25 my-3" />
+            <h3 class="h6">Identity history</h3>
+            <table class="hd-table small">
+                <thead>
+                    <tr>
+                        <th>When</th>
+                        <th>Event</th>
+                        <th>Old Guid</th>
+                        <th>New Guid</th>
+                        <th>Detail</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var e in Model.IdentityHistory)
+                {
+                    <tr>
+                        <td>@e.ObservedAtUtc.ToLocalTime().ToString("g")</td>
+                        <td><span class="badge-pill badge-rdp">@e.EventType</span></td>
+                        <td><code class="small">@(e.OldMachineGuid ?? "—")</code></td>
+                        <td><code class="small">@(e.NewMachineGuid ?? "—")</code></td>
+                        <td>@(e.Detail ?? "—")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
     </form>
 }
 
@@ -159,25 +247,30 @@
         <thead>
             <tr>
                 <th data-sort="text">Host</th>
-                <th data-sort="num" data-default-desc>Cost</th>
+                <th data-sort="num" data-default-desc>Purchase</th>
+                <th data-sort="num" title="Non-ops active hours (30d)">User hrs</th>
+                <th data-sort="num" title="ops. / OPS domain active hours (30d)">Support hrs</th>
+                <th data-sort="num" title="Purchase ÷ user hours (30d)">$/user hr</th>
                 <th data-sort="text">Warranty</th>
                 <th data-sort="text">Brand / model</th>
                 <th data-sort="text">Serial</th>
                 <th data-sort="text">CPU</th>
                 <th data-sort="num">RAM</th>
                 <th data-sort="num">Disk</th>
-                <th data-sort="text">GPU</th>
-                <th data-sort="num" title="Purchase ÷ active hours (last 30d sessions)">$/active hr</th>
+                <th data-sort="num">PSU</th>
+                <th data-sort="text">OS / identity</th>
                 <th></th>
             </tr>
         </thead>
         <tbody>
         @if (Model.Rows.Count == 0)
         {
-            <tr><td colspan="11">No machines match. Wait for agents or clear filters.</td></tr>
+            <tr><td colspan="14">No machines match. Wait for agents or clear filters.</td></tr>
         }
         @foreach (var r in Model.Rows)
         {
+            var userHrs = r.UserSeconds30d / 3600.0;
+            var supportHrs = r.SupportSeconds30d / 3600.0;
             <tr>
                 <td data-sort-value="@r.Hostname">
                     <strong>@r.Hostname</strong>
@@ -185,11 +278,41 @@
                     {
                         <span class="badge-pill badge-local ms-1" title="Manual override — agent will not change hardware">manual</span>
                     }
+                    @if (r.LastReimagedUtc is DateTimeOffset re)
+                    {
+                        <span class="badge-pill badge-rdp ms-1" title="MachineGuid changed">Reimaged @re.ToLocalTime().ToString("d")</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(r.ChassisHint))
+                    {
+                        <span class="badge-pill badge-ended ms-1">@r.ChassisHint</span>
+                    }
                 </td>
                 <td data-sort-value="@(r.PurchaseCost ?? -1)">
                     @if (r.PurchaseCost is decimal c)
                     {
                         <span>@c.ToString("N0") @(r.Currency ?? "AUD")</span>
+                    }
+                    else
+                    {
+                        <span class="text-secondary">—</span>
+                    }
+                </td>
+                <td data-sort-value="@userHrs">@userHrs.ToString("0.#")</td>
+                <td data-sort-value="@supportHrs">
+                    @supportHrs.ToString("0.#")
+                    @if (r.SupportCostEstimate is decimal sc)
+                    {
+                        <div class="text-secondary small">est. @sc.ToString("N0")</div>
+                    }
+                    @if (r.UserToSupportRatio is double ratio)
+                    {
+                        <div class="text-secondary small">user:ops @ratio:1</div>
+                    }
+                </td>
+                <td data-sort-value="@(r.CostPerUserHour ?? -1)">
+                    @if (r.CostPerUserHour is decimal cph)
+                    {
+                        <span title="Based on @userHrs.ToString("0.#") user hours (30d)">@cph.ToString("N2")</span>
                     }
                     else
                     {
@@ -208,19 +331,28 @@
                         ? "—"
                         : $"{r.Brand} {r.Model}".Trim())
                 </td>
-                <td data-sort-value="@(r.SerialNumber ?? "")">
-                    <code class="small">@(r.SerialNumber ?? "—")</code>
+                <td data-sort-value="@(r.SerialNumber ?? r.AssetSerial ?? "")">
+                    <code class="small">@(r.SerialNumber ?? r.AssetSerial ?? "—")</code>
+                    @if (!string.IsNullOrWhiteSpace(r.BiosSerial) &&
+                         !string.Equals(r.BiosSerial, r.SerialNumber, StringComparison.OrdinalIgnoreCase))
+                    {
+                        <div class="text-secondary small">BIOS: @r.BiosSerial</div>
+                    }
                 </td>
                 <td data-sort-value="@(r.Cpu ?? "")" class="small">@(r.Cpu ?? "—")</td>
                 <td data-sort-value="@(r.RamGb ?? -1)">@(r.RamGb is double ram ? $"{ram:0.#} GB" : "—")</td>
                 <td data-sort-value="@(r.DiskGb ?? -1)">@(r.DiskGb is double disk ? $"{disk:0} GB" : "—")</td>
-                <td data-sort-value="@(r.Gpu ?? "")" class="small">@(r.Gpu ?? "—")</td>
-                <td data-sort-value="@(r.CostPerActiveHour ?? -1)">
-                    @if (r.CostPerActiveHour is decimal cph)
+                <td data-sort-value="@(r.PsuWatts ?? -1)">@(r.PsuWatts is int w ? $"{w} W" : "—")</td>
+                <td data-sort-value="@(r.WindowsFolderCreatedUtc?.ToUnixTimeSeconds() ?? -1)" class="small">
+                    @if (r.OsInstallDateUtc is DateTimeOffset oi)
                     {
-                        <span title="Based on @((r.ActiveSeconds30d / 3600.0).ToString("0.#")) active hours (30d)">@cph.ToString("N2")</span>
+                        <div title="WMI/registry InstallDate — may move on feature update">OS: @oi.ToLocalTime().ToString("d")</div>
                     }
-                    else
+                    @if (r.WindowsFolderCreatedUtc is DateTimeOffset wf)
+                    {
+                        <div title="%SystemRoot% creation time">Win: @wf.ToLocalTime().ToString("d")</div>
+                    }
+                    @if (r.OsInstallDateUtc is null && r.WindowsFolderCreatedUtc is null)
                     {
                         <span class="text-secondary">—</span>
                     }
@@ -274,4 +406,3 @@
 })();
 </script>
 }
-

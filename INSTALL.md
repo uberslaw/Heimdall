@@ -173,6 +173,26 @@ It prints a **folder or zip path** at the end and pauses. Upload that zip (or th
 
 ---
 
+## 5b. SOE golden-image program inventory
+
+On a **vanilla SOE / golden image** machine (before user apps), enumerate installed programs for SOE exclude review:
+
+```text
+scripts\Inspect-SoeInstalledPrograms.cmd
+```
+
+Or:
+
+```powershell
+.\scripts\Inspect-SoeInstalledPrograms.ps1 -CompareCatalog
+```
+
+Output CSV + log under `%LOCALAPPDATA%\Heimdall\` (`soe-installed-*.csv`). Columns: DisplayName, Publisher, EstimateProcessName (best-effort), SuggestedIgnore=true. With `-CompareCatalog`, also flags names already in `SoeCatalog.cs`.
+
+**Workflow:** run on golden image → review CSV → feed confirmed process names into Config → SOE excludes / Autogenerate (and optionally merge into `SoeCatalog.cs`).
+
+---
+
 ## 6. Credentials / config after clone
 
 Nothing secret is required beyond what you choose for POC:

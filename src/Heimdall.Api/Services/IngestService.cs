@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Services;
 
-public class IngestService(HeimdallDbContext db, AppListService appLists)
+public class IngestService(HeimdallDbContext db, AppListService appLists, IConfiguration configuration)
 {
     public async Task IngestAsync(IngestBatchDto batch, CancellationToken ct)
     {
@@ -80,21 +80,139 @@ public class IngestService(HeimdallDbContext db, AppListService appLists)
         else
             MachineHierarchy.EnsureDefaults(machine);
 
+        ApplyIdentityFromHeartbeat(machine, heartbeat, isNew);
         ApplyHardwareFromHeartbeat(machine, heartbeat);
 
         return (machine, isNew);
     }
 
     /// <summary>
-    /// Agent fills blank hardware fields only. Manual Cost-page edits set HardwareManualOverride and win.
+    /// MachineGuid changes on OS reimage; SmbiosUuid usually survives. Same hostname + new Guid → Reimaged.
+    /// Fresh agent install alone (same Guid) is not a reimage.
     /// </summary>
-    private static void ApplyHardwareFromHeartbeat(Machine machine, HeartbeatDto heartbeat)
+    private void ApplyIdentityFromHeartbeat(Machine machine, HeartbeatDto heartbeat, bool isNew)
     {
+        var newGuid = NullIfEmpty(heartbeat.MachineGuid);
+        var newUuid = NullIfEmpty(heartbeat.SmbiosUuid);
+
+        if (isNew)
+        {
+            machine.MachineGuid = newGuid;
+            machine.SmbiosUuid = newUuid ?? machine.SmbiosUuid;
+            if (newGuid is not null || newUuid is not null)
+            {
+                db.MachineIdentityEvents.Add(new MachineIdentityEvent
+                {
+                    Machine = machine,
+                    EventType = "FirstSeen",
+                    NewMachineGuid = newGuid,
+                    NewSmbiosUuid = newUuid,
+                    ObservedAtUtc = heartbeat.TimestampUtc,
+                    Detail = "Initial identity from agent heartbeat"
+                });
+            }
+            return;
+        }
+
+        var oldGuid = machine.MachineGuid;
+        var oldUuid = machine.SmbiosUuid;
+
+        if (!string.IsNullOrWhiteSpace(newGuid) &&
+            !string.IsNullOrWhiteSpace(oldGuid) &&
+            !string.Equals(oldGuid, newGuid, StringComparison.OrdinalIgnoreCase))
+        {
+            machine.LastReimagedUtc = heartbeat.TimestampUtc;
+            db.MachineIdentityEvents.Add(new MachineIdentityEvent
+            {
+                Machine = machine,
+                EventType = "Reimaged",
+                OldMachineGuid = oldGuid,
+                NewMachineGuid = newGuid,
+                OldSmbiosUuid = oldUuid,
+                NewSmbiosUuid = newUuid ?? oldUuid,
+                ObservedAtUtc = heartbeat.TimestampUtc,
+                Detail = "MachineGuid changed for same hostname (OS reimage)"
+            });
+            machine.MachineGuid = newGuid;
+        }
+        else if (string.IsNullOrWhiteSpace(oldGuid) && newGuid is not null)
+        {
+            machine.MachineGuid = newGuid;
+        }
+
+        if (!string.IsNullOrWhiteSpace(newUuid))
+        {
+            if (!string.IsNullOrWhiteSpace(oldUuid) &&
+                !string.Equals(oldUuid, newUuid, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(oldGuid, newGuid, StringComparison.OrdinalIgnoreCase))
+            {
+                // Unusual: SMBIOS UUID changed without MachineGuid — record but do not call reimage
+                db.MachineIdentityEvents.Add(new MachineIdentityEvent
+                {
+                    Machine = machine,
+                    EventType = "UuidChanged",
+                    OldMachineGuid = machine.MachineGuid,
+                    NewMachineGuid = machine.MachineGuid,
+                    OldSmbiosUuid = oldUuid,
+                    NewSmbiosUuid = newUuid,
+                    ObservedAtUtc = heartbeat.TimestampUtc,
+                    Detail = "SmbiosUuid changed without MachineGuid change"
+                });
+            }
+            machine.SmbiosUuid = newUuid;
+        }
+    }
+
+    /// <summary>
+    /// Agent fills blank hardware fields only. Manual Cost-page edits set HardwareManualOverride and win.
+    /// Identity / OS-date / serial preference fields still update when not manually overridden for hardware strings.
+    /// </summary>
+    private void ApplyHardwareFromHeartbeat(Machine machine, HeartbeatDto heartbeat)
+    {
+        // Always refresh OS install signals when blank or agent has newer empty-safe values (not under hardware override for dates)
+        if (heartbeat.OsInstallDateUtc is DateTimeOffset osInstall)
+            machine.OsInstallDateUtc ??= osInstall;
+        if (heartbeat.WindowsFolderCreatedUtc is DateTimeOffset winFolder)
+            machine.WindowsFolderCreatedUtc ??= winFolder;
+
+        // Hostname parse on API side as well (config pattern) so older agents still benefit
+        var pattern = configuration["Heimdall:HostnameSerialPattern"];
+        var hostParse = HostnameSerialParser.Parse(heartbeat.Hostname, pattern);
+        if (hostParse.Matched)
+        {
+            machine.HostnameCityCode ??= hostParse.CityCode;
+            machine.HostnameChassisHint ??= hostParse.ChassisHint;
+            if (string.IsNullOrWhiteSpace(machine.AssetSerial) && !string.IsNullOrWhiteSpace(hostParse.AssetSerial))
+                machine.AssetSerial = hostParse.AssetSerial;
+        }
+
+        if (!string.IsNullOrWhiteSpace(heartbeat.HostnameCityCode))
+            machine.HostnameCityCode ??= heartbeat.HostnameCityCode.Trim().ToUpperInvariant();
+        if (!string.IsNullOrWhiteSpace(heartbeat.HostnameChassisHint))
+            machine.HostnameChassisHint ??= heartbeat.HostnameChassisHint.Trim().ToUpperInvariant();
+
         if (machine.HardwareManualOverride)
             return;
 
-        if (string.IsNullOrWhiteSpace(machine.HardwareSerialNumber) && !string.IsNullOrWhiteSpace(heartbeat.HardwareSerialNumber))
-            machine.HardwareSerialNumber = heartbeat.HardwareSerialNumber.Trim();
+        if (string.IsNullOrWhiteSpace(machine.BiosSerial) && !string.IsNullOrWhiteSpace(heartbeat.BiosSerial))
+            machine.BiosSerial = heartbeat.BiosSerial.Trim();
+
+        var assetFromHb = NullIfEmpty(heartbeat.AssetSerial) ?? hostParse.AssetSerial;
+        if (string.IsNullOrWhiteSpace(machine.AssetSerial) && assetFromHb is not null)
+            machine.AssetSerial = assetFromHb;
+
+        var preferred = HostnameSerialParser.PreferAssetSerial(
+            machine.BiosSerial ?? heartbeat.BiosSerial,
+            machine.AssetSerial ?? assetFromHb,
+            hostParse.Matched || !string.IsNullOrWhiteSpace(heartbeat.AssetSerial));
+
+        if (string.IsNullOrWhiteSpace(machine.HardwareSerialNumber) && preferred is not null)
+            machine.HardwareSerialNumber = preferred;
+        else if (!string.IsNullOrWhiteSpace(preferred) &&
+                 HostnameSerialParser.IsGenericBiosSerial(machine.HardwareSerialNumber) &&
+                 !HostnameSerialParser.IsGenericBiosSerial(preferred))
+            machine.HardwareSerialNumber = preferred;
+
         if (string.IsNullOrWhiteSpace(machine.HardwareBrand) && !string.IsNullOrWhiteSpace(heartbeat.HardwareBrand))
             machine.HardwareBrand = heartbeat.HardwareBrand.Trim();
         if (string.IsNullOrWhiteSpace(machine.HardwareModel) && !string.IsNullOrWhiteSpace(heartbeat.HardwareModel))
@@ -108,6 +226,9 @@ public class IngestService(HeimdallDbContext db, AppListService appLists)
         if (machine.HardwareDiskGb is null && heartbeat.HardwareDiskGb is > 0)
             machine.HardwareDiskGb = heartbeat.HardwareDiskGb;
     }
+
+    private static string? NullIfEmpty(string? s) =>
+        string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
     private async Task<Machine> EnsureMachineAsync(string hostname, CancellationToken ct)
     {
@@ -889,6 +1010,32 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN HardwareModel TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN HardwareSerialNumber TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN HardwareManualOverride INTEGER NOT NULL DEFAULT 0");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN BiosSerial TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN AssetSerial TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN HostnameCityCode TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN HostnameChassisHint TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN PsuWatts INTEGER NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN PowerDrawWatts INTEGER NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN SupportHourlyRate TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN OsInstallDateUtc TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN WindowsFolderCreatedUtc TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN MachineGuid TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN SmbiosUuid TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN LastReimagedUtc TEXT NULL");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS MachineIdentityEvents (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MachineId INTEGER NOT NULL,
+                EventType TEXT NOT NULL,
+                OldMachineGuid TEXT NULL,
+                NewMachineGuid TEXT NULL,
+                OldSmbiosUuid TEXT NULL,
+                NewSmbiosUuid TEXT NULL,
+                ObservedAtUtc TEXT NOT NULL,
+                Detail TEXT NULL,
+                FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE
+            )
+            """);
     }
 
     private static async Task TryExec(HeimdallDbContext db, string sql)

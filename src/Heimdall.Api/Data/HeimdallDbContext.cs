@@ -20,6 +20,7 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<AppListEntry> AppListEntries => Set<AppListEntry>();
     public DbSet<AppListAssignment> AppListAssignments => Set<AppListAssignment>();
     public DbSet<AppListAuditLog> AppListAuditLogs => Set<AppListAuditLog>();
+    public DbSet<MachineIdentityEvent> MachineIdentityEvents => Set<MachineIdentityEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -28,6 +29,17 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
             e.HasIndex(x => x.Hostname).IsUnique();
             e.HasIndex(x => new { x.Region, x.Office });
             e.HasIndex(x => x.Country);
+            e.HasIndex(x => x.MachineGuid);
+            e.HasIndex(x => x.SmbiosUuid);
+        });
+
+        modelBuilder.Entity<MachineIdentityEvent>(e =>
+        {
+            e.HasIndex(x => new { x.MachineId, x.ObservedAtUtc });
+            e.HasOne(x => x.Machine)
+                .WithMany(x => x.IdentityEvents)
+                .HasForeignKey(x => x.MachineId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<UserSession>(e =>
