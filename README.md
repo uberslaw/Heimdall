@@ -1,5 +1,7 @@
 # Heimdall
 
+Continuing work? See **[HANDOVER.md](HANDOVER.md)** (paths, features, gotchas, next steps).
+
 Lightweight workstation usage tracker for justifying remote / modelling machine cost.
 
 **POC goal:** clearer session + app utilisation than CADFX, with server-side config and minimal agent overhead.
