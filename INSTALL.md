@@ -67,7 +67,7 @@ What it does:
 
 ### Option A — Portable pack (recommended for other PCs / vanilla SOE)
 
-Pack **once** on a build machine that has the repo + **.NET 10 SDK**:
+Pack **once** on a build machine that has the repo + **.NET 10 SDK** + NuGet access (repo `NuGet.config` → nuget.org; offline-only VS feeds cause **NU1101**):
 
 ```text
 scripts\Pack-WorkstationCollector.cmd
