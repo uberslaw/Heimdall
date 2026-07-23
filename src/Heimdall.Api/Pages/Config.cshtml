@@ -3,10 +3,14 @@
 @using Heimdall.Shared.Contracts
 @{
     ViewData["Title"] = "Config";
+    var editing = Model.EditingConfigId.HasValue;
+    var scopeLabel = Model.EditingConfig is not null
+        ? ConfigModel.FormatScope(Model.EditingConfig.Scope, Model.EditingConfig.ScopeValue)
+        : (editing ? ConfigModel.FormatScope(Model.SamplingScope, null) : "New scoped config");
 }
 
 <h1 class="hd-title">Tracking config</h1>
-<p class="hd-sub">Sampling defaults, known apps, and performance metric thresholds</p>
+<p class="hd-sub">Scoped sampling, include/exclude process lists, known apps, and metric thresholds</p>
 
 @if (TempData["Message"] is string msg)
 {
@@ -17,8 +21,147 @@
     <div class="alert alert-danger">@err</div>
 }
 
-<form method="post" asp-page-handler="SaveTracking" class="hd-panel mb-4">
-    <h2 class="h5 mb-3">Sampling (all machines)</h2>
+<div class="hd-panel mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h2 class="h5 mb-0">Sampling configs</h2>
+        <div class="d-flex gap-2">
+            <span class="text-secondary small">More specific scopes win · Machine &gt; Office &gt; Country &gt; Region/Group &gt; Global</span>
+            <a class="btn btn-ghost btn-sm" asp-page="/Config" asp-route-new="true">New scoped config</a>
+        </div>
+    </div>
+    <table class="hd-table mb-0">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Scope</th>
+                <th>Sample / Upload</th>
+                <th>Min CPU</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        @if (Model.TrackingConfigs.Count == 0)
+        {
+            <tr><td colspan="5">No sampling configs yet.</td></tr>
+        }
+        @foreach (var c in Model.TrackingConfigs)
+        {
+            var active = Model.EditingConfigId == c.Id;
+            <tr class="@(active ? "hd-row-active" : null)">
+                <td><strong>@c.Name</strong></td>
+                <td>
+                    <span class="badge-pill badge-local">@c.Scope</span>
+                    @if (!string.IsNullOrEmpty(c.ScopeValue))
+                    {
+                        <span class="text-secondary"> @c.ScopeValue</span>
+                    }
+                </td>
+                <td class="small">@c.SampleIntervalSeconds s / @c.UploadIntervalSeconds s</td>
+                <td>@c.MinCpuPercentToTrack.ToString("0.#")%</td>
+                <td class="text-nowrap">
+                    <a class="btn btn-ghost btn-sm" asp-page="/Config" asp-route-edit="@c.Id">@(active ? "Editing" : "Edit")</a>
+                    @if (c.Scope != ConfigScope.All || Model.TrackingConfigs.Count(x => x.Scope == ConfigScope.All) > 1)
+                    {
+                        <form method="post" asp-page-handler="DeleteTracking" class="d-inline" onsubmit="return confirm('Delete this sampling config?');">
+                            <input type="hidden" name="DeleteConfigId" value="@c.Id" />
+                            <button type="submit" class="btn btn-ghost btn-sm">Delete</button>
+                        </form>
+                    }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+<form method="post" asp-page-handler="SaveTracking" id="sampling-form" class="hd-panel mb-4">
+    <input type="hidden" asp-for="EditingConfigId" />
+    <input type="hidden" asp-for="IncludeProcessesJson" id="include-json" />
+    <input type="hidden" asp-for="ExcludeProcessesJson" id="exclude-json" />
+
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+        <div>
+            <h2 class="h5 mb-1">Sampling settings</h2>
+            <p class="text-secondary small mb-0">Editing: <strong>@scopeLabel</strong></p>
+        </div>
+        @if (editing)
+        {
+            <a class="btn btn-ghost btn-sm" asp-page="/Config" asp-route-new="true">Switch to create…</a>
+        }
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-md-6">
+            <label class="form-label">Config name</label>
+            <input class="form-control" asp-for="ConfigName" placeholder="e.g. Sydney office sampling" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">Scope type</label>
+            <select class="form-select" asp-for="SamplingScope" id="sampling-scope-type" disabled="@editing">
+                <option value="@ConfigScope.All">Global (all machines)</option>
+                <option value="@ConfigScope.Machine">Individual / multiple machines</option>
+                <option value="@ConfigScope.Office">Office (one or more)</option>
+                <option value="@ConfigScope.Country">Country (one or more)</option>
+                <option value="@ConfigScope.Region">Region (one or more)</option>
+                <option value="@ConfigScope.Group">Group name (one or more)</option>
+            </select>
+            @if (editing)
+            {
+                <input type="hidden" name="SamplingScope" value="@Model.SamplingScope" />
+                <p class="text-secondary small mt-1 mb-0">Scope is fixed while editing. Create a new config to target different machines.</p>
+            }
+        </div>
+    </div>
+
+    <div id="scope-targets" class="mb-3" hidden="@editing">
+        <div data-scope-panel="tree" class="mb-2" hidden>
+            <label class="form-label">Select targets in the hierarchy</label>
+            <p class="text-secondary small">Check regions, offices, and/or machines. Saving creates one sampling config per selected target at the chosen scope level.</p>
+            @{
+                ViewData["TreeId"] = "sampling-tree";
+                ViewData["TreeInputPrefix"] = "Selected";
+            }
+            <partial name="_MachineTree" model="Model.Tree" />
+        </div>
+        <div data-scope-panel="country" class="mb-2" hidden>
+            <label class="form-label">Countries</label>
+            <div class="hd-check-grid">
+                @foreach (var c in Model.Countries)
+                {
+                    <label class="form-check-label">
+                        <input class="form-check-input" type="checkbox" name="SelectedCountries" value="@c"
+                               @(Model.SelectedCountries.Contains(c) ? "checked" : null) />
+                        @c
+                    </label>
+                }
+                @if (Model.Countries.Count == 0)
+                {
+                    <span class="text-secondary small">No countries yet — agents populate Country from region.</span>
+                }
+            </div>
+        </div>
+        <div data-scope-panel="group" class="mb-2" hidden>
+            <label class="form-label">Machine groups</label>
+            <div class="hd-check-grid">
+                @foreach (var g in Model.Groups)
+                {
+                    <label class="form-check-label">
+                        <input class="form-check-input" type="checkbox" name="SelectedGroups" value="@g"
+                               @(Model.SelectedGroups.Contains(g) ? "checked" : null) />
+                        @g
+                    </label>
+                }
+                @if (Model.Groups.Count == 0)
+                {
+                    <span class="text-secondary small">No machine groups reported yet.</span>
+                }
+            </div>
+        </div>
+        <div data-scope-panel="global" class="mb-2" hidden>
+            <p class="text-secondary small mb-0">Applies to every machine. Agents use this when no more-specific sampling config matches.</p>
+        </div>
+    </div>
+
     <div class="row g-3 mb-3">
         <div class="col-md-4">
             <label class="form-label">Sample interval (seconds)</label>
@@ -36,12 +179,130 @@
 
     <div class="row g-3 mb-3">
         <div class="col-md-6">
-            <label class="form-label">Extra include processes (one per line)</label>
-            <textarea class="form-control" asp-for="IncludeProcessesText" rows="6" placeholder="e.g. dynamo&#10;grasshopper"></textarea>
+            <label class="form-label">Extra include processes</label>
+            <p class="text-secondary small">Pause = temporarily do not track (until expiry).</p>
+            <div class="hd-process-list" id="include-list" data-list-kind="Include" data-can-mutate="@editing.ToString().ToLowerInvariant()">
+                <div class="hd-process-items" role="list">
+                    @if (Model.IncludeItems.Count == 0)
+                    {
+                        <div class="hd-process-empty text-secondary small">No extra includes yet.</div>
+                    }
+                    @foreach (var item in Model.IncludeItems)
+                    {
+                        <label class="hd-process-item">
+                            <input type="checkbox" class="form-check-input hd-process-check" value="@item.Name" />
+                            <span class="hd-process-name">@item.Name</span>
+                            @if (item.PausedUntilUtc is DateTimeOffset until)
+                            {
+                                <span class="badge-pill badge-disc" title="@until.UtcDateTime.ToString("u")">paused until @until.UtcDateTime.ToString("g") UTC</span>
+                            }
+                        </label>
+                    }
+                </div>
+                <div class="hd-process-toolbar mt-2">
+                    <div class="input-group">
+                        <input type="text" class="form-control hd-process-input" placeholder="Process name (e.g. dynamo)" @(editing ? null : "disabled") />
+                        <button type="button" class="btn btn-ghost hd-process-add" @(editing ? null : "disabled")>Add</button>
+                    </div>
+                    <div class="hd-process-actions mt-2" hidden>
+                        <button type="button" class="btn btn-ghost btn-sm hd-process-remove">Remove</button>
+                        <button type="button" class="btn btn-ghost btn-sm hd-process-unpause">Unpause</button>
+                        <button type="button" class="btn btn-hd btn-sm hd-process-pause">Pause</button>
+                    </div>
+                    <div class="hd-pause-controls mt-2" hidden>
+                        <div class="d-flex flex-wrap gap-2 align-items-end">
+                            <div>
+                                <label class="form-label small mb-0">Preset</label>
+                                <select class="form-select form-select-sm hd-pause-preset">
+                                    <option value="">Custom…</option>
+                                    <option value="15m">15 minutes</option>
+                                    <option value="1h">1 hour</option>
+                                    <option value="4h">4 hours</option>
+                                    <option value="1d" selected>1 day</option>
+                                    <option value="7d">7 days</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="form-label small mb-0">Days</label>
+                                <input type="number" min="0" class="form-control form-control-sm hd-pause-days" value="0" style="width:4.5rem" />
+                            </div>
+                            <div>
+                                <label class="form-label small mb-0">Hours</label>
+                                <input type="number" min="0" class="form-control form-control-sm hd-pause-hours" value="0" style="width:4.5rem" />
+                            </div>
+                            <div>
+                                <label class="form-label small mb-0">Minutes</label>
+                                <input type="number" min="0" class="form-control form-control-sm hd-pause-minutes" value="0" style="width:4.5rem" />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
         <div class="col-md-6">
             <label class="form-label">Exclude processes (noise)</label>
-            <textarea class="form-control" asp-for="ExcludeProcessesText" rows="6"></textarea>
+            <p class="text-secondary small">Pause = temporarily stop excluding (allow through until expiry).</p>
+            <div class="hd-process-list" id="exclude-list" data-list-kind="Exclude" data-can-mutate="@editing.ToString().ToLowerInvariant()">
+                <div class="hd-process-items" role="list">
+                    @if (Model.ExcludeItems.Count == 0)
+                    {
+                        <div class="hd-process-empty text-secondary small">No excludes yet.</div>
+                    }
+                    @foreach (var item in Model.ExcludeItems)
+                    {
+                        <label class="hd-process-item">
+                            <input type="checkbox" class="form-check-input hd-process-check" value="@item.Name" />
+                            <span class="hd-process-name">@item.Name</span>
+                            @if (item.PausedUntilUtc is DateTimeOffset until)
+                            {
+                                <span class="badge-pill badge-disc" title="@until.UtcDateTime.ToString("u")">paused until @until.UtcDateTime.ToString("g") UTC</span>
+                            }
+                        </label>
+                    }
+                </div>
+                <div class="hd-process-toolbar mt-2">
+                    <div class="input-group">
+                        <input type="text" class="form-control hd-process-input" placeholder="Process name (e.g. svchost)" @(editing ? null : "disabled") />
+                        <button type="button" class="btn btn-ghost hd-process-add" @(editing ? null : "disabled")>Add</button>
+                    </div>
+                    <div class="hd-process-actions mt-2" hidden>
+                        <button type="button" class="btn btn-ghost btn-sm hd-process-remove">Remove</button>
+                        <button type="button" class="btn btn-ghost btn-sm hd-process-unpause">Unpause</button>
+                        <button type="button" class="btn btn-hd btn-sm hd-process-pause">Pause</button>
+                    </div>
+                    <div class="hd-pause-controls mt-2" hidden>
+                        <div class="d-flex flex-wrap gap-2 align-items-end">
+                            <div>
+                                <label class="form-label small mb-0">Preset</label>
+                                <select class="form-select form-select-sm hd-pause-preset">
+                                    <option value="">Custom…</option>
+                                    <option value="15m">15 minutes</option>
+                                    <option value="1h">1 hour</option>
+                                    <option value="4h">4 hours</option>
+                                    <option value="1d" selected>1 day</option>
+                                    <option value="7d">7 days</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="form-label small mb-0">Days</label>
+                                <input type="number" min="0" class="form-control form-control-sm hd-pause-days" value="0" style="width:4.5rem" />
+                            </div>
+                            <div>
+                                <label class="form-label small mb-0">Hours</label>
+                                <input type="number" min="0" class="form-control form-control-sm hd-pause-hours" value="0" style="width:4.5rem" />
+                            </div>
+                            <div>
+                                <label class="form-label small mb-0">Minutes</label>
+                                <input type="number" min="0" class="form-control form-control-sm hd-pause-minutes" value="0" style="width:4.5rem" />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            @if (!editing)
+            {
+                <p class="text-secondary small mt-2 mb-0">Save the sampling config first to Add / Remove / Pause processes. You can paste a JSON list into a later edit, or save empty lists then edit.</p>
+            }
         </div>
     </div>
 
@@ -59,7 +320,33 @@
         }
     </div>
 
-    <button type="submit" class="btn btn-hd">Save config</button>
+    <button type="submit" class="btn btn-hd">@(editing ? "Save sampling config" : "Create sampling config(s)")</button>
+</form>
+
+@* Hidden forms for process list mutations *@
+<form method="post" asp-page-handler="AddProcess" id="form-add-process" class="d-none">
+    <input type="hidden" name="EditingConfigId" value="@Model.EditingConfigId" />
+    <input type="hidden" name="ListKind" id="add-list-kind" />
+    <input type="hidden" name="ProcessNameInput" id="add-process-name" />
+</form>
+<form method="post" asp-page-handler="RemoveProcesses" id="form-remove-process" class="d-none">
+    <input type="hidden" name="EditingConfigId" value="@Model.EditingConfigId" />
+    <input type="hidden" name="ListKind" id="remove-list-kind" />
+    <div id="remove-selected"></div>
+</form>
+<form method="post" asp-page-handler="PauseProcesses" id="form-pause-process" class="d-none">
+    <input type="hidden" name="EditingConfigId" value="@Model.EditingConfigId" />
+    <input type="hidden" name="ListKind" id="pause-list-kind" />
+    <input type="hidden" name="PausePreset" id="pause-preset" />
+    <input type="hidden" name="PauseDays" id="pause-days" />
+    <input type="hidden" name="PauseHours" id="pause-hours" />
+    <input type="hidden" name="PauseMinutes" id="pause-minutes" />
+    <div id="pause-selected"></div>
+</form>
+<form method="post" asp-page-handler="UnpauseProcesses" id="form-unpause-process" class="d-none">
+    <input type="hidden" name="EditingConfigId" value="@Model.EditingConfigId" />
+    <input type="hidden" name="ListKind" id="unpause-list-kind" />
+    <div id="unpause-selected"></div>
 </form>
 
 <form method="post" asp-page-handler="AddApp" class="hd-panel mb-4">
@@ -82,7 +369,7 @@
 <div class="hd-panel mb-4">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
         <h2 class="h5 mb-0">Metric threshold policies</h2>
-        <span class="text-secondary small">Most specific scope wins for agents · Machine &gt; Office &gt; Region &gt; All</span>
+        <span class="text-secondary small">Most specific scope wins for agents · Machine &gt; Office &gt; Country/Region &gt; All</span>
     </div>
 
     <table class="hd-table mb-0">
@@ -125,13 +412,15 @@
                     }
                 </td>
                 <td class="text-nowrap">
-                    <a class="btn btn-ghost btn-sm" asp-page="/Config" asp-route-edit="@p.Id">Edit</a>
+                    <a class="btn btn-ghost btn-sm" asp-page="/Config" asp-route-edit="@Model.EditingConfigId" asp-route-editPolicy="@p.Id">Edit</a>
                     <form method="post" asp-page-handler="TogglePolicy" class="d-inline">
                         <input type="hidden" name="PolicyId" value="@p.Id" />
+                        <input type="hidden" name="EditingConfigId" value="@Model.EditingConfigId" />
                         <button type="submit" class="btn btn-ghost btn-sm">@(p.IsEnabled ? "Disable" : "Enable")</button>
                     </form>
                     <form method="post" asp-page-handler="DeletePolicy" class="d-inline" onsubmit="return confirm('Delete this policy?');">
                         <input type="hidden" name="PolicyId" value="@p.Id" />
+                        <input type="hidden" name="EditingConfigId" value="@Model.EditingConfigId" />
                         <button type="submit" class="btn btn-ghost btn-sm">Delete</button>
                     </form>
                 </td>
@@ -144,6 +433,7 @@
 <form method="post" asp-page-handler="SavePolicy" id="metric-policy-form" class="hd-panel">
     <h2 class="h5 mb-3">@(Model.EditingPolicyId.HasValue ? "Edit metric policy" : "New metric policy")</h2>
     <input type="hidden" asp-for="EditingPolicyId" />
+    <input type="hidden" name="EditingConfigId" value="@Model.EditingConfigId" />
 
     <div class="row g-3 mb-3">
         <div class="col-md-4">
@@ -163,6 +453,7 @@
             <select class="form-select" asp-for="PolicyScope" id="policy-scope-type">
                 <option value="@ConfigScope.All">All machines</option>
                 <option value="@ConfigScope.Region">Region</option>
+                <option value="@ConfigScope.Country">Country</option>
                 <option value="@ConfigScope.Office">Office</option>
                 <option value="@ConfigScope.Group">Group (legacy)</option>
                 <option value="@ConfigScope.Machine">Single machine</option>
@@ -213,7 +504,7 @@
         <partial name="_MachineTree" model="Model.Tree" />
         <div class="mt-2">
             <label class="form-label">Or type scope value</label>
-            <input class="form-control" asp-for="PolicyScopeValue" placeholder="e.g. APAC, APAC/Sydney, or HOSTNAME" />
+            <input class="form-control" asp-for="PolicyScopeValue" placeholder="e.g. APAC, Australia, APAC/Sydney, or HOSTNAME" />
         </div>
     </div>
 
@@ -225,21 +516,17 @@
     <button type="submit" class="btn btn-hd">@(Model.EditingPolicyId.HasValue ? "Update policy" : "Create policy")</button>
     @if (Model.EditingPolicyId.HasValue)
     {
-        <a class="btn btn-ghost ms-2" asp-page="/Config">Cancel</a>
+        <a class="btn btn-ghost ms-2" asp-page="/Config" asp-route-edit="@Model.EditingConfigId">Cancel</a>
     }
 </form>
 
 @section Scripts {
 <script src="~/js/machine-tree.js" asp-append-version="true"></script>
+<script src="~/js/process-list.js" asp-append-version="true"></script>
 <script>
 (() => {
   const typeSel = document.getElementById('policy-metric-type');
   function syncMetricFields() {
-    const v = typeSel?.selectedOptions[0]?.text?.includes('RAM') ? 'HighRam'
-      : typeSel?.selectedOptions[0]?.text?.includes('GPU') ? 'HighGpu'
-      : typeSel?.selectedOptions[0]?.text?.includes('disk') ? 'HighDisk'
-      : typeSel?.value;
-    // Prefer enum string from value
     const map = { '0': 'HighRam', '1': 'HighGpu', '2': 'HighDisk',
       'HighRam': 'HighRam', 'HighGpu': 'HighGpu', 'HighDisk': 'HighDisk' };
     const key = map[typeSel.value] || 'HighRam';
@@ -252,12 +539,9 @@
 
   const tree = document.getElementById('policy-tree');
   HeimdallTree.init(tree);
-
-  // Single-select behaviour for policy tree: clicking checks only that branch leaf intent
   tree?.addEventListener('change', e => {
     const cb = e.target;
     if (!cb.classList?.contains('hd-tree-check')) return;
-    // After normal cascade, collapse to a single scope value in the text field
     const data = HeimdallTree.collect(tree);
     const scopeSel = document.getElementById('policy-scope-type');
     const valueInput = document.querySelector('[name="PolicyScopeValue"]');
@@ -272,11 +556,52 @@
       valueInput.value = data.machines[0];
       if (scopeSel) scopeSel.value = '@((int)ConfigScope.Machine)';
     } else if (data.regions.length + data.offices.length + data.machines.length > 0) {
-      // Prefer most specific single value if mixed
       if (data.machines.length) valueInput.value = data.machines[0];
       else if (data.offices.length) valueInput.value = data.offices[0];
       else valueInput.value = data.regions[0];
     }
+  });
+
+  const samplingTree = document.getElementById('sampling-tree');
+  HeimdallTree.init(samplingTree);
+
+  const scopeType = document.getElementById('sampling-scope-type');
+  function syncScopePanels() {
+    const v = scopeType?.value;
+    const map = {
+      '@((int)ConfigScope.All)': 'global',
+      'All': 'global',
+      '@((int)ConfigScope.Machine)': 'tree',
+      'Machine': 'tree',
+      '@((int)ConfigScope.Office)': 'tree',
+      'Office': 'tree',
+      '@((int)ConfigScope.Region)': 'tree',
+      'Region': 'tree',
+      '@((int)ConfigScope.Country)': 'country',
+      'Country': 'country',
+      '@((int)ConfigScope.Group)': 'group',
+      'Group': 'group'
+    };
+    const panel = map[v] || 'global';
+    document.querySelectorAll('#scope-targets [data-scope-panel]').forEach(el => {
+      el.hidden = el.getAttribute('data-scope-panel') !== panel;
+    });
+  }
+  scopeType?.addEventListener('change', syncScopePanels);
+  syncScopePanels();
+
+  HeimdallProcessList.init(document.getElementById('include-list'));
+  HeimdallProcessList.init(document.getElementById('exclude-list'));
+
+  // Before save: sync visible list names into hidden JSON (covers create flow if lists were somehow filled)
+  document.getElementById('sampling-form')?.addEventListener('submit', () => {
+    const sync = (listId, inputId) => {
+      const names = [...document.querySelectorAll(`#${listId} .hd-process-check`)].map(cb => cb.value);
+      const el = document.getElementById(inputId);
+      if (el) el.value = JSON.stringify(names);
+    };
+    sync('include-list', 'include-json');
+    sync('exclude-list', 'exclude-json');
   });
 })();
 </script>

@@ -80,6 +80,23 @@ public class TrackingConfig
     public double MinCpuPercentToTrack { get; set; }
     public string IncludeProcessesJson { get; set; } = "[]";
     public string ExcludeProcessesJson { get; set; } = "[]";
+
+    public List<ProcessPause> ProcessPauses { get; set; } = [];
+}
+
+/// <summary>
+/// Temporary override for a process on a tracking config.
+/// Include pause = skip tracking; Exclude pause = stop applying that exclude rule.
+/// </summary>
+public class ProcessPause
+{
+    public int Id { get; set; }
+    public int TrackingConfigId { get; set; }
+    public TrackingConfig TrackingConfig { get; set; } = null!;
+    public required string ProcessName { get; set; }
+    public ProcessListKind ListKind { get; set; }
+    public DateTimeOffset PausedUntilUtc { get; set; }
+    public string? Reason { get; set; }
 }
 
 public class KnownApp
@@ -88,6 +105,16 @@ public class KnownApp
     public required string DisplayName { get; set; }
     public required string ProcessName { get; set; }
     public bool EnabledByDefault { get; set; } = true;
+}
+
+/// <summary>Curated corporate SOE / security / agent processes for auto-exclude.</summary>
+public class SoeApp
+{
+    public int Id { get; set; }
+    public required string DisplayName { get; set; }
+    public required string ProcessName { get; set; }
+    public string Category { get; set; } = "SOE";
+    public string? Vendor { get; set; }
 }
 
 /// <summary>Performance metric threshold policy scoped to All / Region / Office / Group / Machine.</summary>

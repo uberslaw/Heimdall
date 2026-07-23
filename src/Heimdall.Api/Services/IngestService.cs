@@ -202,15 +202,50 @@ public class ConfigService(HeimdallDbContext db)
                 include.Add(app.ProcessName);
         }
 
+        // Apply active pauses from all applicable tracking configs.
+        var now = DateTimeOffset.UtcNow;
+        var applicableIds = applicable.Select(c => c.Id).Where(id => id > 0).ToList();
+        var activePauses = applicableIds.Count == 0
+            ? []
+            : await db.ProcessPauses.AsNoTracking()
+                .Where(p => applicableIds.Contains(p.TrackingConfigId) && p.PausedUntilUtc > now)
+                .ToListAsync(ct);
+
+        var pausedIncludes = activePauses
+            .Where(p => p.ListKind == ProcessListKind.Include)
+            .Select(p => p.ProcessName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var pausedExcludes = activePauses
+            .Where(p => p.ListKind == ProcessListKind.Exclude)
+            .Select(p => p.ProcessName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (pausedIncludes.Count > 0)
+            include = include.Where(p => !pausedIncludes.Contains(p)).ToList();
+        if (pausedExcludes.Count > 0)
+            exclude = exclude.Where(p => !pausedExcludes.Contains(p)).ToList();
+
         var metricPolicies = await db.MetricPolicies.AsNoTracking()
             .Where(p => p.IsEnabled)
             .ToListAsync(ct);
 
         var thresholds = ResolveMetricThresholds(metricPolicies, machine, hostname);
+        var pauseDtos = activePauses
+            .GroupBy(p => (p.ProcessName, p.ListKind), new PauseKeyComparer())
+            .Select(g => g.OrderByDescending(x => x.PausedUntilUtc).First())
+            .Select(p => new ProcessPauseDto
+            {
+                ProcessName = p.ProcessName,
+                ListKind = p.ListKind.ToString(),
+                PausedUntilUtc = p.PausedUntilUtc,
+                Reason = p.Reason
+            })
+            .OrderBy(p => p.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         return new AgentConfigDto
         {
-            ConfigVersion = primary.Id * 1000 + primary.SampleIntervalSeconds + include.Count + thresholds.Count,
+            ConfigVersion = primary.Id * 1000 + primary.SampleIntervalSeconds + include.Count + thresholds.Count + pauseDtos.Count,
             SampleIntervalSeconds = primary.SampleIntervalSeconds,
             UploadIntervalSeconds = primary.UploadIntervalSeconds,
             ConfigRefreshSeconds = primary.ConfigRefreshSeconds,
@@ -221,10 +256,21 @@ public class ConfigService(HeimdallDbContext db)
             {
                 DisplayName = a.DisplayName,
                 ProcessName = a.ProcessName,
-                Enabled = a.EnabledByDefault
+                Enabled = a.EnabledByDefault && !pausedIncludes.Contains(a.ProcessName)
             }).ToList(),
-            MetricThresholds = thresholds
+            MetricThresholds = thresholds,
+            ProcessPauses = pauseDtos
         };
+    }
+
+    private sealed class PauseKeyComparer : IEqualityComparer<(string ProcessName, ProcessListKind ListKind)>
+    {
+        public bool Equals((string ProcessName, ProcessListKind ListKind) x, (string ProcessName, ProcessListKind ListKind) y) =>
+            x.ListKind == y.ListKind &&
+            string.Equals(x.ProcessName, y.ProcessName, StringComparison.OrdinalIgnoreCase);
+
+        public int GetHashCode((string ProcessName, ProcessListKind ListKind) obj) =>
+            HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(obj.ProcessName), obj.ListKind);
     }
 
     /// <summary>
@@ -330,6 +376,8 @@ public class ConfigService(HeimdallDbContext db)
                                  string.Equals(scopeValue, machine.MachineGroup, StringComparison.OrdinalIgnoreCase),
             ConfigScope.Region => machine?.Region is not null &&
                                   string.Equals(scopeValue, machine.Region, StringComparison.OrdinalIgnoreCase),
+            ConfigScope.Country => machine?.Country is not null &&
+                                   string.Equals(scopeValue, machine.Country, StringComparison.OrdinalIgnoreCase),
             ConfigScope.Office => machine is not null &&
                                   !string.IsNullOrWhiteSpace(machine.Region) &&
                                   !string.IsNullOrWhiteSpace(machine.Office) &&
@@ -339,10 +387,12 @@ public class ConfigService(HeimdallDbContext db)
         };
     }
 
+    /// <summary>Higher wins. Machine &gt; Office &gt; Country &gt; Region/Group &gt; All.</summary>
     public static int ScopeRank(ConfigScope scope) => scope switch
     {
         ConfigScope.Machine => 50,
         ConfigScope.Office => 40,
+        ConfigScope.Country => 35,
         ConfigScope.Region => 30,
         ConfigScope.Group => 30,
         ConfigScope.All => 10,
@@ -452,6 +502,22 @@ public static class SeedData
                 IncludeProcessesJson = "[]",
                 ExcludeProcessesJson = """["Idle","System","svchost","csrss","smss","wininit","services","lsass","fontdrvhost","RuntimeBroker","SearchHost","ShellExperienceHost","dwm","conhost"]"""
             });
+        }
+
+        if (!await db.SoeApps.AnyAsync())
+        {
+            db.SoeApps.AddRange(SoeCatalog.CreateSeedEntities());
+        }
+        else
+        {
+            // Merge any newly added catalog entries without wiping admin customizations
+            var existing = await db.SoeApps.Select(s => s.ProcessName).ToListAsync();
+            var existingSet = existing.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var seed in SoeCatalog.CreateSeedEntities())
+            {
+                if (!existingSet.Contains(seed.ProcessName))
+                    db.SoeApps.Add(seed);
+            }
         }
 
         // Backfill Region/Office on existing machines
@@ -594,6 +660,26 @@ public static class SeedData
                 Email TEXT NULL,
                 TeamId INTEGER NOT NULL,
                 FOREIGN KEY (TeamId) REFERENCES Teams(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS ProcessPauses (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                TrackingConfigId INTEGER NOT NULL,
+                ProcessName TEXT NOT NULL,
+                ListKind INTEGER NOT NULL,
+                PausedUntilUtc TEXT NOT NULL,
+                Reason TEXT NULL,
+                FOREIGN KEY (TrackingConfigId) REFERENCES TrackingConfigs(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS SoeApps (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                DisplayName TEXT NOT NULL,
+                ProcessName TEXT NOT NULL,
+                Category TEXT NOT NULL,
+                Vendor TEXT NULL
             )
             """);
     }

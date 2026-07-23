@@ -8,7 +8,9 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<UserSession> Sessions => Set<UserSession>();
     public DbSet<ProcessRun> ProcessRuns => Set<ProcessRun>();
     public DbSet<TrackingConfig> TrackingConfigs => Set<TrackingConfig>();
+    public DbSet<ProcessPause> ProcessPauses => Set<ProcessPause>();
     public DbSet<KnownApp> KnownApps => Set<KnownApp>();
+    public DbSet<SoeApp> SoeApps => Set<SoeApp>();
     public DbSet<MetricPolicy> MetricPolicies => Set<MetricPolicy>();
     public DbSet<Team> Teams => Set<Team>();
     public DbSet<PersonTeam> PersonTeams => Set<PersonTeam>();
@@ -37,6 +39,21 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
         modelBuilder.Entity<KnownApp>(e =>
         {
             e.HasIndex(x => x.ProcessName).IsUnique();
+        });
+
+        modelBuilder.Entity<SoeApp>(e =>
+        {
+            e.HasIndex(x => x.ProcessName).IsUnique();
+            e.HasIndex(x => x.Category);
+        });
+
+        modelBuilder.Entity<ProcessPause>(e =>
+        {
+            e.HasIndex(x => new { x.TrackingConfigId, x.ProcessName, x.ListKind });
+            e.HasOne(x => x.TrackingConfig)
+                .WithMany(x => x.ProcessPauses)
+                .HasForeignKey(x => x.TrackingConfigId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<MetricPolicy>(e =>

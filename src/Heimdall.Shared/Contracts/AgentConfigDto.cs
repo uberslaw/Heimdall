@@ -12,6 +12,8 @@ public sealed class AgentConfigDto
     public List<KnownAppDto> KnownApps { get; init; } = [];
     /// <summary>Effective metric thresholds for this host (most-specific scope wins per metric).</summary>
     public List<MetricThresholdDto> MetricThresholds { get; init; } = [];
+    /// <summary>Active pauses applied when resolving include/exclude for this host.</summary>
+    public List<ProcessPauseDto> ProcessPauses { get; init; } = [];
 }
 
 public sealed class KnownAppDto
@@ -32,4 +34,12 @@ public sealed class MetricThresholdDto
     public double? DiskReadMBps { get; init; }
     public double? DiskWriteMBps { get; init; }
     public double? DiskCombinedMBps { get; init; }
+}
+
+public sealed class ProcessPauseDto
+{
+    public required string ProcessName { get; init; }
+    public required string ListKind { get; init; }
+    public DateTimeOffset PausedUntilUtc { get; init; }
+    public string? Reason { get; init; }
 }

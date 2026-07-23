@@ -416,3 +416,62 @@ table.hd-sortable th.sorted-desc::after {
   color: #c5d4e0;
   font-size: 0.85em;
 }
+
+/* Process include/exclude lists */
+.hd-process-list {
+  background: var(--hd-panel-2);
+  border: 1px solid var(--hd-border);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+}
+
+.hd-process-items {
+  max-height: 220px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.hd-process-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.28rem 0.35rem;
+  margin: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.hd-process-item:hover {
+  background: rgba(61, 184, 160, 0.08);
+}
+
+.hd-process-name {
+  font-family: "IBM Plex Mono", "IBM Plex Sans", ui-monospace, monospace;
+  font-size: 0.9rem;
+}
+
+.hd-process-empty {
+  padding: 0.5rem 0.35rem;
+}
+
+.hd-process-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.hd-check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.45rem 0.75rem;
+  background: var(--hd-panel-2);
+  border: 1px solid var(--hd-border);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.hd-row-active td {
+  background: rgba(61, 184, 160, 0.08);
+}
