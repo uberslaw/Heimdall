@@ -73,7 +73,9 @@ Do **not** need on the target:
 | Windows | To produce `win-x64` payload |
 | **.NET 10 SDK** | `dotnet publish` |
 | Full repo | `src\Heimdall.Agent` + `src\Heimdall.Shared` |
-| Network (optional) | NuGet restore on first publish |
+| **NuGet access** | First publish must restore packages. Repo `NuGet.config` uses **nuget.org**. If you only have offline VS feeds, pack fails with **NU1101** — allow `https://api.nuget.org` or point NuGet at a corporate mirror that has those packages. |
+
+**NU1101 / offline feeds:** If publish lists only `library-packs` and `Microsoft Visual Studio Offline Packages`, NuGet never saw nuget.org. Sync this branch (includes `NuGet.config`), check network/proxy, then `dotnet nuget list source` and re-run the pack script.
 
 ### Target workstation (each PC)
 

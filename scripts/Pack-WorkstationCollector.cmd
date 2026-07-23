@@ -59,11 +59,30 @@ if errorlevel 1 (
   goto fail
 )
 
+echo [*] Checking NuGet can reach nuget.org...
+dotnet nuget list source 2>nul | findstr /I "nuget.org" >nul
+if errorlevel 1 (
+  echo [WARN] nuget.org not listed in "dotnet nuget list source".
+  echo       This repo includes NuGet.config pointing at nuget.org.
+  echo       If publish fails with NU1101, you need network to nuget.org
+  echo       or an internal feed that mirrors those packages.
+)
+
 echo [*] dotnet publish (self-contained %RID%)...
-echo     This can take a minute...
+echo     This can take a minute ^(needs NuGet restore on first run^)...
 dotnet publish "%PROJECT%" -c Release -r %RID% --self-contained true -o "%PAYLOAD%" -v minimal
 if errorlevel 1 (
   echo [ERROR] dotnet publish failed
+  echo.
+  echo If you saw NU1101 / "Unable to find package" and sources listed only
+  echo "library-packs" / "Visual Studio Offline Packages":
+  echo   1. Confirm this clone has NuGet.config ^(nuget.org^) at the repo root
+  echo   2. Allow HTTPS to api.nuget.org ^(or use your corporate NuGet mirror^)
+  echo   3. Retry:  dotnet nuget list source
+  echo             scripts\Pack-WorkstationCollector.cmd
+  echo.
+  echo Offline-only NuGet cannot download Microsoft.Data.Sqlite or the
+  echo win-x64 runtime packs required for a self-contained agent.
   goto fail
 )
 

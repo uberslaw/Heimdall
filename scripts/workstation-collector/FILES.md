@@ -40,6 +40,8 @@ workstation-collector/
 |------------|--------|
 | .NET 10 SDK | Required |
 | NuGet packages from Agent csproj | Restored during `dotnet publish` |
+| `NuGet.config` (repo root) | Adds nuget.org — needed when the machine only has offline VS package sources |
+| Network to nuget.org (or mirror) | Without it: **NU1101** Unable to find package… |
 | Windows | `win-x64` RID |
 
 ## Not included / separate tools
