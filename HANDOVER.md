@@ -122,7 +122,7 @@ Full install detail: [INSTALL.md](INSTALL.md).
 
 ## Features shipped (summarize)
 
-Dashboard nav (local working tree as of handover): Machines · Sessions · Applications · App lists · Cost · Stats · Teams · Utilization · Config · Socratize (from Machines).
+Dashboard nav (on `main`): Machines | Sessions | Applications | App lists | Cost | Stats | Teams | Utilization | Config | Socratize (from Machines).
 
 | Area | What it does |
 |------|----------------|
@@ -138,11 +138,11 @@ Dashboard nav (local working tree as of handover): Machines · Sessions · Appli
 | **Cost** | Purchase / warranty / hardware inventory; **WMI serial & hardware autodetection** fills blanks; manual edit wins. Dell/HP **warranty API** not wired (official APIs later — no scraping). |
 | **Metric thresholds** | Defined in Config, delivered to agents; collection of some metrics still stubbed on agent. |
 
-### Critical: local vs GitHub as of 2026-07-23
+### Critical: GitHub `main` as of 2026-07-23 (post-push)
 
-Much of the later surface (Cost, Utilization, App lists, hardware inventory collector, mojibake encoding helper, repair script, related API/agent/Shared edits) may still be **uncommitted in the Cursor working tree** when this handover was written. GitHub `main` may lag.
+Cost, Utilization, App lists, hardware inventory collector, mojibake encoding helper, repair script, scoped Config sampling, Socratize table work, and related API/agent/Shared edits are **committed and pushed to `origin/main`**.
 
-**Before relying on another PC:** commit + push all intended local work (see next steps), then `git pull` / RepoSync on the target machine. Do not assume `origin/main` already contains every “shipped” row above until verified.
+**On another PC:** `git pull` / RepoSync from https://github.com/uberslaw/Heimdall, then open this file. Spot-check Cost / App lists / Utilization / `scripts/Repair-SessionMojibake.ps1` if anything looks stale.
 
 ---
 
@@ -176,7 +176,7 @@ Much of the later surface (Cost, Utilization, App lists, hardware inventory coll
 
 1. **Clone/pull on target PC** via RepoSync or `git clone https://github.com/uberslaw/Heimdall.git` — prefer path under Cursor or document the clone location.
 2. **Install API + agent** on candidate machines (`scripts\Install-Api.cmd` / `Install-Agent.cmd`); use `Collect-Diagnostics.cmd` if anything fails.
-3. **Push any uncommitted local work** from Cursor\Heimdall; verify **GitHub `main` is complete** (`git status`, compare to remote, spot-check Cost / App lists / Utilization / repair script).
+3. **Confirm `origin/main` is current** after pull (`git status`, spot-check Cost / App lists / Utilization / `scripts/Repair-SessionMojibake.ps1`). Feature work from the Cursor tree was pushed 2026-07-23.
 4. If keys available: **wire Dell warranty API**; spike **Flight Recorder**; **fix process duration** if still inflated from long-lived `StartTime`.
 5. **Demo vs CADFX** with real collected data (sessions, util period, Socratize brief, tracked apps).
 
