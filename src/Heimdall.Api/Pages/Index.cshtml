@@ -1,0 +1,144 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Machines";
+    var shortLabel = Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d";
+}
+
+<h1 class="hd-title">Machines</h1>
+<p class="hd-sub">@Model.RangeLabel utilisation · who is on which box · local vs RDP</p>
+
+<form method="get" class="hd-panel mb-3">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-4 col-lg-3">
+            <label class="form-label" for="util-range">Utilisation period</label>
+            <select class="form-select" name="range" id="util-range" onchange="this.form.submit()">
+                @foreach (var opt in IndexModel.RangeOptions)
+                {
+                    if (Model.Range == opt.Key)
+                    {
+                        <option value="@opt.Key" selected>@opt.Label</option>
+                    }
+                    else
+                    {
+                        <option value="@opt.Key">@opt.Label</option>
+                    }
+                }
+            </select>
+        </div>
+        <div class="col-md-3 col-lg-2">
+            <button type="submit" class="btn btn-hd w-100">Apply</button>
+        </div>
+    </div>
+</form>
+
+<form method="get" asp-page="/Socratize" class="hd-panel mb-3">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-5 col-lg-4">
+            <label class="form-label" for="socratize-host">Socratize machine</label>
+            <select class="form-select" name="Host" id="socratize-host" required>
+                <option value="">— select host —</option>
+                @foreach (var m in Model.Machines)
+                {
+                    <option value="@m.Hostname">@m.Hostname</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3 col-lg-2">
+            <button type="submit" class="btn btn-ghost w-100">Socratize</button>
+        </div>
+        <div class="col-md-4 col-lg-6">
+            <p class="text-secondary mb-0 small">One-click cost-justification brief from collected sessions &amp; apps (last 30 days default).</p>
+        </div>
+    </div>
+</form>
+
+<div class="hd-grid">
+    <div class="hd-stat">
+        <div class="label">Machines</div>
+        <div class="value">@Model.Machines.Count</div>
+    </div>
+    <div class="hd-stat">
+        <div class="label">Online (5m)</div>
+        <div class="value">@Model.OnlineCount</div>
+    </div>
+    <div class="hd-stat">
+        <div class="label">In use now</div>
+        <div class="value">@Model.InUseCount</div>
+    </div>
+    <div class="hd-stat">
+        <div class="label">Avg util (@shortLabel)</div>
+        <div class="value">@Model.AvgUtilisationPct.ToString("0")%</div>
+    </div>
+</div>
+
+<div class="hd-panel">
+    <table class="hd-table">
+        <thead>
+            <tr>
+                <th>Host</th>
+                <th>Group</th>
+                <th>Status</th>
+                <th>Last user</th>
+                <th>Type</th>
+                <th>Open sessions</th>
+                <th>@shortLabel utilisation</th>
+                <th>Last seen</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        @if (Model.Machines.Count == 0)
+        {
+            <tr><td colspan="9">No agents reporting yet. Install the Heimdall agent and point it at this API.</td></tr>
+        }
+        @foreach (var m in Model.Machines)
+        {
+            <tr>
+                <td><strong>@m.Hostname</strong></td>
+                <td>@(m.Group ?? "—")</td>
+                <td>
+                    @if (m.IsInUse)
+                    {
+                        <span class="badge-pill badge-active">In use</span>
+                    }
+                    else if (m.IsOnline)
+                    {
+                        <span class="badge-pill badge-ended">Idle</span>
+                    }
+                    else
+                    {
+                        <span class="badge-pill badge-ended">Offline</span>
+                    }
+                </td>
+                <td>@(m.LastUser ?? "—")</td>
+                <td>
+                    @if (m.LastSessionType == Heimdall.Shared.Contracts.SessionType.Rdp)
+                    {
+                        <span class="badge-pill badge-rdp">RDP</span>
+                    }
+                    else if (m.LastSessionType == Heimdall.Shared.Contracts.SessionType.Local)
+                    {
+                        <span class="badge-pill badge-local">Local</span>
+                    }
+                    else
+                    {
+                        <span>—</span>
+                    }
+                </td>
+                <td>@m.OpenSessions</td>
+                <td>
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="util-bar flex-grow-1"><span style="width:@m.UtilisationPct.ToString("0")%"></span></div>
+                        <span>@m.UtilisationPct.ToString("0")%</span>
+                    </div>
+                </td>
+                <td>@m.LastSeenUtc.ToLocalTime().ToString("g")</td>
+                <td>
+                    <a class="btn btn-ghost btn-sm" asp-page="/Socratize" asp-route-Host="@m.Hostname">Socratize</a>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>

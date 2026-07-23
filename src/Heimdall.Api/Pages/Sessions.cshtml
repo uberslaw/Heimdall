@@ -1,0 +1,71 @@
+@page
+@model SessionsModel
+@{
+    ViewData["Title"] = "Sessions";
+    string Fmt(long seconds) => TimeSpan.FromSeconds(seconds).ToString(@"d\.hh\:mm\:ss");
+}
+
+<h1 class="hd-title">Sessions</h1>
+<p class="hd-sub">Local and RDP logons · active vs disconnected time</p>
+
+<div class="hd-panel">
+    <table class="hd-table">
+        <thead>
+            <tr>
+                <th>Machine</th>
+                <th>User</th>
+                <th>Team</th>
+                <th>Type</th>
+                <th>State</th>
+                <th>Started</th>
+                <th>Ended</th>
+                <th>Active</th>
+                <th>Disconnected</th>
+                <th>Client</th>
+            </tr>
+        </thead>
+        <tbody>
+        @if (Model.Rows.Count == 0)
+        {
+            <tr><td colspan="10">No sessions recorded yet.</td></tr>
+        }
+        @foreach (var s in Model.Rows)
+        {
+            <tr>
+                <td>@s.Hostname</td>
+                <td>@(string.IsNullOrEmpty(s.Domain) ? s.Username : $"{s.Domain}\\{s.Username}")</td>
+                <td>@(s.TeamName ?? "—")</td>
+                <td>
+                    @if (s.SessionType == Heimdall.Shared.Contracts.SessionType.Rdp)
+                    {
+                        <span class="badge-pill badge-rdp">RDP</span>
+                    }
+                    else
+                    {
+                        <span class="badge-pill badge-local">Local</span>
+                    }
+                </td>
+                <td>
+                    @switch (s.State)
+                    {
+                        case Heimdall.Shared.Contracts.SessionState.Active:
+                            <span class="badge-pill badge-active">Active</span>
+                            break;
+                        case Heimdall.Shared.Contracts.SessionState.Disconnected:
+                            <span class="badge-pill badge-disc">Disconnected</span>
+                            break;
+                        default:
+                            <span class="badge-pill badge-ended">Ended</span>
+                            break;
+                    }
+                </td>
+                <td>@s.StartedAtUtc.ToLocalTime().ToString("g")</td>
+                <td>@(s.EndedAtUtc?.ToLocalTime().ToString("g") ?? "—")</td>
+                <td>@Fmt(s.ActiveSeconds)</td>
+                <td>@Fmt(s.DisconnectedSeconds)</td>
+                <td>@(s.ClientName ?? s.ClientAddress ?? "—")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>

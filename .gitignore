@@ -1,0 +1,55 @@
+# Build
+bin/
+obj/
+[Bb]uild/
+[Ll]og/
+[Ll]ogs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+project.lock.json
+artifacts/
+
+# IDE / VS
+.vs/
+.idea/
+*.swp
+*~
+
+# Publish output
+publish/
+**/publish/
+
+# SQLite databases (never commit live data)
+*.db
+*.db-shm
+*.db-wal
+**/heimdall.db
+**/queue.db
+**/heimdall*.db
+
+# Secrets / local overrides (keep committed appsettings.json as POC placeholders only)
+**/appsettings.*.local.json
+**/secrets.json
+**/appsettings.Production.json
+.env
+.env.*
+!.env.example
+
+# Installer & diagnostics output
+**/Heimdall/logs/
+*.log
+diagnostics-*/
+*.zip
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Test / coverage
+TestResults/
+coverage/
+*.coverage
+*.coveragexml

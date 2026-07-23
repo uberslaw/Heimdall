@@ -1,0 +1,305 @@
+@page
+@model ConfigModel
+@using Heimdall.Shared.Contracts
+@{
+    ViewData["Title"] = "Config";
+}
+
+<h1 class="hd-title">Tracking config</h1>
+<p class="hd-sub">Sampling defaults, known apps, and performance metric thresholds</p>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<form method="post" asp-page-handler="SaveTracking" class="hd-panel mb-4">
+    <h2 class="h5 mb-3">Sampling (all machines)</h2>
+    <div class="row g-3 mb-3">
+        <div class="col-md-4">
+            <label class="form-label">Sample interval (seconds)</label>
+            <input class="form-control" asp-for="SampleIntervalSeconds" type="number" min="10" max="600" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Upload interval (seconds)</label>
+            <input class="form-control" asp-for="UploadIntervalSeconds" type="number" min="30" max="3600" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Min CPU % to track</label>
+            <input class="form-control" asp-for="MinCpuPercentToTrack" type="number" min="0" max="100" step="0.1" />
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-md-6">
+            <label class="form-label">Extra include processes (one per line)</label>
+            <textarea class="form-control" asp-for="IncludeProcessesText" rows="6" placeholder="e.g. dynamo&#10;grasshopper"></textarea>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">Exclude processes (noise)</label>
+            <textarea class="form-control" asp-for="ExcludeProcessesText" rows="6"></textarea>
+        </div>
+    </div>
+
+    <h2 class="h5 mb-3">Known applications (global defaults)</h2>
+    <div class="row mb-3">
+        @foreach (var app in Model.KnownApps)
+        {
+            <div class="col-md-4 mb-2">
+                <label class="form-check-label">
+                    <input class="form-check-input" type="checkbox" name="EnabledAppIds" value="@app.Id"
+                           @(Model.EnabledAppIds.Contains(app.Id) ? "checked" : null) />
+                    @app.DisplayName <span class="text-secondary">(@app.ProcessName)</span>
+                </label>
+            </div>
+        }
+    </div>
+
+    <button type="submit" class="btn btn-hd">Save config</button>
+</form>
+
+<form method="post" asp-page-handler="AddApp" class="hd-panel mb-4">
+    <h2 class="h5 mb-3">Add custom application</h2>
+    <div class="row g-3 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label">Display name</label>
+            <input class="form-control" asp-for="NewAppDisplayName" placeholder="e.g. Speckle" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Process name</label>
+            <input class="form-control" asp-for="NewAppProcessName" placeholder="e.g. Speckle" />
+        </div>
+        <div class="col-md-4">
+            <button type="submit" class="btn btn-ghost">Add</button>
+        </div>
+    </div>
+</form>
+
+<div class="hd-panel mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h2 class="h5 mb-0">Metric threshold policies</h2>
+        <span class="text-secondary small">Most specific scope wins for agents · Machine &gt; Office &gt; Region &gt; All</span>
+    </div>
+
+    <table class="hd-table mb-0">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Metric</th>
+                <th>Thresholds</th>
+                <th>Scope</th>
+                <th>Enabled</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        @if (Model.Policies.Count == 0)
+        {
+            <tr><td colspan="6">No metric policies yet.</td></tr>
+        }
+        @foreach (var p in Model.Policies)
+        {
+            <tr>
+                <td><strong>@p.Name</strong></td>
+                <td>@FormatMetric(p.MetricType)</td>
+                <td class="small">@FormatThresholds(p)</td>
+                <td>
+                    <span class="badge-pill badge-local">@p.Scope</span>
+                    @if (!string.IsNullOrEmpty(p.ScopeValue))
+                    {
+                        <span class="text-secondary"> @p.ScopeValue</span>
+                    }
+                </td>
+                <td>
+                    @if (p.IsEnabled)
+                    {
+                        <span class="badge-pill badge-active">On</span>
+                    }
+                    else
+                    {
+                        <span class="badge-pill badge-ended">Off</span>
+                    }
+                </td>
+                <td class="text-nowrap">
+                    <a class="btn btn-ghost btn-sm" asp-page="/Config" asp-route-edit="@p.Id">Edit</a>
+                    <form method="post" asp-page-handler="TogglePolicy" class="d-inline">
+                        <input type="hidden" name="PolicyId" value="@p.Id" />
+                        <button type="submit" class="btn btn-ghost btn-sm">@(p.IsEnabled ? "Disable" : "Enable")</button>
+                    </form>
+                    <form method="post" asp-page-handler="DeletePolicy" class="d-inline" onsubmit="return confirm('Delete this policy?');">
+                        <input type="hidden" name="PolicyId" value="@p.Id" />
+                        <button type="submit" class="btn btn-ghost btn-sm">Delete</button>
+                    </form>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+<form method="post" asp-page-handler="SavePolicy" id="metric-policy-form" class="hd-panel">
+    <h2 class="h5 mb-3">@(Model.EditingPolicyId.HasValue ? "Edit metric policy" : "New metric policy")</h2>
+    <input type="hidden" asp-for="EditingPolicyId" />
+
+    <div class="row g-3 mb-3">
+        <div class="col-md-4">
+            <label class="form-label">Name</label>
+            <input class="form-control" asp-for="PolicyName" placeholder="e.g. Sydney high RAM" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Metric type</label>
+            <select class="form-select" asp-for="PolicyMetricType" id="policy-metric-type">
+                <option value="@MetricType.HighRam">High RAM usage</option>
+                <option value="@MetricType.HighGpu">High GPU consumption</option>
+                <option value="@MetricType.HighDisk">High disk read/write</option>
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Scope type</label>
+            <select class="form-select" asp-for="PolicyScope" id="policy-scope-type">
+                <option value="@ConfigScope.All">All machines</option>
+                <option value="@ConfigScope.Region">Region</option>
+                <option value="@ConfigScope.Office">Office</option>
+                <option value="@ConfigScope.Group">Group (legacy)</option>
+                <option value="@ConfigScope.Machine">Single machine</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3" data-metric-fields="HighRam">
+        <div class="col-md-6">
+            <label class="form-label">RAM % threshold</label>
+            <input class="form-control" asp-for="RamPercent" type="number" min="1" max="100" step="0.1" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">RAM MB threshold</label>
+            <input class="form-control" asp-for="RamMb" type="number" min="0" step="1" />
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3" data-metric-fields="HighGpu" hidden>
+        <div class="col-md-6">
+            <label class="form-label">GPU util % threshold</label>
+            <input class="form-control" asp-for="GpuPercent" type="number" min="1" max="100" step="0.1" />
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3" data-metric-fields="HighDisk" hidden>
+        <div class="col-md-4">
+            <label class="form-label">Disk read MB/s</label>
+            <input class="form-control" asp-for="DiskReadMBps" type="number" min="0" step="0.1" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Disk write MB/s</label>
+            <input class="form-control" asp-for="DiskWriteMBps" type="number" min="0" step="0.1" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Combined MB/s</label>
+            <input class="form-control" asp-for="DiskCombinedMBps" type="number" min="0" step="0.1" />
+        </div>
+    </div>
+
+    <div class="mb-3" id="policy-scope-tree-wrap">
+        <label class="form-label">Scope target (pick one region, office, or machine)</label>
+        <p class="text-secondary small">For Region/Office/Machine scopes, select exactly one node in the tree. Ignored when scope is All.</p>
+        @{
+            ViewData["TreeId"] = "policy-tree";
+            ViewData["TreeInputPrefix"] = "PolicySelected";
+        }
+        <partial name="_MachineTree" model="Model.Tree" />
+        <div class="mt-2">
+            <label class="form-label">Or type scope value</label>
+            <input class="form-control" asp-for="PolicyScopeValue" placeholder="e.g. APAC, APAC/Sydney, or HOSTNAME" />
+        </div>
+    </div>
+
+    <div class="form-check mb-3">
+        <input class="form-check-input" asp-for="PolicyEnabled" />
+        <label class="form-check-label" asp-for="PolicyEnabled">Enabled</label>
+    </div>
+
+    <button type="submit" class="btn btn-hd">@(Model.EditingPolicyId.HasValue ? "Update policy" : "Create policy")</button>
+    @if (Model.EditingPolicyId.HasValue)
+    {
+        <a class="btn btn-ghost ms-2" asp-page="/Config">Cancel</a>
+    }
+</form>
+
+@section Scripts {
+<script src="~/js/machine-tree.js" asp-append-version="true"></script>
+<script>
+(() => {
+  const typeSel = document.getElementById('policy-metric-type');
+  function syncMetricFields() {
+    const v = typeSel?.selectedOptions[0]?.text?.includes('RAM') ? 'HighRam'
+      : typeSel?.selectedOptions[0]?.text?.includes('GPU') ? 'HighGpu'
+      : typeSel?.selectedOptions[0]?.text?.includes('disk') ? 'HighDisk'
+      : typeSel?.value;
+    // Prefer enum string from value
+    const map = { '0': 'HighRam', '1': 'HighGpu', '2': 'HighDisk',
+      'HighRam': 'HighRam', 'HighGpu': 'HighGpu', 'HighDisk': 'HighDisk' };
+    const key = map[typeSel.value] || 'HighRam';
+    document.querySelectorAll('[data-metric-fields]').forEach(el => {
+      el.hidden = el.getAttribute('data-metric-fields') !== key;
+    });
+  }
+  typeSel?.addEventListener('change', syncMetricFields);
+  syncMetricFields();
+
+  const tree = document.getElementById('policy-tree');
+  HeimdallTree.init(tree);
+
+  // Single-select behaviour for policy tree: clicking checks only that branch leaf intent
+  tree?.addEventListener('change', e => {
+    const cb = e.target;
+    if (!cb.classList?.contains('hd-tree-check')) return;
+    // After normal cascade, collapse to a single scope value in the text field
+    const data = HeimdallTree.collect(tree);
+    const scopeSel = document.getElementById('policy-scope-type');
+    const valueInput = document.querySelector('[name="PolicyScopeValue"]');
+    if (!valueInput) return;
+    if (data.regions.length === 1 && data.offices.length === 0 && data.machines.length === 0) {
+      valueInput.value = data.regions[0];
+      if (scopeSel) scopeSel.value = '@((int)ConfigScope.Region)';
+    } else if (data.offices.length === 1 && data.machines.length === 0 && data.regions.length === 0) {
+      valueInput.value = data.offices[0];
+      if (scopeSel) scopeSel.value = '@((int)ConfigScope.Office)';
+    } else if (data.machines.length === 1 && data.offices.length === 0 && data.regions.length === 0) {
+      valueInput.value = data.machines[0];
+      if (scopeSel) scopeSel.value = '@((int)ConfigScope.Machine)';
+    } else if (data.regions.length + data.offices.length + data.machines.length > 0) {
+      // Prefer most specific single value if mixed
+      if (data.machines.length) valueInput.value = data.machines[0];
+      else if (data.offices.length) valueInput.value = data.offices[0];
+      else valueInput.value = data.regions[0];
+    }
+  });
+})();
+</script>
+}
+
+@functions {
+    static string FormatMetric(MetricType t) => t switch
+    {
+        MetricType.HighRam => "High RAM",
+        MetricType.HighGpu => "High GPU",
+        MetricType.HighDisk => "High disk",
+        _ => t.ToString()
+    };
+
+    static string FormatThresholds(Heimdall.Api.Data.MetricPolicy p)
+    {
+        var parts = new List<string>();
+        if (p.RamPercentThreshold is double rp) parts.Add($"{rp:0.#}% RAM");
+        if (p.RamMbThreshold is double rm) parts.Add($"{rm:0} MB");
+        if (p.GpuPercentThreshold is double gp) parts.Add($"{gp:0.#}% GPU");
+        if (p.DiskReadMBpsThreshold is double dr) parts.Add($"R {dr:0.#} MB/s");
+        if (p.DiskWriteMBpsThreshold is double dw) parts.Add($"W {dw:0.#} MB/s");
+        if (p.DiskCombinedMBpsThreshold is double dc) parts.Add($"Σ {dc:0.#} MB/s");
+        return parts.Count == 0 ? "—" : string.Join(" · ", parts);
+    }
+}

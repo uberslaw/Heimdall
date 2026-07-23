@@ -1,0 +1,260 @@
+@page
+@model TeamsModel
+@{
+    ViewData["Title"] = "Teams";
+}
+
+<h1 class="hd-title">Teams</h1>
+<p class="hd-sub">Who belongs to which part of the business · CSV import for POC</p>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+@if (Model.IsEmpty)
+{
+    <div class="hd-panel mb-4">
+        <h2 class="h5 mb-2">Get started</h2>
+        <p class="mb-3 text-secondary">
+            No teams or people yet. Upload a CSV to bulk-link usernames to teams (primary POC path),
+            or create teams and assignments manually below. Full org-chart file upload can come later —
+            CSV is the supported import for this POC.
+        </p>
+        <p class="mb-2"><strong>Expected columns</strong> (header row required):</p>
+        <pre class="p-3 rounded mb-3" style="background: var(--hd-panel-2); overflow-x: auto;">Username,Domain,DisplayName,Email,Team,ParentTeam
+jsmith,ARUP,Jane Smith,jane.smith@example.com,Digital,Buildings
+ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
+        <p class="mb-3 text-secondary small">
+            Simpler format also works: <code>Username,Team</code>.
+            Username may be <code>DOMAIN\user</code> or bare SAM; matching to sessions is case-insensitive either way.
+            Optional column: <code>Code</code> (team code).
+        </p>
+        <a class="btn btn-hd" asp-page-handler="Template">Download CSV template</a>
+    </div>
+}
+
+<form method="post" enctype="multipart/form-data" asp-page-handler="ImportCsv" class="hd-panel mb-4">
+    <h2 class="h5 mb-3">Upload CSV</h2>
+    <div class="row g-3 align-items-end">
+        <div class="col-md-8">
+            <label class="form-label" for="csv-file">CSV file</label>
+            <input class="form-control" type="file" name="CsvFile" id="csv-file" accept=".csv,text/csv" />
+        </div>
+        <div class="col-md-4">
+            <button type="submit" class="btn btn-hd w-100">Import</button>
+        </div>
+    </div>
+    @if (!Model.IsEmpty)
+    {
+        <p class="mt-3 mb-0 text-secondary small">
+            Columns: <code>Username,Domain,DisplayName,Email,Team,ParentTeam</code> (or <code>Username,Team</code>).
+            <a asp-page-handler="Template">Download template</a>
+        </p>
+    }
+</form>
+
+<div class="row g-4 mb-4">
+    <div class="col-lg-5">
+        <form method="post" asp-page-handler="SaveTeam" class="hd-panel h-100">
+            <h2 class="h5 mb-3">@(Model.EditingTeamId is null ? "Create team" : "Edit team")</h2>
+            <input type="hidden" asp-for="EditingTeamId" />
+            <div class="mb-3">
+                <label class="form-label">Name</label>
+                <input class="form-control" asp-for="TeamName" placeholder="e.g. Digital" required />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Code (optional)</label>
+                <input class="form-control" asp-for="TeamCode" placeholder="e.g. DIG" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Parent team</label>
+                <select class="form-select" asp-for="TeamParentId">
+                    <option value="">— none —</option>
+                    @foreach (var t in Model.TeamOptions.Where(o => o.Id != Model.EditingTeamId))
+                    {
+                        <option value="@t.Id">@t.Label</option>
+                    }
+                </select>
+            </div>
+            <div class="d-flex gap-2 flex-wrap">
+                <button type="submit" class="btn btn-hd">@(Model.EditingTeamId is null ? "Create" : "Save")</button>
+                @if (Model.EditingTeamId is not null)
+                {
+                    <a class="btn btn-ghost" asp-page="/Teams">Cancel</a>
+                }
+            </div>
+        </form>
+    </div>
+    <div class="col-lg-7">
+        <div class="hd-panel h-100">
+            <h2 class="h5 mb-3">Teams</h2>
+            @if (Model.TeamTree.Count == 0)
+            {
+                <p class="text-secondary mb-0">No teams yet.</p>
+            }
+            else
+            {
+                <table class="hd-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Code</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var node in Flatten(Model.TeamTree))
+                    {
+                        <tr>
+                            <td style="padding-left: @(1 + node.Depth * 1.25)rem">
+                                @if (node.Depth > 0)
+                                {
+                                    <span class="text-secondary">↳ </span>
+                                }
+                                <strong>@node.Name</strong>
+                            </td>
+                            <td>@(node.Code ?? "—")</td>
+                            <td class="text-end text-nowrap">
+                                <a class="btn btn-ghost btn-sm" asp-page="/Teams" asp-route-editTeam="@node.Id">Edit</a>
+                                <form method="post" asp-page-handler="DeleteTeam" class="d-inline"
+                                      onsubmit="return confirm('Delete team @node.Name? Members will be removed.');">
+                                    <input type="hidden" name="TeamId" value="@node.Id" />
+                                    <button type="submit" class="btn btn-ghost btn-sm">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-lg-5">
+        <form method="post" asp-page-handler="SavePerson" class="hd-panel h-100">
+            <h2 class="h5 mb-3">@(Model.EditingPersonId is null ? "Assign person" : "Edit assignment")</h2>
+            <input type="hidden" asp-for="EditingPersonId" />
+            <div class="mb-3">
+                <label class="form-label">Username</label>
+                <input class="form-control" asp-for="PersonUsername" placeholder="jsmith or ARUP\jsmith" list="session-users" required />
+                <datalist id="session-users">
+                    @foreach (var u in Model.SessionUsernames)
+                    {
+                        <option value="@u"></option>
+                    }
+                </datalist>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Domain (optional)</label>
+                <input class="form-control" asp-for="PersonDomain" placeholder="ARUP" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Display name</label>
+                <input class="form-control" asp-for="PersonDisplayName" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Email</label>
+                <input class="form-control" asp-for="PersonEmail" type="email" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Team</label>
+                <select class="form-select" asp-for="PersonTeamId" required>
+                    <option value="">— select —</option>
+                    @foreach (var t in Model.TeamOptions)
+                    {
+                        <option value="@t.Id">@t.Label</option>
+                    }
+                </select>
+            </div>
+            <div class="d-flex gap-2 flex-wrap">
+                @if (Model.TeamOptions.Count == 0)
+                {
+                    <button type="submit" class="btn btn-hd" disabled>@(Model.EditingPersonId is null ? "Assign" : "Save")</button>
+                }
+                else
+                {
+                    <button type="submit" class="btn btn-hd">@(Model.EditingPersonId is null ? "Assign" : "Save")</button>
+                }
+                @if (Model.EditingPersonId is not null)
+                {
+                    <a class="btn btn-ghost" asp-page="/Teams">Cancel</a>
+                }
+            </div>
+        </form>
+    </div>
+    <div class="col-lg-7">
+        <div class="hd-panel h-100">
+            <h2 class="h5 mb-3">People → team</h2>
+            @if (Model.People.Count == 0)
+            {
+                <p class="text-secondary mb-0">No people assigned yet.</p>
+            }
+            else
+            {
+                <table class="hd-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Name</th>
+                            <th>Team</th>
+                            <th>Sessions</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var p in Model.People)
+                    {
+                        <tr>
+                            <td>
+                                <strong>@TeamsModel.FormatUser(p.Username, p.Domain)</strong>
+                                @if (!string.IsNullOrEmpty(p.Email))
+                                {
+                                    <div class="text-secondary small">@p.Email</div>
+                                }
+                            </td>
+                            <td>@(p.DisplayName ?? "—")</td>
+                            <td>@p.TeamName</td>
+                            <td>
+                                @if (p.SeenInSessions)
+                                {
+                                    <span class="badge-pill badge-active">Matched</span>
+                                }
+                                else
+                                {
+                                    <span class="badge-pill badge-ended">Not seen</span>
+                                }
+                            </td>
+                            <td class="text-end text-nowrap">
+                                <a class="btn btn-ghost btn-sm" asp-page="/Teams" asp-route-editPerson="@p.Id">Edit</a>
+                                <form method="post" asp-page-handler="DeletePerson" class="d-inline">
+                                    <input type="hidden" name="PersonId" value="@p.Id" />
+                                    <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
+                                </form>
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+</div>
+
+@functions {
+    IEnumerable<TeamsModel.TeamNode> Flatten(IEnumerable<TeamsModel.TeamNode> nodes)
+    {
+        foreach (var n in nodes)
+        {
+            yield return n;
+            foreach (var c in Flatten(n.Children))
+                yield return c;
+        }
+    }
+}

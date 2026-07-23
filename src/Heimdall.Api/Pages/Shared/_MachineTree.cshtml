@@ -1,0 +1,51 @@
+@model IReadOnlyList<Heimdall.Api.Services.MachineHierarchy.RegionNode>
+@{
+    var inputPrefix = (string?)ViewData["TreeInputPrefix"] ?? "Selected";
+    var regionName = $"{inputPrefix}Regions";
+    var officeName = $"{inputPrefix}Offices";
+    var machineName = $"{inputPrefix}Machines";
+    var treeId = (string?)ViewData["TreeId"] ?? "machine-tree";
+}
+
+@if (Model.Count == 0)
+{
+    <p class="text-secondary mb-0">No machines reported yet. Agents will appear here after first heartbeat.</p>
+}
+else
+{
+    <div class="hd-tree" id="@treeId" data-region-input="@regionName" data-office-input="@officeName" data-machine-input="@machineName">
+        @foreach (var region in Model)
+        {
+            <div class="hd-tree-region" data-region="@region.Name">
+                <label class="hd-tree-node">
+                    <input type="checkbox" class="form-check-input hd-tree-check" data-level="region" value="@region.Name" />
+                    <span class="hd-tree-label">@region.Name</span>
+                    <span class="hd-tree-meta">region</span>
+                </label>
+                <div class="hd-tree-children">
+                    @foreach (var office in region.Offices)
+                    {
+                        var officeKey = $"{region.Name}/{office.Name}";
+                        <div class="hd-tree-office" data-office="@officeKey">
+                            <label class="hd-tree-node">
+                                <input type="checkbox" class="form-check-input hd-tree-check" data-level="office" value="@officeKey" />
+                                <span class="hd-tree-label">@office.Name</span>
+                                <span class="hd-tree-meta">office</span>
+                            </label>
+                            <div class="hd-tree-children">
+                                @foreach (var m in office.Machines)
+                                {
+                                    <label class="hd-tree-node hd-tree-machine">
+                                        <input type="checkbox" class="form-check-input hd-tree-check" data-level="machine" value="@m.Hostname" />
+                                        <span class="hd-tree-label">@m.Hostname</span>
+                                    </label>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+        <div class="hd-tree-hidden-inputs" aria-hidden="true"></div>
+    </div>
+}

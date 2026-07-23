@@ -1,0 +1,117 @@
+@page
+@model TrackSoftwareModel
+@{
+    ViewData["Title"] = "Track Software";
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+    <div>
+        <h1 class="hd-title mb-1">Track Software</h1>
+        <p class="hd-sub mb-0">Add a title to track on selected regions, offices, or machines</p>
+    </div>
+    <a class="btn btn-ghost" asp-page="/Apps">← Applications</a>
+</div>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<form method="post" id="track-software-form" class="hd-panel">
+    <div class="row g-4">
+        <div class="col-lg-5">
+            <h2 class="h5 mb-3">1. Machine scope</h2>
+            <p class="text-secondary small">Check a region or office to include all children. Individual machines can be mixed in.</p>
+            @{
+                ViewData["TreeId"] = "track-tree";
+                ViewData["TreeInputPrefix"] = "Selected";
+            }
+            <partial name="_MachineTree" model="Model.Tree" />
+        </div>
+        <div class="col-lg-7">
+            <h2 class="h5 mb-3">2. Software source</h2>
+            <div class="hd-source-tabs mb-3">
+                <label class="hd-source-tab">
+                    <input type="radio" name="Source" value="Known" @(Model.Source == "Known" ? "checked" : null) />
+                    Known apps
+                </label>
+                <label class="hd-source-tab">
+                    <input type="radio" name="Source" value="Discovered" @(Model.Source == "Discovered" ? "checked" : null) />
+                    Discovered
+                </label>
+                <label class="hd-source-tab">
+                    <input type="radio" name="Source" value="Custom" @(Model.Source == "Custom" ? "checked" : null) />
+                    Custom
+                </label>
+            </div>
+
+            <div data-source-panel="Known" class="mb-3">
+                <label class="form-label">Known application</label>
+                <select class="form-select" name="KnownAppId" asp-for="KnownAppId">
+                    <option value="">— select —</option>
+                    @foreach (var app in Model.KnownApps)
+                    {
+                        <option value="@app.Id">@app.DisplayName (@app.ProcessName)</option>
+                    }
+                </select>
+            </div>
+
+            <div data-source-panel="Discovered" class="mb-3" hidden>
+                <label class="form-label">Discovered process</label>
+                <select class="form-select" name="DiscoveredKey" asp-for="DiscoveredKey">
+                    <option value="">— select —</option>
+                    @foreach (var d in Model.Discovered)
+                    {
+                        <option value="@d.Key">@d.ProcessName @(string.IsNullOrEmpty(d.Path) ? "" : $"· {d.Path}")</option>
+                    }
+                </select>
+                @if (Model.Discovered.Count == 0)
+                {
+                    <p class="text-secondary small mt-2 mb-0">No process runs ingested yet.</p>
+                }
+            </div>
+
+            <div data-source-panel="Custom" class="mb-3" hidden>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Executable name</label>
+                        <input class="form-control" name="CustomProcessName" asp-for="CustomProcessName" placeholder="e.g. Speckle" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Display name (optional)</label>
+                        <input class="form-control" name="CustomDisplayName" asp-for="CustomDisplayName" placeholder="e.g. Speckle Connector" />
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Full path (optional)</label>
+                        <input class="form-control" name="CustomPath" asp-for="CustomPath" placeholder="C:\Program Files\..." />
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-hd mt-2">Start tracking</button>
+        </div>
+    </div>
+</form>
+
+@section Scripts {
+<script src="~/js/machine-tree.js" asp-append-version="true"></script>
+<script>
+(() => {
+  const form = document.getElementById('track-software-form');
+  const radios = form.querySelectorAll('input[name="Source"]');
+  function syncPanels() {
+    const src = form.querySelector('input[name="Source"]:checked')?.value || 'Known';
+    form.querySelectorAll('[data-source-panel]').forEach(p => {
+      p.hidden = p.getAttribute('data-source-panel') !== src;
+    });
+  }
+  radios.forEach(r => r.addEventListener('change', syncPanels));
+  syncPanels();
+  HeimdallTree.init(document.getElementById('track-tree'));
+})();
+</script>
+}

@@ -1,0 +1,228 @@
+@page
+@model SocratizeModel
+@{
+    ViewData["Title"] = string.IsNullOrWhiteSpace(Model.Host) ? "Socratize" : $"Socratize · {Model.Host}";
+    var brief = Model.Brief;
+}
+
+<h1 class="hd-title">Socratize</h1>
+<p class="hd-sub">One-machine cost-justification brief — probe Heimdall’s collected data (sessions, RDP vs local, util, apps, teams)</p>
+
+<form method="get" class="hd-panel mb-3">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label" for="host">Machine</label>
+            <select class="form-select" name="Host" id="host">
+                <option value="">— select host —</option>
+                @foreach (var h in Model.Hostnames)
+                {
+                    if (string.Equals(Model.Host, h, StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="@h" selected>@h</option>
+                    }
+                    else
+                    {
+                        <option value="@h">@h</option>
+                    }
+                }
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label" for="days">Period</label>
+            <select class="form-select" name="Days" id="days">
+                @{
+                    var dayOpts = new (int V, string L)[] { (7, "Last 7 days"), (30, "Last 30 days"), (90, "Last 90 days"), (0, "Custom dates") };
+                    var selectedDays = Model.Days is 7 or 90 or 0 ? Model.Days : 30;
+                }
+                @foreach (var opt in dayOpts)
+                {
+                    if (opt.V == selectedDays)
+                    {
+                        <option value="@opt.V" selected>@opt.L</option>
+                    }
+                    else
+                    {
+                        <option value="@opt.V">@opt.L</option>
+                    }
+                }
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">From (UTC)</label>
+            <input class="form-control" type="date" name="From" value="@(Model.From ?? Model.FromUtc.ToString("yyyy-MM-dd"))" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">To (UTC)</label>
+            <input class="form-control" type="date" name="To" value="@(Model.To ?? Model.ToUtc.ToString("yyyy-MM-dd"))" />
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-hd w-100">Socratize</button>
+        </div>
+    </div>
+</form>
+
+@if (string.IsNullOrWhiteSpace(Model.Host))
+{
+    <div class="hd-panel">
+        <p class="text-secondary mb-0">Pick a machine (or use <strong>Socratize</strong> on the Machines page) to generate a retrospective Q&amp;A brief from already-collected Heimdall data.</p>
+    </div>
+}
+else if (Model.HostNotFound)
+{
+    <div class="hd-panel">
+        <p class="mb-0" style="color:#f0a0a0;">No machine named <strong>@Model.Host</strong> in the database yet.</p>
+    </div>
+}
+else if (brief is not null)
+{
+    <div class="hd-grid mb-3">
+        <div class="hd-stat">
+            <div class="label">Host</div>
+            <div class="value" style="font-size:1.25rem;">@brief.Hostname</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Period</div>
+            <div class="value" style="font-size:1.1rem;">@Model.PeriodLabel</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Utilisation</div>
+            <div class="value">@brief.UtilisationPct.ToString("0")%</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">POC verdict</div>
+            <div class="value" style="font-size:1.15rem;">
+                <span class="badge-pill badge-socratize-@brief.Verdict.Code">@brief.Verdict.Label</span>
+            </div>
+        </div>
+    </div>
+
+    <p class="hd-meta-line mb-3">
+        @(brief.Region ?? "—") / @(brief.Office ?? "—")
+        @if (!string.IsNullOrWhiteSpace(brief.MachineGroup))
+        {
+            <span>· group @brief.MachineGroup</span>
+        }
+        · @brief.SessionCount sessions · @brief.ProcessRunCount process runs
+        · @brief.FromUtc.ToString("yyyy-MM-dd") → @brief.ToUtc.ToString("yyyy-MM-dd") UTC
+    </p>
+
+    <div class="hd-panel mb-3">
+        <h2 class="hd-section-title">Interrogation</h2>
+        @if (brief.Findings.Count == 0)
+        {
+            <p class="text-secondary mb-0">Nothing to say for this period.</p>
+        }
+        else
+        {
+            <div class="hd-qa-list">
+                @foreach (var f in brief.Findings)
+                {
+                    <div class="hd-qa">
+                        <div class="hd-q">@f.Question</div>
+                        <div class="hd-a">@f.Answer</div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    @if (brief.Users.Count > 0)
+    {
+        <div class="hd-panel mb-3">
+            <h2 class="hd-section-title">Users</h2>
+            <table class="hd-table">
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Team</th>
+                        <th>Logons</th>
+                        <th>Local / RDP</th>
+                        <th>Active</th>
+                        <th>Disconnected</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var u in brief.Users)
+                {
+                    <tr>
+                        <td>@u.Username</td>
+                        <td>@(u.TeamName ?? "—")</td>
+                        <td>@u.LogonCount</td>
+                        <td>@u.LocalLogons / @u.RdpLogons</td>
+                        <td>@FormatDur(u.ActiveSeconds)</td>
+                        <td>@FormatDur(u.DisconnectedSeconds)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @if (brief.Apps.Count > 0)
+    {
+        <div class="hd-panel mb-3">
+            <h2 class="hd-section-title">Applications</h2>
+            <table class="hd-table">
+                <thead>
+                    <tr>
+                        <th>Process</th>
+                        <th>Runs</th>
+                        <th>Users</th>
+                        <th>Open time</th>
+                        <th>Peak CPU</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var a in brief.Apps.Take(15))
+                {
+                    <tr>
+                        <td>@a.ProcessName</td>
+                        <td>@a.RunCount</td>
+                        <td>@a.UniqueUsers</td>
+                        <td>@FormatDur(a.TotalOpenSeconds)</td>
+                        <td>@(a.PeakCpuPercent is double p ? $"{p:0.#}%" : "—")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+    else if (brief.SessionCount > 0)
+    {
+        <div class="hd-panel mb-3">
+            <p class="text-secondary mb-0">No tracked process runs in this period — empty app story.</p>
+        </div>
+    }
+
+    <p class="hd-meta-line mb-4">
+        <a asp-page="/Index">← Machines</a>
+        ·
+        <a asp-page="/Stats" asp-route-ScopeKind="Machine" asp-route-ScopeValue="@brief.Hostname" asp-route-Days="30">Open in Stats</a>
+    </p>
+}
+
+@* Parked product idea — keep the Socratize name for retrospective; Flight Recorder is the future deep-observe arm. *@
+<div class="hd-panel hd-flight-recorder">
+    <div class="d-flex flex-wrap align-items-start justify-content-between gap-2">
+        <div>
+            <h2 class="hd-section-title mb-1">Flight Recorder <span class="badge-pill badge-coming">coming</span></h2>
+            <p class="hd-flight-copy mb-0">
+                Optional high-cardinality capture <em>while</em> a watched process runs (or on demand) — e.g. <code>tuflow.exe</code> choking on network dropouts —
+                then ship a ring buffer for AI / Socratize analysis: what was happening when it failed?
+                Candidate later tech: ETW (TcpIp / Kernel-Network), perf counters, <code>Get-NetTCPConnection</code> sampling;
+                correlate SessionId + NIC errors + RDP disconnects. Not ProcMon/WFP in the default agent.
+            </p>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" disabled title="Backlog — see docs/BACKLOG.md">Flight Recorder (coming)</button>
+    </div>
+</div>
+
+@functions {
+    static string FormatDur(double seconds)
+    {
+        if (seconds < 60) return $"{seconds:0}s";
+        if (seconds < 3600) return $"{seconds / 60.0:0.#}m";
+        if (seconds < 86400) return $"{seconds / 3600.0:0.#}h";
+        return $"{seconds / 86400.0:0.#}d";
+    }
+}

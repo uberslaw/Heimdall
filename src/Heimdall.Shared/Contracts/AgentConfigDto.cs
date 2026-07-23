@@ -1,0 +1,35 @@
+namespace Heimdall.Shared.Contracts;
+
+public sealed class AgentConfigDto
+{
+    public int ConfigVersion { get; init; }
+    public int SampleIntervalSeconds { get; init; } = 30;
+    public int UploadIntervalSeconds { get; init; } = 60;
+    public int ConfigRefreshSeconds { get; init; } = 300;
+    public double MinCpuPercentToTrack { get; init; } = 0;
+    public List<string> IncludeProcesses { get; init; } = [];
+    public List<string> ExcludeProcesses { get; init; } = [];
+    public List<KnownAppDto> KnownApps { get; init; } = [];
+    /// <summary>Effective metric thresholds for this host (most-specific scope wins per metric).</summary>
+    public List<MetricThresholdDto> MetricThresholds { get; init; } = [];
+}
+
+public sealed class KnownAppDto
+{
+    public required string DisplayName { get; init; }
+    public required string ProcessName { get; init; }
+    public bool Enabled { get; init; } = true;
+}
+
+public sealed class MetricThresholdDto
+{
+    public required string MetricType { get; init; }
+    public string Scope { get; init; } = "All";
+    public string? ScopeValue { get; init; }
+    public double? RamPercent { get; init; }
+    public double? RamMb { get; init; }
+    public double? GpuPercent { get; init; }
+    public double? DiskReadMBps { get; init; }
+    public double? DiskWriteMBps { get; init; }
+    public double? DiskCombinedMBps { get; init; }
+}
