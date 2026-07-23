@@ -63,7 +63,29 @@ What it does:
 
 ---
 
-## 2. Install the agent
+## 2. Install the agent (workstation collector)
+
+### Option A — Portable pack (recommended for other PCs / vanilla SOE)
+
+Pack **once** on a build machine that has the repo + **.NET 10 SDK**:
+
+```text
+scripts\Pack-WorkstationCollector.cmd
+```
+
+Copy `dist\workstation-collector\` (or `dist\heimdall-workstation-collector.zip`) to each target PC. On the target, **elevated**, no SDK / no full repo required:
+
+```text
+Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
+```
+
+- Installer is **CMD only** (no PowerShell).
+- Payload is **self-contained win-x64** — target PCs do not need a separate .NET install.
+- You must copy the **whole folder** (`Install-WorkstationCollector.cmd` + `payload\`). See `scripts\workstation-collector\README.md` and `FILES.md`.
+
+**Install log:** `%ProgramData%\Heimdall\logs\install-workstation-collector-*.log`
+
+### Option B — From a full repo clone (same machine / has SDK)
 
 On each workstation (or the same machine for a local POC), run elevated:
 
@@ -175,7 +197,7 @@ It prints a **folder or zip path** at the end and pauses. Upload that zip (or th
 
 ## 5b. SOE golden-image program inventory
 
-On a **vanilla SOE / golden image** machine (before user apps), enumerate installed programs for SOE exclude review:
+Continuous usage from vanilla SOE boxes comes from the **workstation collector** (section 2, Option A). Separately, on a **golden image** machine (before user apps), enumerate installed programs for SOE exclude review:
 
 ```text
 scripts\Inspect-SoeInstalledPrograms.cmd

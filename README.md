@@ -32,7 +32,13 @@ See **[INSTALL.md](INSTALL.md)** for the full guide: prerequisites (.NET 10, adm
 scripts\Install-Api.cmd
 scripts\Install-Agent.cmd
 scripts\Collect-Diagnostics.cmd
+
+# Portable collector for other PCs / vanilla SOE (pack once, copy folder, install)
+scripts\Pack-WorkstationCollector.cmd
+# then on each target: Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
 ```
+
+See `scripts\workstation-collector\README.md` for which files to copy and dependencies.
 
 Install logs: `%ProgramData%\Heimdall\logs\`  
 Diagnostics zip: `%LOCALAPPDATA%\Heimdall\diagnostics-*.zip`

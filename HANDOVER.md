@@ -57,6 +57,7 @@ src/Heimdall.Agent    Windows service collector
 src/Heimdall.Api      Ingest API + Razor dashboard
 src/Heimdall.Shared   DTOs / contracts / hostname serial + ops. helpers
 scripts/              Installers, diagnostics, SOE inspect, repair tools
+scripts/workstation-collector/  Docs for portable agent pack (README + FILES)
 docs/BACKLOG.md       Parked product ideas (Flight Recorder, etc.)
 INSTALL.md            Full install / verify / troubleshoot guide
 HANDOVER.md           This file
@@ -93,6 +94,18 @@ Run **elevated** (prefer `.cmd` so the console stays open when double-clicked):
 scripts\Install-Api.cmd
 scripts\Install-Agent.cmd
 ```
+
+**Other workstations / vanilla SOE (portable collector, no PowerShell on target):**
+
+```text
+# On a build PC with .NET 10 SDK + full clone:
+scripts\Pack-WorkstationCollector.cmd
+
+# Copy dist\workstation-collector\ (or the zip) to each PC, then elevated:
+Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
+```
+
+Files + deps: `scripts\workstation-collector\README.md` and `FILES.md`. Target PCs need admin + network to the API; SDK/repo not required (self-contained payload).
 
 - Install / service logs: `%ProgramData%\Heimdall\logs\`
 - SQLite DB (typical): `%ProgramData%\Heimdall\heimdall.db`
@@ -188,7 +201,7 @@ Dashboard nav (on `main`): Machines | Sessions | Applications | App lists | Cost
 
 1. Pull / RepoSync `origin/main` on the next PC; open Cursor\Heimdall.
 2. Redeploy API + agent so new heartbeat fields (Guid, OS dates, hostname serial) populate.
-3. Run `Inspect-SoeInstalledPrograms` on a golden image; feed SOE excludes.
+3. Pack + deploy workstation collector to vanilla SOE boxes (`Pack-WorkstationCollector` → copy folder → `Install-WorkstationCollector`); run `Inspect-SoeInstalledPrograms` on a golden image for program-list excludes.
 4. If keys available: Dell warranty API; Flight Recorder spike; fix inflated process durations if still an issue.
 5. Demo vs CADFX with real purchase cost + support hours + Socratize.
 
@@ -218,8 +231,12 @@ dotnet run
 # Elevated installers (from repo root)
 .\scripts\Install-Api.cmd
 .\scripts\Install-Agent.cmd
+.\scripts\Pack-WorkstationCollector.cmd
 .\scripts\Collect-Diagnostics.cmd
 .\scripts\Inspect-SoeInstalledPrograms.cmd
+
+# On a packed folder copied to another PC (elevated):
+.\Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
 
 # Mojibake repair
 .\scripts\Repair-SessionMojibake.ps1

@@ -20,6 +20,7 @@ artifacts/
 # Publish output
 publish/
 **/publish/
+dist/
 
 # SQLite databases (never commit live data)
 *.db
