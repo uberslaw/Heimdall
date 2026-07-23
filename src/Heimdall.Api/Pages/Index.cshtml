@@ -84,13 +84,14 @@
                 <th>Open sessions</th>
                 <th>@shortLabel utilisation</th>
                 <th>Last seen</th>
+                <th>Apps</th>
                 <th></th>
             </tr>
         </thead>
         <tbody>
         @if (Model.Machines.Count == 0)
         {
-            <tr><td colspan="9">No agents reporting yet. Install the Heimdall agent and point it at this API.</td></tr>
+            <tr><td colspan="10">No agents reporting yet. Install the Heimdall agent and point it at this API.</td></tr>
         }
         @foreach (var m in Model.Machines)
         {
@@ -135,7 +136,30 @@
                 </td>
                 <td>@m.LastSeenUtc.ToLocalTime().ToString("g")</td>
                 <td>
+                    @if (m.AnalysisStatus == Heimdall.Api.Data.AppAnalysisStatus.PendingApproval)
+                    {
+                        <span class="badge-pill badge-rdp">Pending approval</span>
+                    }
+                    else if (m.AnalysisStatus == Heimdall.Api.Data.AppAnalysisStatus.Approved)
+                    {
+                        <span class="badge-pill badge-active">Approved</span>
+                    }
+                    else if (m.AnalysisStatus == Heimdall.Api.Data.AppAnalysisStatus.Dismissed)
+                    {
+                        <span class="badge-pill badge-ended">Dismissed</span>
+                    }
+                    else if (m.PendingAppAnalysis)
+                    {
+                        <span class="badge-pill badge-ended">Pending inventory</span>
+                    }
+                    else
+                    {
+                        <span class="badge-pill badge-ended">Not analyzed</span>
+                    }
+                </td>
+                <td class="text-nowrap">
                     <a class="btn btn-ghost btn-sm" asp-page="/Socratize" asp-route-Host="@m.Hostname">Socratize</a>
+                    <a class="btn btn-ghost btn-sm" asp-page="/AppLists" asp-route-host="@m.Hostname">Analyze apps</a>
                 </td>
             </tr>
         }

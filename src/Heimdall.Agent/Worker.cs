@@ -16,9 +16,12 @@ public sealed class Worker(
     private DateTimeOffset _nextConfigRefresh = DateTimeOffset.MinValue;
     private DateTimeOffset _nextSample = DateTimeOffset.MinValue;
     private DateTimeOffset _nextUpload = DateTimeOffset.MinValue;
+    private DateTimeOffset _nextHardwareRefresh = DateTimeOffset.MinValue;
+    private HardwareInventoryCollector.Snapshot? _hardware;
     private readonly List<SessionEventDto> _sessionBuffer = [];
     private readonly Dictionary<string, ProcessRunDto> _processBuffer = new(StringComparer.OrdinalIgnoreCase);
     private OfflineQueue? _queue;
+    private bool _sendInventoryNextUpload;
 
     [SupportedOSPlatform("windows")]
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -35,6 +38,7 @@ public sealed class Worker(
         _queue = new OfflineQueue(queuePath);
 
         logger.LogInformation("Heimdall agent starting on {Hostname}", hostname);
+        RefreshHardware(force: true);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -46,10 +50,15 @@ public sealed class Worker(
                 if (remote is not null)
                 {
                     _config = remote;
-                    logger.LogInformation("Config refreshed v{Version}; tracking {Count} processes",
-                        _config.ConfigVersion, _config.IncludeProcesses.Count + _config.KnownApps.Count(a => a.Enabled));
+                    if (remote.PendingAppAnalysis)
+                        _sendInventoryNextUpload = true;
+                    logger.LogInformation("Config refreshed v{Version}; tracking {Count} processes{Inventory}",
+                        _config.ConfigVersion, _config.IncludeProcesses.Count + _config.KnownApps.Count(a => a.Enabled),
+                        remote.PendingAppAnalysis ? "; inventory requested" : "");
                 }
                 _nextConfigRefresh = now.AddSeconds(Math.Max(60, _config.ConfigRefreshSeconds));
+                // Re-scan hardware on config refresh cadence (not every sample)
+                RefreshHardware(force: false);
             }
 
             if (now >= _nextSample)
@@ -62,8 +71,6 @@ public sealed class Worker(
 
                     var processEvents = _processes.Sample(hostname, _config, sessionId =>
                     {
-                        // Resolve via latest session event buffer / live collector indirectly:
-                        // SessionCollector doesn't expose lookup; use Windows username from WTS via a lightweight query.
                         return ResolveSessionUser(sessionId);
                     });
 
@@ -88,6 +95,31 @@ public sealed class Worker(
         }
     }
 
+    [SupportedOSPlatform("windows")]
+    private void RefreshHardware(bool force)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (!force && now < _nextHardwareRefresh)
+            return;
+
+        try
+        {
+            _hardware = HardwareInventoryCollector.TryCollect();
+            if (_hardware is not null)
+                logger.LogInformation(
+                    "Hardware inventory: {Brand} {Model} serial={Serial} CPU={Cpu} RAM={Ram}GB disk={Disk}GB GPU={Gpu}",
+                    _hardware.Brand, _hardware.Model, _hardware.SerialNumber,
+                    _hardware.Cpu, _hardware.RamGb, _hardware.DiskGb, _hardware.Gpu);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Hardware inventory collection failed");
+        }
+
+        // At least daily even if config refresh is more frequent
+        _nextHardwareRefresh = now.AddHours(24);
+    }
+
     private async Task FlushAsync(string hostname, string? group, CancellationToken ct)
     {
         List<SessionEventDto> sessions;
@@ -101,6 +133,22 @@ public sealed class Worker(
         processes = _processBuffer.Values.ToList();
         _processBuffer.Clear();
 
+        List<DiscoveredProcessDto> discovered = [];
+        if (_sendInventoryNextUpload)
+        {
+            try
+            {
+                discovered = ProcessCollector.DiscoverInventory().ToList();
+                logger.LogInformation("Sending process inventory ({Count} processes) for app analysis", discovered.Count);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Process inventory failed");
+            }
+            _sendInventoryNextUpload = false;
+        }
+
+        var hw = _hardware;
         var batch = new IngestBatchDto
         {
             Heartbeat = new HeartbeatDto
@@ -111,10 +159,18 @@ public sealed class Worker(
                 TimestampUtc = DateTimeOffset.UtcNow,
                 IsInUse = _sessions.ActiveCount > 0,
                 ActiveSessionCount = _sessions.ActiveCount,
-                AgentVersion = "0.1.0"
+                AgentVersion = "0.1.0",
+                HardwareSerialNumber = hw?.SerialNumber,
+                HardwareBrand = hw?.Brand,
+                HardwareModel = hw?.Model,
+                HardwareCpu = hw?.Cpu,
+                HardwareRamGb = hw?.RamGb,
+                HardwareDiskGb = hw?.DiskGb,
+                HardwareGpu = hw?.Gpu
             },
             Sessions = sessions,
-            ProcessRuns = processes
+            ProcessRuns = processes,
+            DiscoveredProcesses = discovered
         };
 
         var ok = await api.UploadAsync(batch, ct);
@@ -141,38 +197,14 @@ public sealed class Worker(
 
     private static (string Username, string? Domain)? ResolveSessionUser(int sessionId)
     {
-        // Reuse WTS query helpers via a tiny local call
         try
         {
-            var sessions = typeof(SessionCollector); // keep reference for linker friendliness
-            _ = sessions;
-            return QueryUser(sessionId);
+            return SessionCollector.TryGetSessionUser(sessionId);
         }
         catch
         {
             return null;
         }
-    }
-
-    private static (string Username, string? Domain)? QueryUser(int sessionId)
-    {
-        if (!NativeWts.WTSQuerySessionInformation(IntPtr.Zero, sessionId, NativeWts.WTS_INFO_CLASS.WTSUserName, out var userPtr, out _))
-            return null;
-        string? user;
-        try { user = System.Runtime.InteropServices.Marshal.PtrToStringUni(userPtr)?.Trim(); }
-        finally { NativeWts.WTSFreeMemory(userPtr); }
-
-        if (string.IsNullOrWhiteSpace(user))
-            return null;
-
-        string? domain = null;
-        if (NativeWts.WTSQuerySessionInformation(IntPtr.Zero, sessionId, NativeWts.WTS_INFO_CLASS.WTSDomainName, out var domainPtr, out _))
-        {
-            try { domain = System.Runtime.InteropServices.Marshal.PtrToStringUni(domainPtr)?.Trim(); }
-            finally { NativeWts.WTSFreeMemory(domainPtr); }
-        }
-
-        return (user, string.IsNullOrWhiteSpace(domain) ? null : domain);
     }
 
     private static AgentConfigDto DefaultConfig() => new()
@@ -189,3 +221,4 @@ public sealed class Worker(
         ]
     };
 }
+

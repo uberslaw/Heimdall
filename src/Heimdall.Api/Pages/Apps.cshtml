@@ -9,7 +9,10 @@
         <h1 class="hd-title mb-1">Applications</h1>
         <p class="hd-sub mb-0">Tracked non-Windows processes · last 30 days</p>
     </div>
-    <a class="btn btn-hd" asp-page="/TrackSoftware">Track Software</a>
+    <div class="d-flex gap-2">
+        <a class="btn btn-hd" asp-page="/TrackSoftware">Track Software</a>
+        <a class="btn btn-ghost" asp-page="/AppLists">App lists</a>
+    </div>
 </div>
 
 @if (TempData["Message"] is string msg)

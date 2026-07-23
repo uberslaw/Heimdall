@@ -3,10 +3,13 @@
 @{
     ViewData["Title"] = string.IsNullOrWhiteSpace(Model.Host) ? "Socratize" : $"Socratize · {Model.Host}";
     var brief = Model.Brief;
+    var appOpenTotal = brief?.Apps.Sum(a => a.TotalOpenSeconds) ?? 0;
+    var localAccounted = brief is null ? 0 : brief.LocalActiveSeconds + brief.LocalDisconnectedSeconds;
+    var rdpAccounted = brief is null ? 0 : brief.RdpActiveSeconds + brief.RdpDisconnectedSeconds;
 }
 
 <h1 class="hd-title">Socratize</h1>
-<p class="hd-sub">One-machine cost-justification brief — probe Heimdall’s collected data (sessions, RDP vs local, util, apps, teams)</p>
+<p class="hd-sub">One-machine cost-justification brief — probe Heimdall’s collected data (sessions, RDP vs local, util, apps, teams). Verdict from <a asp-page="/Utilization">Utilization criteria</a>.</p>
 
 <form method="get" class="hd-panel mb-3">
     <div class="row g-3 align-items-end">
@@ -108,91 +111,279 @@ else if (brief is not null)
 
     <div class="hd-panel mb-3">
         <h2 class="hd-section-title">Interrogation</h2>
-        @if (brief.Findings.Count == 0)
-        {
-            <p class="text-secondary mb-0">Nothing to say for this period.</p>
-        }
-        else
-        {
-            <div class="hd-qa-list">
-                @foreach (var f in brief.Findings)
+        <div class="hd-qa-list">
+
+            <div class="hd-qa">
+                <div class="hd-q">Who uses this machine?</div>
+                @if (brief.Users.Count == 0)
                 {
-                    <div class="hd-qa">
-                        <div class="hd-q">@f.Question</div>
-                        <div class="hd-a">@f.Answer</div>
-                    </div>
+                    <p class="hd-a text-secondary mb-0">
+                        @(brief.SessionCount == 0 && brief.ProcessRunCount == 0
+                            ? "No sessions or process runs in this period."
+                            : "No user sessions recorded. Process runs may still show app activity without a matched logon.")
+                    </p>
+                }
+                else
+                {
+                    <table class="hd-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>User</th>
+                                <th>Team</th>
+                                <th>Logons</th>
+                                <th>Active</th>
+                                <th>Disconnected</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var u in brief.Users)
+                        {
+                            <tr>
+                                <td>@u.Username</td>
+                                <td>@(u.TeamName ?? "—")</td>
+                                <td>@u.LogonCount</td>
+                                <td>@FormatDur(u.ActiveSeconds)</td>
+                                <td>@FormatDur(u.DisconnectedSeconds)</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                    @if (brief.Teams.Count > 0)
+                    {
+                        <p class="hd-meta-line mb-0 mt-2">
+                            Teams:
+                            @string.Join(", ", brief.Teams.Select(t => $"{t.TeamName} ({t.UserCount})"))
+                        </p>
+                    }
                 }
             </div>
-        }
+
+            <div class="hd-qa">
+                <div class="hd-q">How do they connect?</div>
+                @if (brief.SessionCount == 0)
+                {
+                    <p class="hd-a text-secondary mb-0">No session type mix available.</p>
+                }
+                else
+                {
+                    <div class="hd-grid mb-2" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));">
+                        <div class="hd-stat">
+                            <div class="label">Local time</div>
+                            <div class="value" style="font-size:1.25rem;">@FormatDur(localAccounted)</div>
+                        </div>
+                        <div class="hd-stat">
+                            <div class="label">RDP time</div>
+                            <div class="value" style="font-size:1.25rem;">@FormatDur(rdpAccounted)</div>
+                        </div>
+                        <div class="hd-stat">
+                            <div class="label">Local %</div>
+                            <div class="value" style="font-size:1.25rem;">@brief.LocalSharePct.ToString("0")%</div>
+                        </div>
+                        <div class="hd-stat">
+                            <div class="label">RDP %</div>
+                            <div class="value" style="font-size:1.25rem;">@brief.RdpSharePct.ToString("0")%</div>
+                        </div>
+                    </div>
+                    @if (brief.Users.Count > 0)
+                    {
+                        <table class="hd-table mb-0">
+                            <thead>
+                                <tr>
+                                    <th>User</th>
+                                    <th>Local</th>
+                                    <th>RDP</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (var u in brief.Users)
+                            {
+                                <tr>
+                                    <td>@u.Username</td>
+                                    <td><span class="badge-pill badge-local">@u.LocalLogons</span></td>
+                                    <td><span class="badge-pill badge-rdp">@u.RdpLogons</span></td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                        <p class="hd-meta-line mb-0 mt-2">RDP means the Windows session used the remote protocol (WinStation <code>RDP-Tcp</code>), including RDP-to-self — not whether someone is physically at the desk.</p>
+                    }
+                }
+            </div>
+
+            <div class="hd-qa">
+                <div class="hd-q">How much of the time is it occupied?</div>
+                <div class="hd-grid mb-2" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));">
+                    <div class="hd-stat">
+                        <div class="label">Occupancy</div>
+                        <div class="value" style="font-size:1.25rem;">@brief.UtilisationPct.ToString("0")%</div>
+                    </div>
+                    <div class="hd-stat">
+                        <div class="label">Occupied time</div>
+                        <div class="value" style="font-size:1.25rem;">@FormatDur(brief.OccupiedSeconds)</div>
+                    </div>
+                    <div class="hd-stat">
+                        <div class="label">Sessions</div>
+                        <div class="value" style="font-size:1.25rem;">@brief.SessionCount</div>
+                    </div>
+                </div>
+                <p class="hd-meta-line mb-0">POC note: share of calendar window with ≥1 open session; overlapping sessions are not de-duplicated (can look oddly low or inflated).</p>
+            </div>
+
+            <div class="hd-qa">
+                <div class="hd-q">Active vs disconnected RDP waste?</div>
+                @if (brief.RdpDisconnectedSeconds <= 0 && brief.RdpSharePct < 1)
+                {
+                    <p class="hd-a text-secondary mb-0">Little or no RDP disconnected time in this window.</p>
+                }
+                else
+                {
+                    <table class="hd-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>Value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>RDP active</td>
+                                <td>@FormatDur(brief.RdpActiveSeconds)</td>
+                            </tr>
+                            <tr>
+                                <td>RDP disconnected</td>
+                                <td>@FormatDur(brief.RdpDisconnectedSeconds)</td>
+                            </tr>
+                            <tr>
+                                <td>% of RDP time disconnected</td>
+                                <td>@brief.RdpIdleShareOfRdpPct.ToString("0")%</td>
+                            </tr>
+                            <tr>
+                                <td>RDP sessions</td>
+                                <td>@brief.RdpSessionCount</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                }
+            </div>
+
+            <div class="hd-qa">
+                <div class="hd-q">What applications dominate time?</div>
+                @if (brief.Apps.Count == 0)
+                {
+                    <p class="hd-a text-secondary mb-0">
+                        @(brief.SessionCount > 0
+                            ? "No allowlisted process runs in this period. Check Track Software / Config include lists."
+                            : "No tracked process runs in this period.")
+                    </p>
+                }
+                else
+                {
+                    <table class="hd-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>App</th>
+                                <th>Open time</th>
+                                <th>Runs</th>
+                                <th>Share %</th>
+                                <th>Cost / yr</th>
+                                <th>$ / h</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var a in brief.Apps.Take(15))
+                        {
+                            var share = appOpenTotal <= 0 ? 0 : a.TotalOpenSeconds * 100.0 / appOpenTotal;
+                            <tr>
+                                <td>@a.ProcessName</td>
+                                <td>@FormatDur(a.TotalOpenSeconds)</td>
+                                <td>@a.RunCount</td>
+                                <td>@share.ToString("0")%</td>
+                                <td>@(a.LicenseCostPerYear is double c ? c.ToString("0.##") : "—")</td>
+                                <td>@(a.CostPerHour is double h ? h.ToString("0.##") : "—")</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                }
+            </div>
+
+            <div class="hd-qa">
+                <div class="hd-q">Any high-threshold metric policies in scope?</div>
+                @if (brief.PoliciesInScope.Count == 0)
+                {
+                    <p class="hd-a text-secondary mb-0">No enabled MetricPolicy matches this host’s scope.</p>
+                }
+                else
+                {
+                    <table class="hd-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Scope</th>
+                                <th>Thresholds</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var p in brief.PoliciesInScope)
+                        {
+                            <tr>
+                                <td>@p.Name</td>
+                                <td><span class="badge-pill">@p.MetricType</span></td>
+                                <td>@(string.IsNullOrWhiteSpace(p.ScopeValue) ? p.Scope : $"{p.Scope}={p.ScopeValue}")</td>
+                                <td>@p.ThresholdSummary</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                    @if (!brief.HasGpuSamples || !brief.HasDiskSamples)
+                    {
+                        <p class="hd-meta-line mb-0 mt-2">Note: agent GPU/disk sampling may still be stubbed — thresholds can exist without samples.</p>
+                    }
+                }
+            </div>
+
+            <div class="hd-qa">
+                <div class="hd-q">POC verdict</div>
+                <div class="hd-a mb-2">
+                    <span class="badge-pill badge-socratize-@brief.Verdict.Code">@brief.Verdict.Label</span>
+                    @if (brief.OverallScore is double score)
+                    {
+                        <span class="text-secondary"> · score @score.ToString("0.#")/100</span>
+                    }
+                    <span class="text-secondary"> — @brief.Verdict.Detail</span>
+                </div>
+                @if (brief.ScoreBreakdown.Count > 0)
+                {
+                    <table class="hd-table mb-2">
+                        <thead>
+                            <tr>
+                                <th>Criterion</th>
+                                <th>Weight</th>
+                                <th>Score</th>
+                                <th>Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var row in brief.ScoreBreakdown)
+                        {
+                            <tr>
+                                <td>@row.Criterion</td>
+                                <td>@row.Weight.ToString("0.#") <span class="text-secondary">(@row.WeightPct.ToString("0")%)</span></td>
+                                <td>@row.Score.ToString("0.#")</td>
+                                <td class="small">@row.Notes</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                }
+                <p class="hd-meta-line mb-0">
+                    Criteria: <a asp-page="/Utilization">Utilization criteria</a> (Global weights &amp; license costs)
+                </p>
+            </div>
+
+        </div>
     </div>
-
-    @if (brief.Users.Count > 0)
-    {
-        <div class="hd-panel mb-3">
-            <h2 class="hd-section-title">Users</h2>
-            <table class="hd-table">
-                <thead>
-                    <tr>
-                        <th>User</th>
-                        <th>Team</th>
-                        <th>Logons</th>
-                        <th>Local / RDP</th>
-                        <th>Active</th>
-                        <th>Disconnected</th>
-                    </tr>
-                </thead>
-                <tbody>
-                @foreach (var u in brief.Users)
-                {
-                    <tr>
-                        <td>@u.Username</td>
-                        <td>@(u.TeamName ?? "—")</td>
-                        <td>@u.LogonCount</td>
-                        <td>@u.LocalLogons / @u.RdpLogons</td>
-                        <td>@FormatDur(u.ActiveSeconds)</td>
-                        <td>@FormatDur(u.DisconnectedSeconds)</td>
-                    </tr>
-                }
-                </tbody>
-            </table>
-        </div>
-    }
-
-    @if (brief.Apps.Count > 0)
-    {
-        <div class="hd-panel mb-3">
-            <h2 class="hd-section-title">Applications</h2>
-            <table class="hd-table">
-                <thead>
-                    <tr>
-                        <th>Process</th>
-                        <th>Runs</th>
-                        <th>Users</th>
-                        <th>Open time</th>
-                        <th>Peak CPU</th>
-                    </tr>
-                </thead>
-                <tbody>
-                @foreach (var a in brief.Apps.Take(15))
-                {
-                    <tr>
-                        <td>@a.ProcessName</td>
-                        <td>@a.RunCount</td>
-                        <td>@a.UniqueUsers</td>
-                        <td>@FormatDur(a.TotalOpenSeconds)</td>
-                        <td>@(a.PeakCpuPercent is double p ? $"{p:0.#}%" : "—")</td>
-                    </tr>
-                }
-                </tbody>
-            </table>
-        </div>
-    }
-    else if (brief.SessionCount > 0)
-    {
-        <div class="hd-panel mb-3">
-            <p class="text-secondary mb-0">No tracked process runs in this period — empty app story.</p>
-        </div>
-    }
 
     <p class="hd-meta-line mb-4">
         <a asp-page="/Index">← Machines</a>

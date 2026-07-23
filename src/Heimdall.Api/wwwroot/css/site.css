@@ -153,6 +153,7 @@ table.hd-table th {
 .badge-active { background: rgba(61, 184, 160, 0.25); color: #8fe0cf; }
 .badge-disc { background: rgba(212, 160, 23, 0.2); color: var(--hd-warn); }
 .badge-ended { background: rgba(143, 163, 181, 0.2); color: var(--hd-muted); }
+.badge-expired { background: rgba(200, 80, 80, 0.25); color: #e8a0a0; }
 
 .util-bar {
   height: 8px;
@@ -387,6 +388,8 @@ table.hd-sortable th.sorted-desc::after {
 }
 
 .badge-socratize-healthy { background: rgba(61, 184, 160, 0.25); color: #8fe0cf; }
+.badge-socratize-high { background: rgba(61, 184, 160, 0.28); color: #8fe0cf; }
+.badge-socratize-adequate { background: rgba(91, 159, 212, 0.25); color: var(--hd-local); }
 .badge-socratize-underused { background: rgba(212, 160, 23, 0.22); color: var(--hd-warn); }
 .badge-socratize-rdp-idle-heavy { background: rgba(212, 160, 23, 0.28); color: #e8c04a; }
 .badge-socratize-app-concentrated { background: rgba(91, 159, 212, 0.25); color: var(--hd-local); }
@@ -474,4 +477,12 @@ table.hd-sortable th.sorted-desc::after {
 
 .hd-row-active td {
   background: rgba(61, 184, 160, 0.08);
+}
+
+.hd-process-item .badge-pill {
+  margin-left: 0.15rem;
+}
+
+.input-group .btn-ghost {
+  border-color: var(--hd-border);
 }

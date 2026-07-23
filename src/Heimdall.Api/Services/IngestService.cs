@@ -1,19 +1,21 @@
 using System.Text.Json;
 using Heimdall.Api.Data;
+using Heimdall.Shared;
 using Heimdall.Shared.Contracts;
 using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Services;
 
-public class IngestService(HeimdallDbContext db)
+public class IngestService(HeimdallDbContext db, AppListService appLists)
 {
     public async Task IngestAsync(IngestBatchDto batch, CancellationToken ct)
     {
         Machine? machine = null;
+        var isNewMachine = false;
 
         if (batch.Heartbeat is not null)
         {
-            machine = await UpsertMachineAsync(batch.Heartbeat, ct);
+            (machine, isNewMachine) = await UpsertMachineAsync(batch.Heartbeat, ct);
         }
 
         foreach (var session in batch.Sessions)
@@ -28,19 +30,43 @@ public class IngestService(HeimdallDbContext db)
             await UpsertProcessRunAsync(machine, run, ct);
         }
 
+        if (batch.DiscoveredProcesses.Count > 0)
+        {
+            machine ??= batch.Heartbeat is not null
+                ? await db.Machines.FirstOrDefaultAsync(m => m.Hostname == batch.Heartbeat.Hostname, ct)
+                : null;
+            if (machine is not null)
+            {
+                // Inventory received — run analysis into PendingApproval (does not auto-track).
+                await db.SaveChangesAsync(ct);
+                await appLists.AnalyzeMachineAsync(machine.Hostname, batch.DiscoveredProcesses, requestAgentInventoryIfEmpty: false, ct);
+                return;
+            }
+        }
+
         await db.SaveChangesAsync(ct);
+
+        if (machine is not null && (isNewMachine || machine.AppsAnalyzedAt is null && machine.AppAnalysisStatus == AppAnalysisStatus.None))
+        {
+            // Reload tracked entity in case SaveChanges detached state
+            var tracked = await db.Machines.FirstAsync(m => m.Id == machine.Id, ct);
+            await appLists.QueueFirstSeenAnalysisAsync(tracked, ct);
+            await db.SaveChangesAsync(ct);
+        }
     }
 
-    private async Task<Machine> UpsertMachineAsync(HeartbeatDto heartbeat, CancellationToken ct)
+    private async Task<(Machine Machine, bool IsNew)> UpsertMachineAsync(HeartbeatDto heartbeat, CancellationToken ct)
     {
         var machine = await db.Machines.FirstOrDefaultAsync(m => m.Hostname == heartbeat.Hostname, ct);
+        var isNew = machine is null;
         if (machine is null)
         {
             machine = new Machine
             {
                 Hostname = heartbeat.Hostname,
                 FirstSeenUtc = heartbeat.TimestampUtc,
-                LastSeenUtc = heartbeat.TimestampUtc
+                LastSeenUtc = heartbeat.TimestampUtc,
+                PendingAppAnalysis = true
             };
             db.Machines.Add(machine);
         }
@@ -54,7 +80,33 @@ public class IngestService(HeimdallDbContext db)
         else
             MachineHierarchy.EnsureDefaults(machine);
 
-        return machine;
+        ApplyHardwareFromHeartbeat(machine, heartbeat);
+
+        return (machine, isNew);
+    }
+
+    /// <summary>
+    /// Agent fills blank hardware fields only. Manual Cost-page edits set HardwareManualOverride and win.
+    /// </summary>
+    private static void ApplyHardwareFromHeartbeat(Machine machine, HeartbeatDto heartbeat)
+    {
+        if (machine.HardwareManualOverride)
+            return;
+
+        if (string.IsNullOrWhiteSpace(machine.HardwareSerialNumber) && !string.IsNullOrWhiteSpace(heartbeat.HardwareSerialNumber))
+            machine.HardwareSerialNumber = heartbeat.HardwareSerialNumber.Trim();
+        if (string.IsNullOrWhiteSpace(machine.HardwareBrand) && !string.IsNullOrWhiteSpace(heartbeat.HardwareBrand))
+            machine.HardwareBrand = heartbeat.HardwareBrand.Trim();
+        if (string.IsNullOrWhiteSpace(machine.HardwareModel) && !string.IsNullOrWhiteSpace(heartbeat.HardwareModel))
+            machine.HardwareModel = heartbeat.HardwareModel.Trim();
+        if (string.IsNullOrWhiteSpace(machine.HardwareCpu) && !string.IsNullOrWhiteSpace(heartbeat.HardwareCpu))
+            machine.HardwareCpu = heartbeat.HardwareCpu.Trim();
+        if (string.IsNullOrWhiteSpace(machine.HardwareGpu) && !string.IsNullOrWhiteSpace(heartbeat.HardwareGpu))
+            machine.HardwareGpu = heartbeat.HardwareGpu.Trim();
+        if (machine.HardwareRamGb is null && heartbeat.HardwareRamGb is > 0)
+            machine.HardwareRamGb = heartbeat.HardwareRamGb;
+        if (machine.HardwareDiskGb is null && heartbeat.HardwareDiskGb is > 0)
+            machine.HardwareDiskGb = heartbeat.HardwareDiskGb;
     }
 
     private async Task<Machine> EnsureMachineAsync(string hostname, CancellationToken ct)
@@ -82,6 +134,10 @@ public class IngestService(HeimdallDbContext db)
 
     private async Task UpsertSessionAsync(Machine machine, SessionEventDto dto, CancellationToken ct)
     {
+        var username = WindowsAccountEncoding.RepairAccountField(dto.Username) ?? dto.Username;
+        var domain = WindowsAccountEncoding.RepairAccountField(dto.Domain);
+        var clientName = WindowsAccountEncoding.RepairAccountField(dto.ClientName);
+
         var existing = await db.Sessions.FirstOrDefaultAsync(s => s.ExternalEventId == dto.EventId, ct);
         if (existing is null)
         {
@@ -90,14 +146,14 @@ public class IngestService(HeimdallDbContext db)
                 ExternalEventId = dto.EventId,
                 Machine = machine,
                 SessionId = dto.SessionId,
-                Username = dto.Username,
-                Domain = dto.Domain,
+                Username = username,
+                Domain = domain,
                 SessionType = dto.SessionType,
                 State = dto.State,
                 StartedAtUtc = dto.StartedAtUtc ?? dto.ObservedAtUtc,
                 EndedAtUtc = dto.EndedAtUtc,
                 LastObservedUtc = dto.ObservedAtUtc,
-                ClientName = dto.ClientName,
+                ClientName = clientName,
                 ClientAddress = dto.ClientAddress,
                 ActiveSeconds = dto.ActiveSeconds,
                 DisconnectedSeconds = dto.DisconnectedSeconds
@@ -111,12 +167,23 @@ public class IngestService(HeimdallDbContext db)
         existing.EndedAtUtc = dto.EndedAtUtc ?? existing.EndedAtUtc;
         existing.ActiveSeconds = Math.Max(existing.ActiveSeconds, dto.ActiveSeconds);
         existing.DisconnectedSeconds = Math.Max(existing.DisconnectedSeconds, dto.DisconnectedSeconds);
-        existing.ClientName = dto.ClientName ?? existing.ClientName;
+        existing.ClientName = clientName ?? existing.ClientName;
         existing.ClientAddress = dto.ClientAddress ?? existing.ClientAddress;
+        // Refresh identity when a fixed agent re-reports the same EventId, or when ingest can repair mojibake.
+        if (!string.IsNullOrWhiteSpace(username)
+            && (WindowsAccountEncoding.LooksLikeMojibakeAccount(existing.Username)
+                || WindowsAccountEncoding.LooksLikeWindowsAccountToken(username)))
+        {
+            existing.Username = username;
+            existing.Domain = domain ?? existing.Domain;
+        }
+
+        existing.SessionType = dto.SessionType;
     }
 
     private async Task UpsertProcessRunAsync(Machine machine, ProcessRunDto dto, CancellationToken ct)
     {
+        var username = WindowsAccountEncoding.RepairAccountField(dto.Username) ?? dto.Username;
         var existing = await db.ProcessRuns.FirstOrDefaultAsync(p => p.ExternalRunId == dto.RunId, ct);
         if (existing is null)
         {
@@ -124,7 +191,7 @@ public class IngestService(HeimdallDbContext db)
             {
                 ExternalRunId = dto.RunId,
                 Machine = machine,
-                Username = dto.Username,
+                Username = username,
                 ProcessName = dto.ProcessName,
                 ExecutablePath = dto.ExecutablePath,
                 ProcessId = dto.ProcessId,
@@ -143,6 +210,9 @@ public class IngestService(HeimdallDbContext db)
         existing.LastSeenAtUtc = dto.LastSeenAtUtc;
         existing.EndedAtUtc = dto.EndedAtUtc ?? existing.EndedAtUtc;
         existing.SampleCount = Math.Max(existing.SampleCount, dto.SampleCount);
+        if (WindowsAccountEncoding.LooksLikeMojibakeAccount(existing.Username)
+            || WindowsAccountEncoding.LooksLikeWindowsAccountToken(username))
+            existing.Username = username;
         if (dto.PeakCpuPercent is double peak)
             existing.PeakCpuPercent = Math.Max(existing.PeakCpuPercent ?? 0, peak);
         if (dto.PeakGpuPercent is double gpu)
@@ -202,14 +272,34 @@ public class ConfigService(HeimdallDbContext db)
                 include.Add(app.ProcessName);
         }
 
+        // Merge processes from AppLists assigned to scopes matching this host.
+        // Pending analysis proposals are NOT included until approved.
+        var appListAssignments = await db.AppListAssignments.AsNoTracking()
+            .Include(a => a.AppList).ThenInclude(l => l.Entries)
+            .Where(a => a.IsEnabled)
+            .ToListAsync(ct);
+        foreach (var assignment in appListAssignments)
+        {
+            if (!MatchesScope(assignment.Scope, assignment.ScopeValue, machine, hostname))
+                continue;
+            foreach (var entry in assignment.AppList.Entries)
+            {
+                if (!include.Contains(entry.ProcessName, StringComparer.OrdinalIgnoreCase))
+                    include.Add(entry.ProcessName);
+            }
+        }
+
         // Apply active pauses from all applicable tracking configs.
         var now = DateTimeOffset.UtcNow;
         var applicableIds = applicable.Select(c => c.Id).Where(id => id > 0).ToList();
+        // SQLite EF DateTimeOffset filters are unreliable — load then filter in memory.
         var activePauses = applicableIds.Count == 0
             ? []
-            : await db.ProcessPauses.AsNoTracking()
-                .Where(p => applicableIds.Contains(p.TrackingConfigId) && p.PausedUntilUtc > now)
-                .ToListAsync(ct);
+            : (await db.ProcessPauses.AsNoTracking()
+                .Where(p => applicableIds.Contains(p.TrackingConfigId))
+                .ToListAsync(ct))
+                .Where(p => p.PausedUntilUtc > now)
+                .ToList();
 
         var pausedIncludes = activePauses
             .Where(p => p.ListKind == ProcessListKind.Include)
@@ -259,7 +349,8 @@ public class ConfigService(HeimdallDbContext db)
                 Enabled = a.EnabledByDefault && !pausedIncludes.Contains(a.ProcessName)
             }).ToList(),
             MetricThresholds = thresholds,
-            ProcessPauses = pauseDtos
+            ProcessPauses = pauseDtos,
+            PendingAppAnalysis = machine?.PendingAppAnalysis == true
         };
     }
 
@@ -614,6 +705,28 @@ public static class SeedData
             );
         }
 
+        if (!await db.UtilizationCriteria.AnyAsync())
+        {
+            db.UtilizationCriteria.Add(new UtilizationCriteria
+            {
+                Scope = "Global",
+                WeightUsers = 25,
+                WeightDailyUtil = 35,
+                WeightMetricBusy = 20,
+                WeightAppValue = 20,
+                IdealMinUsers = 2,
+                IdealDailyUtilPct = 40,
+                WorkingHoursPerDay = 8,
+                BusyCpuPercentThreshold = 25,
+                BusyGpuPercentThreshold = 20,
+                IdealMetricBusyPct = 15,
+                IdealMaxCostPerHour = 50,
+                HighScoreThreshold = 75,
+                AdequateScoreThreshold = 50,
+                MixedScoreThreshold = 30
+            });
+        }
+
         await db.SaveChangesAsync();
     }
 
@@ -682,6 +795,100 @@ public static class SeedData
                 Vendor TEXT NULL
             )
             """);
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS UtilizationCriteria (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Scope TEXT NOT NULL,
+                ScopeValue TEXT NULL,
+                WeightUsers REAL NOT NULL,
+                WeightDailyUtil REAL NOT NULL,
+                WeightMetricBusy REAL NOT NULL,
+                WeightAppValue REAL NOT NULL,
+                IdealMinUsers INTEGER NOT NULL,
+                IdealDailyUtilPct REAL NOT NULL,
+                WorkingHoursPerDay REAL NOT NULL,
+                BusyCpuPercentThreshold REAL NOT NULL,
+                BusyGpuPercentThreshold REAL NOT NULL,
+                IdealMetricBusyPct REAL NOT NULL,
+                IdealMaxCostPerHour REAL NOT NULL,
+                HighScoreThreshold REAL NOT NULL,
+                AdequateScoreThreshold REAL NOT NULL,
+                MixedScoreThreshold REAL NOT NULL
+            )
+            """);
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS AppLicenseCosts (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ProcessName TEXT NOT NULL,
+                DisplayName TEXT NULL,
+                LicenseCostPerYear REAL NOT NULL
+            )
+            """);
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN AppsAnalyzedAt TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingAppAnalysis INTEGER NOT NULL DEFAULT 0");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN AppAnalysisStatus INTEGER NOT NULL DEFAULT 0");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN AppAnalysisProposalJson TEXT NULL");
+        await TryExec(db, "UPDATE Machines SET AppAnalysisProposalJson = '[]' WHERE AppAnalysisProposalJson IS NULL");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS AppLists (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT NOT NULL,
+                TeamId INTEGER NULL,
+                Notes TEXT NULL,
+                CreatedUtc TEXT NOT NULL,
+                UpdatedUtc TEXT NOT NULL,
+                IsAutoDiscovered INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (TeamId) REFERENCES Teams(Id) ON DELETE SET NULL
+            )
+            """);
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS AppListEntries (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                AppListId INTEGER NOT NULL,
+                ProcessName TEXT NOT NULL,
+                DisplayName TEXT NULL,
+                FOREIGN KEY (AppListId) REFERENCES AppLists(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS AppListAssignments (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                AppListId INTEGER NOT NULL,
+                Scope INTEGER NOT NULL,
+                ScopeValue TEXT NULL,
+                Priority INTEGER NOT NULL DEFAULT 0,
+                IsEnabled INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY (AppListId) REFERENCES AppLists(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS AppListAuditLogs (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Utc TEXT NOT NULL,
+                Action TEXT NOT NULL,
+                AppListId INTEGER NULL,
+                AppListName TEXT NULL,
+                Scope INTEGER NULL,
+                ScopeValue TEXT NULL,
+                MachineHostname TEXT NULL,
+                Detail TEXT NOT NULL,
+                Actor TEXT NULL
+            )
+            """);
+
+        // Cost / hardware inventory on Machines
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN PurchaseCost TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN PurchaseCurrency TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN WarrantyStartDate TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN WarrantyEndDate TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN HardwareGpu TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN HardwareCpu TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN HardwareRamGb REAL NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN HardwareDiskGb REAL NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN HardwareBrand TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN HardwareModel TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN HardwareSerialNumber TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN HardwareManualOverride INTEGER NOT NULL DEFAULT 0");
     }
 
     private static async Task TryExec(HeimdallDbContext db, string sql)

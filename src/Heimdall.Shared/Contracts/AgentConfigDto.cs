@@ -14,6 +14,8 @@ public sealed class AgentConfigDto
     public List<MetricThresholdDto> MetricThresholds { get; init; } = [];
     /// <summary>Active pauses applied when resolving include/exclude for this host.</summary>
     public List<ProcessPauseDto> ProcessPauses { get; init; } = [];
+    /// <summary>When true, agent should upload a one-shot process inventory on next ingest.</summary>
+    public bool PendingAppAnalysis { get; init; }
 }
 
 public sealed class KnownAppDto

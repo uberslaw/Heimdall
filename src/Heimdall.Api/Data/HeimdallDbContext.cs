@@ -14,6 +14,12 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<MetricPolicy> MetricPolicies => Set<MetricPolicy>();
     public DbSet<Team> Teams => Set<Team>();
     public DbSet<PersonTeam> PersonTeams => Set<PersonTeam>();
+    public DbSet<UtilizationCriteria> UtilizationCriteria => Set<UtilizationCriteria>();
+    public DbSet<AppLicenseCost> AppLicenseCosts => Set<AppLicenseCost>();
+    public DbSet<AppList> AppLists => Set<AppList>();
+    public DbSet<AppListEntry> AppListEntries => Set<AppListEntry>();
+    public DbSet<AppListAssignment> AppListAssignments => Set<AppListAssignment>();
+    public DbSet<AppListAuditLog> AppListAuditLogs => Set<AppListAuditLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -79,6 +85,49 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
                 .WithMany(x => x.Members)
                 .HasForeignKey(x => x.TeamId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UtilizationCriteria>(e =>
+        {
+            e.HasIndex(x => new { x.Scope, x.ScopeValue });
+        });
+
+        modelBuilder.Entity<AppLicenseCost>(e =>
+        {
+            e.HasIndex(x => x.ProcessName).IsUnique();
+        });
+
+        modelBuilder.Entity<AppList>(e =>
+        {
+            e.HasIndex(x => x.Name);
+            e.HasOne(x => x.Team)
+                .WithMany()
+                .HasForeignKey(x => x.TeamId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<AppListEntry>(e =>
+        {
+            e.HasIndex(x => new { x.AppListId, x.ProcessName }).IsUnique();
+            e.HasOne(x => x.AppList)
+                .WithMany(x => x.Entries)
+                .HasForeignKey(x => x.AppListId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AppListAssignment>(e =>
+        {
+            e.HasIndex(x => new { x.AppListId, x.Scope, x.ScopeValue });
+            e.HasOne(x => x.AppList)
+                .WithMany(x => x.Assignments)
+                .HasForeignKey(x => x.AppListId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AppListAuditLog>(e =>
+        {
+            e.HasIndex(x => x.Utc);
+            e.HasIndex(x => x.MachineHostname);
         });
     }
 }

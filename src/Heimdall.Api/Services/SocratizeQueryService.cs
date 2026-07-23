@@ -46,8 +46,16 @@ public sealed class SocratizeQueryService(HeimdallDbContext db)
         var policies = await db.MetricPolicies.AsNoTracking()
             .Where(p => p.IsEnabled)
             .ToListAsync(ct);
+        var criteria = await db.UtilizationCriteria.AsNoTracking().FirstOrDefaultAsync(ct)
+                       ?? new UtilizationCriteria { Scope = "Global" };
+        var licenseCosts = await db.AppLicenseCosts.AsNoTracking().ToListAsync(ct);
+        var licenseByProcess = licenseCosts.ToDictionary(
+            c => ConfigService.NormalizeProcessName(c.ProcessName),
+            c => c,
+            StringComparer.OrdinalIgnoreCase);
 
         var windowSeconds = Math.Max(1, (toUtc - fromUtc).TotalSeconds);
+        var periodDays = Math.Max(1.0 / 24.0, (toUtc - fromUtc).TotalDays);
         var occupiedSeconds = sessions.Sum(s =>
         {
             var start = s.StartedAtUtc < fromUtc ? fromUtc : s.StartedAtUtc;
@@ -108,12 +116,24 @@ public sealed class SocratizeQueryService(HeimdallDbContext db)
             {
                 var seconds = g.Sum(RunDurationSeconds);
                 var cpuPeaks = g.Where(r => r.PeakCpuPercent.HasValue).Select(r => r.PeakCpuPercent!.Value).ToList();
+                var key = ConfigService.NormalizeProcessName(g.Key);
+                licenseByProcess.TryGetValue(key, out var lic);
+                double? costPerHour = null;
+                if (lic is not null && lic.LicenseCostPerYear > 0 && seconds > 0)
+                {
+                    var hours = seconds / 3600.0;
+                    var annualizedHours = hours * (365.0 / periodDays);
+                    costPerHour = lic.LicenseCostPerYear / Math.Max(annualizedHours, 0.01);
+                }
+
                 return new SocratizeAppRow(
                     ProcessName: g.Key,
                     RunCount: g.Count(),
                     TotalOpenSeconds: seconds,
                     UniqueUsers: g.Select(x => x.Username).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
-                    PeakCpuPercent: cpuPeaks.Count == 0 ? null : cpuPeaks.Max()
+                    PeakCpuPercent: cpuPeaks.Count == 0 ? null : cpuPeaks.Max(),
+                    LicenseCostPerYear: lic?.LicenseCostPerYear,
+                    CostPerHour: costPerHour
                 );
             })
             .OrderByDescending(a => a.TotalOpenSeconds)
@@ -139,19 +159,22 @@ public sealed class SocratizeQueryService(HeimdallDbContext db)
 
         var hasGpuSamples = runs.Any(r => r.PeakGpuPercent is > 0);
         var hasDiskSamples = runs.Any(r => (r.DiskReadBytes ?? 0) > 0 || (r.DiskWriteBytes ?? 0) > 0);
+        var hasCpuSamples = runs.Any(r => r.PeakCpuPercent.HasValue);
 
-        var verdict = DeriveVerdict(
+        var (verdict, breakdown, overallScore) = ScoreUtilization(
+            criteria,
             hasData: sessions.Count > 0 || runs.Count > 0,
+            users.Count,
+            activeSeconds,
             utilPct,
-            rdpIdleShareOfRdp,
+            periodDays,
+            runs,
+            apps,
+            hasCpuSamples,
+            hasGpuSamples,
+            hasDiskSamples,
             rdpSharePct,
-            topAppShare,
-            apps.Count);
-
-        var findings = BuildFindings(
-            users, teams, utilPct, localSharePct, rdpSharePct, rdpIdleShareOfRdp,
-            rdpDisconnected, apps, topAppShare, scopedPolicies, hasGpuSamples, hasDiskSamples,
-            sessions.Count, runs.Count, verdict);
+            rdpIdleShareOfRdp);
 
         return new SocratizeBrief(
             Hostname: machine.Hostname,
@@ -170,6 +193,8 @@ public sealed class SocratizeQueryService(HeimdallDbContext db)
             RdpSessionCount: rdpSessions.Count,
             LocalSharePct: localSharePct,
             RdpSharePct: rdpSharePct,
+            LocalActiveSeconds: localActive,
+            LocalDisconnectedSeconds: localSessions.Sum(s => s.DisconnectedSeconds),
             RdpActiveSeconds: rdpActive,
             RdpDisconnectedSeconds: rdpDisconnected,
             RdpIdleShareOfRdpPct: rdpIdleShareOfRdp,
@@ -180,8 +205,9 @@ public sealed class SocratizeQueryService(HeimdallDbContext db)
             PoliciesInScope: scopedPolicies,
             HasGpuSamples: hasGpuSamples,
             HasDiskSamples: hasDiskSamples,
-            Verdict: verdict,
-            Findings: findings
+            OverallScore: overallScore,
+            ScoreBreakdown: breakdown,
+            Verdict: verdict
         );
     }
 
@@ -191,137 +217,162 @@ public sealed class SocratizeQueryService(HeimdallDbContext db)
         return hosts.OrderBy(h => h, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    private static SocratizeVerdict DeriveVerdict(
-        bool hasData,
-        double utilPct,
-        double rdpIdleShareOfRdp,
-        double rdpSharePct,
-        double topAppShare,
-        int appCount)
+    private static (SocratizeVerdict Verdict, IReadOnlyList<SocratizeScoreRow> Breakdown, double? Overall)
+        ScoreUtilization(
+            UtilizationCriteria c,
+            bool hasData,
+            int distinctUsers,
+            long activeSeconds,
+            double calendarOccupancyPct,
+            double periodDays,
+            List<ProcessRun> runs,
+            List<SocratizeAppRow> apps,
+            bool hasCpuSamples,
+            bool hasGpuSamples,
+            bool hasDiskSamples,
+            double rdpSharePct,
+            double rdpIdleShareOfRdp)
     {
         if (!hasData)
-            return new SocratizeVerdict("insufficient-data", "Insufficient data", "Little or no session/app telemetry in this period.");
+        {
+            return (
+                new SocratizeVerdict("insufficient-data", "Insufficient data",
+                    "Little or no session/app telemetry in this period."),
+                [],
+                null);
+        }
+
+        var workingHours = Math.Clamp(c.WorkingHoursPerDay, 1, 24);
+        var workingCapacitySeconds = Math.Max(1, periodDays * workingHours * 3600.0);
+        var rows = new List<SocratizeScoreRow>();
+
+        // 1) Distinct users
+        var userScore = c.IdealMinUsers <= 0
+            ? (distinctUsers > 0 ? 100.0 : 0.0)
+            : Math.Clamp(distinctUsers / (double)c.IdealMinUsers * 100.0, 0, 100);
+        rows.Add(new SocratizeScoreRow(
+            Criterion: "# of users",
+            Weight: c.WeightUsers,
+            Score: userScore,
+            Notes: $"{distinctUsers} distinct (ideal ≥ {c.IdealMinUsers})"));
+
+        // 2) Daily util = active session time / working capacity
+        var dailyUtilPct = activeSeconds / workingCapacitySeconds * 100.0;
+        var dailyScore = c.IdealDailyUtilPct <= 0
+            ? 100.0
+            : Math.Clamp(dailyUtilPct / c.IdealDailyUtilPct * 100.0, 0, 100);
+        rows.Add(new SocratizeScoreRow(
+            Criterion: "% time in use / day",
+            Weight: c.WeightDailyUtil,
+            Score: dailyScore,
+            Notes: $"Active {FormatDuration(activeSeconds)} ÷ ({periodDays:0.#}d × {workingHours:0.#}h) = {dailyUtilPct:0.#}% (ideal ≥ {c.IdealDailyUtilPct:0.#}%). Calendar occupancy {calendarOccupancyPct:0}% (sessions may overlap)."));
+
+        // 3) Metric busy time (CPU / GPU / disk)
+        double metricScore;
+        string metricNotes;
+        if (!hasCpuSamples && !hasGpuSamples && !hasDiskSamples)
+        {
+            metricScore = 50;
+            metricNotes = "No CPU/GPU/disk samples yet — neutral 50.";
+        }
+        else
+        {
+            var busySeconds = runs.Sum(r =>
+            {
+                var busy =
+                    (r.PeakCpuPercent is double cpu && cpu >= c.BusyCpuPercentThreshold)
+                    || (hasGpuSamples && r.PeakGpuPercent is double gpu && gpu >= c.BusyGpuPercentThreshold)
+                    || (hasDiskSamples && ((r.DiskReadBytes ?? 0) + (r.DiskWriteBytes ?? 0)) > 0);
+                return busy ? RunDurationSeconds(r) : 0;
+            });
+            var busyPct = busySeconds / workingCapacitySeconds * 100.0;
+            metricScore = c.IdealMetricBusyPct <= 0
+                ? 100.0
+                : Math.Clamp(busyPct / c.IdealMetricBusyPct * 100.0, 0, 100);
+            var stub = (!hasGpuSamples || !hasDiskSamples)
+                ? " GPU/disk may be stubbed."
+                : "";
+            metricNotes =
+                $"Busy open time {FormatDuration(busySeconds)} = {busyPct:0.#}% of working capacity (ideal ≥ {c.IdealMetricBusyPct:0.#}%; CPU≥{c.BusyCpuPercentThreshold:0.#}%).{stub}";
+        }
+
+        rows.Add(new SocratizeScoreRow(
+            Criterion: "CPU / GPU / disk busy",
+            Weight: c.WeightMetricBusy,
+            Score: metricScore,
+            Notes: metricNotes));
+
+        // 4) App business value ($/hour)
+        double appScore;
+        string appNotes;
+        var priced = apps.Where(a => a.LicenseCostPerYear is > 0 && a.CostPerHour is > 0).ToList();
+        if (priced.Count == 0)
+        {
+            appScore = 50;
+            appNotes = "No license costs configured — neutral 50. Set costs on Utilization criteria.";
+        }
+        else
+        {
+            var weightSum = priced.Sum(a => a.TotalOpenSeconds);
+            var avgCostPerHour = weightSum <= 0
+                ? priced.Average(a => a.CostPerHour!.Value)
+                : priced.Sum(a => a.CostPerHour!.Value * a.TotalOpenSeconds) / weightSum;
+            appScore = c.IdealMaxCostPerHour <= 0
+                ? 100.0
+                : Math.Clamp(c.IdealMaxCostPerHour / Math.Max(avgCostPerHour, 0.01) * 100.0, 0, 100);
+            appNotes =
+                $"Usage-weighted avg ${avgCostPerHour:0.##}/h across {priced.Count} priced app(s) (ideal ≤ ${c.IdealMaxCostPerHour:0.##}/h). $/h = cost/year ÷ annualized open hours.";
+        }
+
+        rows.Add(new SocratizeScoreRow(
+            Criterion: "App business value",
+            Weight: c.WeightAppValue,
+            Score: appScore,
+            Notes: appNotes));
+
+        var totalWeight = rows.Sum(r => Math.Max(0, r.Weight));
+        if (totalWeight <= 0)
+            totalWeight = 1;
+        var overall = rows.Sum(r => Math.Max(0, r.Weight) * r.Score) / totalWeight;
+
+        var normalized = rows
+            .Select(r => r with { WeightPct = Math.Max(0, r.Weight) / totalWeight * 100.0 })
+            .ToList();
+
+        string code;
+        string label;
+        string detail;
+        if (overall >= c.HighScoreThreshold)
+        {
+            code = "high";
+            label = "High";
+            detail = $"Weighted score {overall:0.#}/100 meets High (≥ {c.HighScoreThreshold:0}).";
+        }
+        else if (overall >= c.AdequateScoreThreshold)
+        {
+            code = "adequate";
+            label = "Adequate";
+            detail = $"Weighted score {overall:0.#}/100 — Adequate (≥ {c.AdequateScoreThreshold:0}).";
+        }
+        else if (overall >= c.MixedScoreThreshold)
+        {
+            code = "mixed";
+            label = "Mixed / light use";
+            detail = $"Weighted score {overall:0.#}/100 — Mixed (≥ {c.MixedScoreThreshold:0}).";
+        }
+        else
+        {
+            code = "underused";
+            label = "Underused";
+            detail = $"Weighted score {overall:0.#}/100 below Mixed threshold ({c.MixedScoreThreshold:0}).";
+        }
 
         if (rdpSharePct >= 40 && rdpIdleShareOfRdp >= 35)
-            return new SocratizeVerdict("rdp-idle-heavy", "RDP-idle-heavy", "A large share of RDP time is disconnected — possible seat waste.");
-
-        if (utilPct < 15)
-            return new SocratizeVerdict("underused", "Underused", "Low occupancy vs calendar window — weak cost justification unless bursty.");
-
-        if (appCount > 0 && topAppShare >= 55)
-            return new SocratizeVerdict("app-concentrated", "App-concentrated", "One title dominates open time — justify the box for that workload.");
-
-        if (utilPct >= 40)
-            return new SocratizeVerdict("healthy", "Healthy", "Material occupancy with a plausible mix of use.");
-
-        return new SocratizeVerdict("mixed", "Mixed / light use", "Some activity, but not a clear high-utilisation story yet.");
-    }
-
-    private static List<SocratizeFinding> BuildFindings(
-        List<SocratizeUserRow> users,
-        List<SocratizeTeamRow> teams,
-        double utilPct,
-        double localSharePct,
-        double rdpSharePct,
-        double rdpIdleShareOfRdp,
-        long rdpDisconnected,
-        List<SocratizeAppRow> apps,
-        double topAppShare,
-        List<SocratizePolicyRow> policies,
-        bool hasGpu,
-        bool hasDisk,
-        int sessionCount,
-        int runCount,
-        SocratizeVerdict verdict)
-    {
-        var list = new List<SocratizeFinding>();
-
-        if (sessionCount == 0 && runCount == 0)
         {
-            list.Add(new SocratizeFinding(
-                "Who uses this machine?",
-                "No sessions or process runs in this period. Either the agent is quiet, tracking is narrow, or the box was unused."));
-            list.Add(new SocratizeFinding(
-                "POC verdict",
-                $"{verdict.Label}: {verdict.Detail} (heuristic — not a formal chargeback)."));
-            return list;
+            detail += $" Note: RDP disconnected is {rdpIdleShareOfRdp:0}% of RDP time — possible seat waste.";
         }
 
-        if (users.Count == 0)
-        {
-            list.Add(new SocratizeFinding(
-                "Who uses this machine?",
-                "No user sessions recorded. Process runs may still show app activity without a matched logon."));
-        }
-        else
-        {
-            var top = string.Join(", ", users.Take(5).Select(u =>
-            {
-                var team = string.IsNullOrWhiteSpace(u.TeamName) ? "" : $" ({u.TeamName})";
-                return $"{u.Username}{team} — {FormatDuration(u.ActiveSeconds)} active / {u.LogonCount} logons";
-            }));
-            var teamLine = teams.Count == 0
-                ? " No PersonTeam mappings matched these usernames yet."
-                : $" Teams seen: {string.Join(", ", teams.Select(t => $"{t.TeamName} ({t.UserCount} users)"))}.";
-            list.Add(new SocratizeFinding(
-                "Who uses this machine?",
-                $"{users.Count} distinct user(s). Top: {top}.{teamLine}"));
-        }
-
-        list.Add(new SocratizeFinding(
-            "How do they connect?",
-            sessionCount == 0
-                ? "No session type mix available."
-                : $"Local ≈ {localSharePct:0}% of accounted session time · RDP ≈ {rdpSharePct:0}% (by active+disconnected seconds)."));
-
-        list.Add(new SocratizeFinding(
-            "How much of the time is it occupied?",
-            $"≈ {utilPct:0}% of the calendar window had at least one open session (overlap not de-duplicated — POC occupancy)."));
-
-        list.Add(new SocratizeFinding(
-            "Active vs disconnected RDP waste?",
-            rdpDisconnected <= 0 && rdpSharePct < 1
-                ? "Little or no RDP disconnected time in this window."
-                : $"RDP disconnected ≈ {FormatDuration(rdpDisconnected)} ({rdpIdleShareOfRdp:0}% of RDP accounted time). High disconnected share can mean paid capacity sitting idle while sessions linger."));
-
-        if (apps.Count == 0)
-        {
-            list.Add(new SocratizeFinding(
-                "What applications dominate time?",
-                "No allowlisted process runs in this period. Check Track Software / Config include lists."));
-        }
-        else
-        {
-            var topApps = string.Join(", ", apps.Take(5).Select(a =>
-                $"{a.ProcessName} ({FormatDuration(a.TotalOpenSeconds)}, {a.RunCount} runs)"));
-            list.Add(new SocratizeFinding(
-                "What applications dominate time?",
-                $"Top titles: {topApps}. Leading app share ≈ {topAppShare:0}% of tracked open time."));
-        }
-
-        if (policies.Count == 0)
-        {
-            list.Add(new SocratizeFinding(
-                "Any high-threshold metric policies in scope?",
-                "No enabled MetricPolicy matches this host’s scope."));
-        }
-        else
-        {
-            var lines = string.Join("; ", policies.Select(p =>
-                $"{p.Name} [{p.MetricType}] @ {p.Scope}{(string.IsNullOrWhiteSpace(p.ScopeValue) ? "" : $"={p.ScopeValue}")}: {p.ThresholdSummary}"));
-            var sampleNote = (!hasGpu || !hasDisk)
-                ? " Note: agent GPU/disk sampling may still be stubbed — thresholds can exist without samples."
-                : "";
-            list.Add(new SocratizeFinding(
-                "Any high-threshold metric policies in scope?",
-                lines + sampleNote));
-        }
-
-        list.Add(new SocratizeFinding(
-            "POC verdict",
-            $"{verdict.Label}: {verdict.Detail}"));
-
-        return list;
+        return (new SocratizeVerdict(code, label, detail), normalized, overall);
     }
 
     private static PersonTeam? MatchTeam(List<PersonTeam> people, string normalizedUser)
@@ -395,6 +446,8 @@ public sealed record SocratizeBrief(
     int RdpSessionCount,
     double LocalSharePct,
     double RdpSharePct,
+    long LocalActiveSeconds,
+    long LocalDisconnectedSeconds,
     long RdpActiveSeconds,
     long RdpDisconnectedSeconds,
     double RdpIdleShareOfRdpPct,
@@ -405,8 +458,9 @@ public sealed record SocratizeBrief(
     IReadOnlyList<SocratizePolicyRow> PoliciesInScope,
     bool HasGpuSamples,
     bool HasDiskSamples,
-    SocratizeVerdict Verdict,
-    IReadOnlyList<SocratizeFinding> Findings);
+    double? OverallScore,
+    IReadOnlyList<SocratizeScoreRow> ScoreBreakdown,
+    SocratizeVerdict Verdict);
 
 public sealed record SocratizeUserRow(
     string Username,
@@ -425,7 +479,9 @@ public sealed record SocratizeAppRow(
     int RunCount,
     double TotalOpenSeconds,
     int UniqueUsers,
-    double? PeakCpuPercent);
+    double? PeakCpuPercent,
+    double? LicenseCostPerYear = null,
+    double? CostPerHour = null);
 
 public sealed record SocratizePolicyRow(
     string Name,
@@ -436,4 +492,9 @@ public sealed record SocratizePolicyRow(
 
 public sealed record SocratizeVerdict(string Code, string Label, string Detail);
 
-public sealed record SocratizeFinding(string Question, string Answer);
+public sealed record SocratizeScoreRow(
+    string Criterion,
+    double Weight,
+    double Score,
+    string Notes,
+    double WeightPct = 0);

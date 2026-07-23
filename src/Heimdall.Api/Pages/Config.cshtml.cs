@@ -644,7 +644,7 @@ public class ConfigModel(HeimdallDbContext db) : PageModel
 
     private List<(ConfigScope Scope, string? ScopeValue)> BuildSamplingTargets()
     {
-        var targets = new List<(ConfigScope, string?)>();
+        var targets = new List<(ConfigScope Scope, string? ScopeValue)>();
 
         switch (SamplingScope)
         {
@@ -723,8 +723,11 @@ public class ConfigModel(HeimdallDbContext db) : PageModel
     private void BuildProcessItems(TrackingConfig cfg)
     {
         var now = DateTimeOffset.UtcNow;
+        // SQLite EF DateTimeOffset filters are unreliable — load then filter in memory.
         var pauses = db.ProcessPauses.AsNoTracking()
-            .Where(p => p.TrackingConfigId == cfg.Id && p.PausedUntilUtc > now)
+            .Where(p => p.TrackingConfigId == cfg.Id)
+            .AsEnumerable()
+            .Where(p => p.PausedUntilUtc > now)
             .ToList();
 
         IncludeItems = ToItems(Deserialize(cfg.IncludeProcessesJson), pauses, ProcessListKind.Include);

@@ -1,13 +1,11 @@
 using System.Runtime.InteropServices;
-using System.Text;
+using Heimdall.Shared;
 using Heimdall.Shared.Contracts;
 
 namespace Heimdall.Agent.Collectors;
 
 internal static class NativeWts
 {
-    public const int WTS_CURRENT_SERVER_HANDLE = 0;
-
     public enum WTS_CONNECTSTATE_CLASS
     {
         WTSActive,
@@ -26,13 +24,18 @@ internal static class NativeWts
     {
         WTSUserName = 5,
         WTSDomainName = 7,
-        WTSClientProtocolType = 16,
         WTSClientName = 10,
         WTSClientAddress = 14,
+        WTSClientProtocolType = 16,
         WTSSessionInfo = 24
     }
 
-    [StructLayout(LayoutKind.Sequential)]
+    /// <summary>WTS_PROTOCOL_TYPE_* values from WTSClientProtocolType.</summary>
+    public const ushort ProtocolConsole = 0;
+    public const ushort ProtocolIca = 1;
+    public const ushort ProtocolRdp = 2;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct WTS_SESSION_INFO
     {
         public int SessionId;
@@ -48,7 +51,9 @@ internal static class NativeWts
         public byte[] Address;
     }
 
-    [DllImport("wtsapi32.dll", SetLastError = true)]
+    // Exact W entry points — CharSet.None defaults to ANSI (*A) which returns LPSTR;
+    // pairing that with PtrToStringUni produces CJK mojibake (e.g. "Ch…" → "桃…").
+    [DllImport("wtsapi32.dll", EntryPoint = "WTSEnumerateSessionsW", SetLastError = true)]
     public static extern bool WTSEnumerateSessions(
         IntPtr hServer,
         int Reserved,
@@ -59,7 +64,7 @@ internal static class NativeWts
     [DllImport("wtsapi32.dll")]
     public static extern void WTSFreeMemory(IntPtr pMemory);
 
-    [DllImport("wtsapi32.dll", SetLastError = true)]
+    [DllImport("wtsapi32.dll", EntryPoint = "WTSQuerySessionInformationW", SetLastError = true)]
     public static extern bool WTSQuerySessionInformation(
         IntPtr hServer,
         int sessionId,
@@ -174,6 +179,17 @@ public sealed class SessionCollector
         }
     }
 
+    /// <summary>Resolve DOMAIN + username for a session (shared by process sampling).</summary>
+    public static (string Username, string? Domain)? TryGetSessionUser(int sessionId)
+    {
+        var user = QueryString(sessionId, NativeWts.WTS_INFO_CLASS.WTSUserName);
+        if (string.IsNullOrWhiteSpace(user))
+            return null;
+
+        var domain = QueryString(sessionId, NativeWts.WTS_INFO_CLASS.WTSDomainName);
+        return (user, string.IsNullOrWhiteSpace(domain) ? null : domain);
+    }
+
     private static void AccumulateTime(TrackedSession tracked, DateTimeOffset now)
     {
         var delta = (long)Math.Max(0, (now - tracked.StateChangedAtUtc).TotalSeconds);
@@ -224,6 +240,7 @@ public sealed class SessionCollector
                 var domain = QueryString(info.SessionId, NativeWts.WTS_INFO_CLASS.WTSDomainName);
                 var clientName = QueryString(info.SessionId, NativeWts.WTS_INFO_CLASS.WTSClientName);
                 var protocol = QueryUInt16(info.SessionId, NativeWts.WTS_INFO_CLASS.WTSClientProtocolType);
+                var winStation = Marshal.PtrToStringUni(info.pWinStationName)?.Trim();
                 var address = QueryClientAddress(info.SessionId);
 
                 var state = info.State switch
@@ -234,8 +251,7 @@ public sealed class SessionCollector
                     _ => SessionState.Disconnected
                 };
 
-                // Protocol 2 = RDP
-                var type = protocol == 2 ? SessionType.Rdp : SessionType.Local;
+                var type = ClassifySessionType(winStation, protocol);
 
                 results.Add(new TrackedSession
                 {
@@ -261,14 +277,47 @@ public sealed class SessionCollector
         return results;
     }
 
+    /// <summary>
+    /// Prefer WinStation name (Console vs RDP-Tcp#N); fall back to WTSClientProtocolType.
+    /// Note: RDP-to-self is still RDP — physical presence is not what this field means.
+    /// </summary>
+    internal static SessionType ClassifySessionType(string? winStation, ushort protocol)
+    {
+        if (!string.IsNullOrWhiteSpace(winStation))
+        {
+            if (winStation.Equals("Console", StringComparison.OrdinalIgnoreCase))
+                return SessionType.Local;
+
+            if (winStation.StartsWith("RDP-", StringComparison.OrdinalIgnoreCase)
+                || winStation.StartsWith("ICA-", StringComparison.OrdinalIgnoreCase))
+                return SessionType.Rdp;
+        }
+
+        return protocol switch
+        {
+            NativeWts.ProtocolRdp => SessionType.Rdp,
+            NativeWts.ProtocolIca => SessionType.Rdp,
+            // Console (0) and anything else → Local (previous agent behavior for non-RDP)
+            _ => SessionType.Local
+        };
+    }
+
     private static string? QueryString(int sessionId, NativeWts.WTS_INFO_CLASS infoClass)
     {
-        if (!NativeWts.WTSQuerySessionInformation(IntPtr.Zero, sessionId, infoClass, out var buffer, out _))
+        if (!NativeWts.WTSQuerySessionInformation(IntPtr.Zero, sessionId, infoClass, out var buffer, out var bytes)
+            || buffer == IntPtr.Zero
+            || bytes <= 0)
             return null;
 
         try
         {
-            return Marshal.PtrToStringUni(buffer)?.Trim();
+            // WTSQuerySessionInformationW returns a null-terminated UTF-16 string.
+            var raw = Marshal.PtrToStringUni(buffer, bytes / 2)?.TrimEnd('\0').Trim();
+            if (string.IsNullOrWhiteSpace(raw))
+                return null;
+
+            // Belt-and-suspenders: if an older build/path still handed us ANSI-as-UTF16 junk, recover.
+            return WindowsAccountEncoding.RepairAccountField(raw);
         }
         finally
         {

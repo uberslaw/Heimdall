@@ -9,7 +9,10 @@
         <h1 class="hd-title mb-1">Track Software</h1>
         <p class="hd-sub mb-0">Add a title to track on selected regions, offices, or machines</p>
     </div>
-    <a class="btn btn-ghost" asp-page="/Apps">← Applications</a>
+    <div class="d-flex gap-2">
+        <a class="btn btn-ghost" asp-page="/AppLists">App lists</a>
+        <a class="btn btn-ghost" asp-page="/Apps">← Applications</a>
+    </div>
 </div>
 
 @if (TempData["Message"] is string msg)
@@ -76,18 +79,23 @@
             </div>
 
             <div data-source-panel="Custom" class="mb-3" hidden>
+                <p class="text-secondary small">Browse picks an .exe from the machine running this browser (not the remote host).</p>
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label class="form-label">Executable name</label>
-                        <input class="form-control" name="CustomProcessName" asp-for="CustomProcessName" placeholder="e.g. Speckle" />
+                        <div class="input-group">
+                            <input class="form-control" name="CustomProcessName" asp-for="CustomProcessName" id="custom-process-name" placeholder="e.g. Speckle" />
+                            <button type="button" class="btn btn-ghost" id="browse-custom-exe">Browse…</button>
+                            <input type="file" id="browse-custom-file" accept=".exe,.EXE,application/x-msdownload" hidden />
+                        </div>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Display name (optional)</label>
-                        <input class="form-control" name="CustomDisplayName" asp-for="CustomDisplayName" placeholder="e.g. Speckle Connector" />
+                        <input class="form-control" name="CustomDisplayName" asp-for="CustomDisplayName" id="custom-display-name" placeholder="e.g. Speckle Connector" />
                     </div>
                     <div class="col-12">
                         <label class="form-label">Full path (optional)</label>
-                        <input class="form-control" name="CustomPath" asp-for="CustomPath" placeholder="C:\Program Files\..." />
+                        <input class="form-control" name="CustomPath" asp-for="CustomPath" id="custom-path" placeholder="C:\Program Files\..." />
                     </div>
                 </div>
             </div>
@@ -112,6 +120,24 @@
   radios.forEach(r => r.addEventListener('change', syncPanels));
   syncPanels();
   HeimdallTree.init(document.getElementById('track-tree'));
+
+  const browseBtn = document.getElementById('browse-custom-exe');
+  const browseFile = document.getElementById('browse-custom-file');
+  browseBtn?.addEventListener('click', () => browseFile?.click());
+  browseFile?.addEventListener('change', () => {
+    const file = browseFile.files?.[0];
+    if (!file) return;
+    let name = file.name.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '').trim();
+    browseFile.value = '';
+    if (!name) return;
+    const proc = document.getElementById('custom-process-name');
+    const disp = document.getElementById('custom-display-name');
+    const path = document.getElementById('custom-path');
+    if (proc) proc.value = name;
+    if (disp && !disp.value.trim()) disp.value = name;
+    // Browsers do not expose full path for security; keep name-only unless user pastes path.
+    if (path && !path.value.trim()) path.placeholder = 'Paste full path if known (browser cannot read it)';
+  });
 })();
 </script>
 }

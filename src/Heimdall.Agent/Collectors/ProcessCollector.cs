@@ -103,6 +103,35 @@ public sealed class ProcessCollector
         return updates;
     }
 
+    /// <summary>One-shot inventory of running processes for server-side app analysis.</summary>
+    [SupportedOSPlatform("windows")]
+    public static IReadOnlyList<DiscoveredProcessDto> DiscoverInventory()
+    {
+        var map = new Dictionary<string, DiscoveredProcessDto>(StringComparer.OrdinalIgnoreCase);
+        foreach (var process in Process.GetProcesses())
+        {
+            try
+            {
+                var name = process.ProcessName;
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                string? path = null;
+                try { path = process.MainModule?.FileName; } catch { /* access denied */ }
+                if (!map.ContainsKey(name))
+                {
+                    map[name] = new DiscoveredProcessDto
+                    {
+                        ProcessName = name,
+                        DisplayName = name,
+                        ExecutablePath = path
+                    };
+                }
+            }
+            catch { /* ignore */ }
+            finally { process.Dispose(); }
+        }
+        return map.Values.OrderBy(p => p.ProcessName, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
     private static DateTimeOffset? SafeStartTime(Process process)
     {
         try { return new DateTimeOffset(process.StartTime.ToUniversalTime()); }

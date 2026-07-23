@@ -1,0 +1,216 @@
+@page
+@model UtilizationModel
+@{
+    ViewData["Title"] = "Utilization criteria";
+    var sum = Model.WeightSum;
+}
+
+<h1 class="hd-title">Utilization criteria</h1>
+<p class="hd-sub">
+    Global weights &amp; targets for Socratize POC verdict ·
+    <a asp-page="/Config">Config</a> ·
+    <a asp-page="/Socratize">Socratize</a>
+</p>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+
+<div class="hd-panel mb-3">
+    <p class="hd-meta-line mb-2">
+        Scope: <span class="badge-pill badge-local">Global</span>
+        <span class="text-secondary"> · per-region criteria later</span>
+    </p>
+    <p class="text-secondary small mb-0">
+        <strong>Scoring formula.</strong>
+        Each criterion is scored 0–100 vs its ideal target, then combined as a weighted average
+        (weights need not sum to 100 — they are normalized). Labels:
+        High ≥ @Model.HighScoreThreshold.ToString("0") ·
+        Adequate ≥ @Model.AdequateScoreThreshold.ToString("0") ·
+        Mixed ≥ @Model.MixedScoreThreshold.ToString("0") ·
+        else Underused.
+        Daily util = <em>active session seconds</em> ÷ (<em>period days</em> × working hours/day).
+        App value = license cost/year ÷ annualized open hours (lower $/h scores higher).
+    </p>
+</div>
+
+<form method="post" asp-page-handler="SaveCriteria" class="hd-panel mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h2 class="hd-section-title mb-0">Weights &amp; targets</h2>
+        <span class="text-secondary small">Weight sum: @sum.ToString("0.#") (normalized at score time)</span>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-md-3">
+            <label class="form-label">Weight · # users</label>
+            <input class="form-control" type="number" step="0.1" min="0" asp-for="WeightUsers" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Weight · daily util %</label>
+            <input class="form-control" type="number" step="0.1" min="0" asp-for="WeightDailyUtil" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Weight · CPU/GPU/disk busy</label>
+            <input class="form-control" type="number" step="0.1" min="0" asp-for="WeightMetricBusy" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Weight · app $/hour</label>
+            <input class="form-control" type="number" step="0.1" min="0" asp-for="WeightAppValue" />
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-md-3">
+            <label class="form-label">Ideal min users</label>
+            <input class="form-control" type="number" min="0" asp-for="IdealMinUsers" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Ideal daily util %</label>
+            <input class="form-control" type="number" step="0.1" min="0" max="100" asp-for="IdealDailyUtilPct" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Working hours / day</label>
+            <input class="form-control" type="number" step="0.5" min="1" max="24" asp-for="WorkingHoursPerDay" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Ideal max $/hour</label>
+            <input class="form-control" type="number" step="0.01" min="0.01" asp-for="IdealMaxCostPerHour" />
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-md-3">
+            <label class="form-label">Busy CPU peak ≥ %</label>
+            <input class="form-control" type="number" step="0.1" min="0" max="100" asp-for="BusyCpuPercentThreshold" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Busy GPU peak ≥ %</label>
+            <input class="form-control" type="number" step="0.1" min="0" max="100" asp-for="BusyGpuPercentThreshold" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Ideal metric-busy %</label>
+            <input class="form-control" type="number" step="0.1" min="0" max="100" asp-for="IdealMetricBusyPct" />
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-md-3">
+            <label class="form-label">High score ≥</label>
+            <input class="form-control" type="number" step="0.1" min="0" max="100" asp-for="HighScoreThreshold" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Adequate score ≥</label>
+            <input class="form-control" type="number" step="0.1" min="0" max="100" asp-for="AdequateScoreThreshold" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Mixed score ≥</label>
+            <input class="form-control" type="number" step="0.1" min="0" max="100" asp-for="MixedScoreThreshold" />
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-hd">Save criteria</button>
+</form>
+
+<form method="post" asp-page-handler="SaveLicenses" class="hd-panel mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h2 class="hd-section-title mb-0">App license cost / year</h2>
+        <span class="text-secondary small">Leave blank or 0 to clear · used for $/hour value score</span>
+    </div>
+
+    <table class="hd-table mb-3">
+        <thead>
+            <tr>
+                <th>App</th>
+                <th>Process</th>
+                <th>License cost / year</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        @for (var i = 0; i < Model.LicenseEdits.Count; i++)
+        {
+            <tr>
+                <td>
+                    @(Model.LicenseEdits[i].DisplayName ?? "—")
+                    <input type="hidden" asp-for="LicenseEdits[i].Id" />
+                    <input type="hidden" asp-for="LicenseEdits[i].DisplayName" />
+                </td>
+                <td>
+                    <code>@Model.LicenseEdits[i].ProcessName</code>
+                    <input type="hidden" asp-for="LicenseEdits[i].ProcessName" />
+                </td>
+                <td style="max-width:160px">
+                    <input class="form-control form-control-sm" type="number" step="0.01" min="0"
+                           asp-for="LicenseEdits[i].LicenseCostPerYear" placeholder="—" />
+                </td>
+                <td>
+                    @if (Model.LicenseEdits[i].Id is int lid)
+                    {
+                        <button type="submit" class="btn btn-ghost btn-sm"
+                                formaction="?handler=DeleteLicense&amp;id=@lid"
+                                formmethod="post"
+                                onclick="return confirm('Remove license cost?');">Remove</button>
+                    }
+                </td>
+            </tr>
+        }
+        @if (Model.LicenseEdits.Count == 0)
+        {
+            <tr><td colspan="4" class="text-secondary">No known apps yet — add below or seed Known Apps on Config.</td></tr>
+        }
+        </tbody>
+    </table>
+
+    <div class="row g-3 align-items-end mb-3">
+        <div class="col-md-3">
+            <label class="form-label">New process name</label>
+            <input class="form-control" asp-for="NewLicenseProcessName" placeholder="e.g. Revit" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Display name</label>
+            <input class="form-control" asp-for="NewLicenseDisplayName" placeholder="optional" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Cost / year</label>
+            <input class="form-control" type="number" step="0.01" min="0" asp-for="NewLicenseCostPerYear" />
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-hd">Save license costs</button>
+</form>
+
+<div class="hd-panel">
+    <h2 class="hd-section-title">Criterion definitions</h2>
+    <table class="hd-table mb-0">
+        <thead>
+            <tr>
+                <th>Criterion</th>
+                <th>Observed</th>
+                <th>Score (0–100)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td># of users</td>
+                <td>Distinct usernames with a session in the period</td>
+                <td>min(100, users ÷ ideal min users × 100)</td>
+            </tr>
+            <tr>
+                <td>% time in use / day</td>
+                <td>Σ active session seconds ÷ (days × working h/day × 3600) × 100</td>
+                <td>min(100, daily util % ÷ ideal daily util % × 100)</td>
+            </tr>
+            <tr>
+                <td>CPU / GPU / disk busy</td>
+                <td>Open time of process runs with peak CPU/GPU ≥ threshold (or any disk bytes when sampled)</td>
+                <td>min(100, busy % of working capacity ÷ ideal busy % × 100); neutral 50 if no samples</td>
+            </tr>
+            <tr>
+                <td>App business value</td>
+                <td>$/h = cost/year ÷ annualized open hours (open h × 365 / period days)</td>
+                <td>min(100, ideal max $/h ÷ observed $/h × 100); neutral 50 if no costs set</td>
+            </tr>
+        </tbody>
+    </table>
+</div>

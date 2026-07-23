@@ -1,0 +1,252 @@
+using Heimdall.Api.Data;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.EntityFrameworkCore;
+
+namespace Heimdall.Api.Pages;
+
+public class CostModel(HeimdallDbContext db) : PageModel
+{
+    public IReadOnlyList<CostRow> Rows { get; private set; } = [];
+    public int ActiveWarrantyCount { get; private set; }
+    public int ExpiredWarrantyCount { get; private set; }
+    public int UnknownWarrantyCount { get; private set; }
+    public decimal? TotalPurchaseCost { get; private set; }
+
+    [BindProperty]
+    public int? EditingMachineId { get; set; }
+
+    [BindProperty]
+    public decimal? PurchaseCost { get; set; }
+
+    [BindProperty]
+    public string? PurchaseCurrency { get; set; } = "AUD";
+
+    [BindProperty]
+    public DateOnly? WarrantyStartDate { get; set; }
+
+    [BindProperty]
+    public DateOnly? WarrantyEndDate { get; set; }
+
+    [BindProperty]
+    public string? HardwareGpu { get; set; }
+
+    [BindProperty]
+    public string? HardwareCpu { get; set; }
+
+    [BindProperty]
+    public double? HardwareRamGb { get; set; }
+
+    [BindProperty]
+    public double? HardwareDiskGb { get; set; }
+
+    [BindProperty]
+    public string? HardwareBrand { get; set; }
+
+    [BindProperty]
+    public string? HardwareModel { get; set; }
+
+    [BindProperty]
+    public string? HardwareSerialNumber { get; set; }
+
+    [BindProperty]
+    public bool HardwareManualOverride { get; set; } = true;
+
+    [BindProperty(SupportsGet = true)]
+    public string? Q { get; set; }
+
+    [BindProperty(SupportsGet = true)]
+    public string? Warranty { get; set; }
+
+    public async Task OnGetAsync(int? edit)
+    {
+        await LoadAsync();
+        if (edit is int id)
+            await LoadEditAsync(id);
+    }
+
+    public async Task<IActionResult> OnPostSaveAsync()
+    {
+        if (EditingMachineId is not int id)
+        {
+            TempData["Error"] = "No machine selected.";
+            return RedirectToPage();
+        }
+
+        var machine = await db.Machines.FirstOrDefaultAsync(m => m.Id == id);
+        if (machine is null)
+        {
+            TempData["Error"] = "Machine not found.";
+            return RedirectToPage();
+        }
+
+        machine.PurchaseCost = PurchaseCost;
+        machine.PurchaseCurrency = string.IsNullOrWhiteSpace(PurchaseCurrency)
+            ? (PurchaseCost is not null ? "AUD" : null)
+            : PurchaseCurrency.Trim().ToUpperInvariant();
+        machine.WarrantyStartDate = WarrantyStartDate;
+        machine.WarrantyEndDate = WarrantyEndDate;
+        machine.HardwareGpu = NullIfEmpty(HardwareGpu);
+        machine.HardwareCpu = NullIfEmpty(HardwareCpu);
+        machine.HardwareRamGb = HardwareRamGb;
+        machine.HardwareDiskGb = HardwareDiskGb;
+        machine.HardwareBrand = NullIfEmpty(HardwareBrand);
+        machine.HardwareModel = NullIfEmpty(HardwareModel);
+        machine.HardwareSerialNumber = NullIfEmpty(HardwareSerialNumber);
+        // Saving from Cost UI opts into manual override so agent won't clobber
+        machine.HardwareManualOverride = HardwareManualOverride;
+
+        await db.SaveChangesAsync();
+        TempData["Message"] = $"Saved cost/hardware for {machine.Hostname}.";
+        return RedirectToPage(new { edit = id, q = Q, warranty = Warranty });
+    }
+
+    public async Task<IActionResult> OnPostClearOverrideAsync(int machineId)
+    {
+        var machine = await db.Machines.FirstOrDefaultAsync(m => m.Id == machineId);
+        if (machine is null)
+        {
+            TempData["Error"] = "Machine not found.";
+            return RedirectToPage();
+        }
+
+        machine.HardwareManualOverride = false;
+        await db.SaveChangesAsync();
+        TempData["Message"] = $"Cleared manual override on {machine.Hostname} — agent may fill blank hardware fields on next heartbeat.";
+        return RedirectToPage(new { edit = machineId, q = Q, warranty = Warranty });
+    }
+
+    private async Task LoadEditAsync(int id)
+    {
+        var m = await db.Machines.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
+        if (m is null) return;
+
+        EditingMachineId = m.Id;
+        PurchaseCost = m.PurchaseCost;
+        PurchaseCurrency = m.PurchaseCurrency ?? "AUD";
+        WarrantyStartDate = m.WarrantyStartDate;
+        WarrantyEndDate = m.WarrantyEndDate;
+        HardwareGpu = m.HardwareGpu;
+        HardwareCpu = m.HardwareCpu;
+        HardwareRamGb = m.HardwareRamGb;
+        HardwareDiskGb = m.HardwareDiskGb;
+        HardwareBrand = m.HardwareBrand;
+        HardwareModel = m.HardwareModel;
+        HardwareSerialNumber = m.HardwareSerialNumber;
+        // Default checked so a Cost-page save protects agent-reported blanks unless cleared
+        HardwareManualOverride = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var since = DateTimeOffset.UtcNow.AddDays(-30);
+
+        var machines = await db.Machines.AsNoTracking().OrderBy(m => m.Hostname).ToListAsync();
+        var sessions = (await db.Sessions.AsNoTracking().ToListAsync())
+            .Where(s => s.StartedAtUtc >= since || s.EndedAtUtc is null || s.EndedAtUtc >= since)
+            .ToList();
+
+        var rows = new List<CostRow>();
+        foreach (var m in machines)
+        {
+            var status = ResolveWarranty(m.WarrantyStartDate, m.WarrantyEndDate, today);
+            var activeSeconds = sessions.Where(s => s.MachineId == m.Id).Sum(s => s.ActiveSeconds);
+            decimal? costPerHour = null;
+            if (m.PurchaseCost is > 0 && activeSeconds > 0)
+            {
+                var hours = activeSeconds / 3600.0m;
+                if (hours > 0)
+                    costPerHour = Math.Round(m.PurchaseCost.Value / hours, 2);
+            }
+
+            rows.Add(new CostRow(
+                m.Id,
+                m.Hostname,
+                m.Region,
+                m.Office,
+                m.PurchaseCost,
+                m.PurchaseCurrency ?? (m.PurchaseCost is not null ? "AUD" : null),
+                m.WarrantyStartDate,
+                m.WarrantyEndDate,
+                status,
+                m.HardwareBrand,
+                m.HardwareModel,
+                m.HardwareSerialNumber,
+                m.HardwareCpu,
+                m.HardwareRamGb,
+                m.HardwareDiskGb,
+                m.HardwareGpu,
+                m.HardwareManualOverride,
+                activeSeconds,
+                costPerHour));
+        }
+
+        if (!string.IsNullOrWhiteSpace(Q))
+        {
+            var q = Q.Trim();
+            rows = rows.Where(r =>
+                r.Hostname.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                (r.Brand?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (r.Model?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (r.SerialNumber?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (r.Cpu?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (r.Gpu?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
+        }
+
+        if (!string.IsNullOrWhiteSpace(Warranty) &&
+            !string.Equals(Warranty, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            rows = rows.Where(r =>
+                string.Equals(r.WarrantyStatus, Warranty, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+
+        Rows = rows;
+        ActiveWarrantyCount = rows.Count(r => r.WarrantyStatus == "Active");
+        ExpiredWarrantyCount = rows.Count(r => r.WarrantyStatus == "Expired");
+        UnknownWarrantyCount = rows.Count(r => r.WarrantyStatus == "Unknown");
+        TotalPurchaseCost = rows.Where(r => r.PurchaseCost is not null).Sum(r => r.PurchaseCost!.Value);
+    }
+
+    public static string ResolveWarranty(DateOnly? start, DateOnly? end, DateOnly today)
+    {
+        if (end is null && start is null)
+            return "Unknown";
+        if (end is DateOnly e)
+            return e >= today ? "Active" : "Expired";
+        // Start only — treat as unknown until end is set
+        return "Unknown";
+    }
+
+    public static string BadgeClass(string status) => status switch
+    {
+        "Active" => "badge-active",
+        "Expired" => "badge-expired",
+        _ => "badge-ended"
+    };
+
+    private static string? NullIfEmpty(string? s) =>
+        string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    public sealed record CostRow(
+        int Id,
+        string Hostname,
+        string? Region,
+        string? Office,
+        decimal? PurchaseCost,
+        string? Currency,
+        DateOnly? WarrantyStart,
+        DateOnly? WarrantyEnd,
+        string WarrantyStatus,
+        string? Brand,
+        string? Model,
+        string? SerialNumber,
+        string? Cpu,
+        double? RamGb,
+        double? DiskGb,
+        string? Gpu,
+        bool ManualOverride,
+        long ActiveSeconds30d,
+        decimal? CostPerActiveHour);
+}
+

@@ -10,7 +10,7 @@
 }
 
 <h1 class="hd-title">Tracking config</h1>
-<p class="hd-sub">Scoped sampling, include/exclude process lists, known apps, and metric thresholds</p>
+<p class="hd-sub">Scoped sampling, include/exclude process lists, known apps, and metric thresholds · <a asp-page="/Utilization">Utilization criteria</a></p>
 
 @if (TempData["Message"] is string msg)
 {
@@ -180,7 +180,7 @@
     <div class="row g-3 mb-3">
         <div class="col-md-6">
             <label class="form-label">Extra include processes</label>
-            <p class="text-secondary small">Pause = temporarily do not track (until expiry).</p>
+            <p class="text-secondary small">Pause = temporarily do not track (until expiry). Browse uses a file picker on <em>this</em> browser machine (not the remote agent host).</p>
             <div class="hd-process-list" id="include-list" data-list-kind="Include" data-can-mutate="@editing.ToString().ToLowerInvariant()">
                 <div class="hd-process-items" role="list">
                     @if (Model.IncludeItems.Count == 0)
@@ -192,6 +192,10 @@
                         <label class="hd-process-item">
                             <input type="checkbox" class="form-check-input hd-process-check" value="@item.Name" />
                             <span class="hd-process-name">@item.Name</span>
+                            @if (item.IsSoe)
+                            {
+                                <span class="badge-pill badge-local">SOE</span>
+                            }
                             @if (item.PausedUntilUtc is DateTimeOffset until)
                             {
                                 <span class="badge-pill badge-disc" title="@until.UtcDateTime.ToString("u")">paused until @until.UtcDateTime.ToString("g") UTC</span>
@@ -202,12 +206,14 @@
                 <div class="hd-process-toolbar mt-2">
                     <div class="input-group">
                         <input type="text" class="form-control hd-process-input" placeholder="Process name (e.g. dynamo)" @(editing ? null : "disabled") />
+                        <button type="button" class="btn btn-ghost hd-process-browse" @(editing ? null : "disabled")>Browse…</button>
                         <button type="button" class="btn btn-ghost hd-process-add" @(editing ? null : "disabled")>Add</button>
+                        <input type="file" class="hd-process-file" accept=".exe,.EXE,application/x-msdownload" hidden />
                     </div>
                     <div class="hd-process-actions mt-2" hidden>
                         <button type="button" class="btn btn-ghost btn-sm hd-process-remove">Remove</button>
                         <button type="button" class="btn btn-ghost btn-sm hd-process-unpause">Unpause</button>
-                        <button type="button" class="btn btn-hd btn-sm hd-process-pause">Pause</button>
+                        <button type="button" class="btn btn-hd btn-sm hd-process-pause">Pause tracking</button>
                     </div>
                     <div class="hd-pause-controls mt-2" hidden>
                         <div class="d-flex flex-wrap gap-2 align-items-end">
@@ -240,22 +246,41 @@
             </div>
         </div>
         <div class="col-md-6">
-            <label class="form-label">Exclude processes (noise)</label>
-            <p class="text-secondary small">Pause = temporarily stop excluding (allow through until expiry).</p>
+            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-1">
+                <div>
+                    <label class="form-label mb-0">Exclude processes (noise)</label>
+                    <p class="text-secondary small mb-0">Pause / Allow for diagnostics = temporarily stop excluding (track again until expiry).</p>
+                </div>
+                @if (editing)
+                {
+                    <form method="post" asp-page-handler="AutogenerateSoeExcludes" class="d-inline">
+                        <input type="hidden" name="EditingConfigId" value="@Model.EditingConfigId" />
+                        <button type="submit" class="btn btn-ghost btn-sm" title="Merge curated SOE catalog into this exclude list">Autogenerate SOE excludes</button>
+                    </form>
+                }
+            </div>
+            <p class="text-secondary small">Catalog: @Model.SoeCatalogCount SOE apps · diagnostic re-includes expire automatically</p>
             <div class="hd-process-list" id="exclude-list" data-list-kind="Exclude" data-can-mutate="@editing.ToString().ToLowerInvariant()">
                 <div class="hd-process-items" role="list">
                     @if (Model.ExcludeItems.Count == 0)
                     {
-                        <div class="hd-process-empty text-secondary small">No excludes yet.</div>
+                        <div class="hd-process-empty text-secondary small">No excludes yet. Use Autogenerate SOE excludes for a starter set.</div>
                     }
                     @foreach (var item in Model.ExcludeItems)
                     {
                         <label class="hd-process-item">
                             <input type="checkbox" class="form-check-input hd-process-check" value="@item.Name" />
                             <span class="hd-process-name">@item.Name</span>
+                            @if (item.IsSoe)
+                            {
+                                <span class="badge-pill badge-local">SOE</span>
+                            }
                             @if (item.PausedUntilUtc is DateTimeOffset until)
                             {
-                                <span class="badge-pill badge-disc" title="@until.UtcDateTime.ToString("u")">paused until @until.UtcDateTime.ToString("g") UTC</span>
+                                var label = string.Equals(item.PauseReason, "diagnostics", StringComparison.OrdinalIgnoreCase)
+                                    ? "diagnostics until"
+                                    : "paused until";
+                                <span class="badge-pill badge-disc" title="@until.UtcDateTime.ToString("u")">@label @until.UtcDateTime.ToString("g") UTC</span>
                             }
                         </label>
                     }
@@ -263,12 +288,14 @@
                 <div class="hd-process-toolbar mt-2">
                     <div class="input-group">
                         <input type="text" class="form-control hd-process-input" placeholder="Process name (e.g. svchost)" @(editing ? null : "disabled") />
+                        <button type="button" class="btn btn-ghost hd-process-browse" @(editing ? null : "disabled")>Browse…</button>
                         <button type="button" class="btn btn-ghost hd-process-add" @(editing ? null : "disabled")>Add</button>
+                        <input type="file" class="hd-process-file" accept=".exe,.EXE,application/x-msdownload" hidden />
                     </div>
                     <div class="hd-process-actions mt-2" hidden>
                         <button type="button" class="btn btn-ghost btn-sm hd-process-remove">Remove</button>
-                        <button type="button" class="btn btn-ghost btn-sm hd-process-unpause">Unpause</button>
-                        <button type="button" class="btn btn-hd btn-sm hd-process-pause">Pause</button>
+                        <button type="button" class="btn btn-ghost btn-sm hd-process-unpause">End diagnostics</button>
+                        <button type="button" class="btn btn-hd btn-sm hd-process-pause">Allow for diagnostics</button>
                     </div>
                     <div class="hd-pause-controls mt-2" hidden>
                         <div class="d-flex flex-wrap gap-2 align-items-end">
@@ -301,7 +328,7 @@
             </div>
             @if (!editing)
             {
-                <p class="text-secondary small mt-2 mb-0">Save the sampling config first to Add / Remove / Pause processes. You can paste a JSON list into a later edit, or save empty lists then edit.</p>
+                <p class="text-secondary small mt-2 mb-0">Save the sampling config first to Add / Remove / Pause / Autogenerate SOE.</p>
             }
         </div>
     </div>
@@ -349,16 +376,21 @@
     <div id="unpause-selected"></div>
 </form>
 
-<form method="post" asp-page-handler="AddApp" class="hd-panel mb-4">
+<form method="post" asp-page-handler="AddApp" class="hd-panel mb-4" id="add-app-form">
     <h2 class="h5 mb-3">Add custom application</h2>
+    <p class="text-secondary small">Browse picks an .exe on the machine running this browser (POC limitation for remote admins).</p>
     <div class="row g-3 align-items-end">
         <div class="col-md-4">
             <label class="form-label">Display name</label>
-            <input class="form-control" asp-for="NewAppDisplayName" placeholder="e.g. Speckle" />
+            <input class="form-control" asp-for="NewAppDisplayName" id="new-app-display" placeholder="e.g. Speckle" />
         </div>
         <div class="col-md-4">
             <label class="form-label">Process name</label>
-            <input class="form-control" asp-for="NewAppProcessName" placeholder="e.g. Speckle" />
+            <div class="input-group">
+                <input class="form-control" asp-for="NewAppProcessName" id="new-app-process" placeholder="e.g. Speckle" />
+                <button type="button" class="btn btn-ghost" id="browse-new-app">Browse…</button>
+                <input type="file" id="browse-new-app-file" accept=".exe,.EXE,application/x-msdownload" hidden />
+            </div>
         </div>
         <div class="col-md-4">
             <button type="submit" class="btn btn-ghost">Add</button>
@@ -592,6 +624,7 @@
 
   HeimdallProcessList.init(document.getElementById('include-list'));
   HeimdallProcessList.init(document.getElementById('exclude-list'));
+  HeimdallProcessList.wireAppBrowse();
 
   // Before save: sync visible list names into hidden JSON (covers create flow if lists were somehow filled)
   document.getElementById('sampling-form')?.addEventListener('submit', () => {

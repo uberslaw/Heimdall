@@ -14,6 +14,13 @@
     });
   }
 
+  function basenameFromFile(file) {
+    if (!file || !file.name) return '';
+    let name = file.name.replace(/^.*[\\/]/, '');
+    name = name.replace(/\.exe$/i, '');
+    return name.trim();
+  }
+
   function syncActions(root) {
     const selected = selectedNames(root);
     const actions = root.querySelector('.hd-process-actions');
@@ -22,6 +29,14 @@
     const show = selected.length > 0 && root.dataset.canMutate === 'true';
     actions.hidden = !show;
     if (pauseControls) pauseControls.hidden = !show;
+  }
+
+  function submitAdd(kind, name) {
+    const n = (name || '').trim();
+    if (!n) return;
+    document.getElementById('add-list-kind').value = kind;
+    document.getElementById('add-process-name').value = n;
+    document.getElementById('form-add-process').submit();
   }
 
   function init(root) {
@@ -41,9 +56,7 @@
         input?.focus();
         return;
       }
-      document.getElementById('add-list-kind').value = kind;
-      document.getElementById('add-process-name').value = name;
-      document.getElementById('form-add-process').submit();
+      submitAdd(kind, name);
     });
 
     root.querySelector('.hd-process-input')?.addEventListener('keydown', e => {
@@ -51,6 +64,21 @@
         e.preventDefault();
         root.querySelector('.hd-process-add')?.click();
       }
+    });
+
+    const fileInput = root.querySelector('.hd-process-file');
+    root.querySelector('.hd-process-browse')?.addEventListener('click', () => {
+      if (!canMutate) return;
+      fileInput?.click();
+    });
+    fileInput?.addEventListener('change', () => {
+      const file = fileInput.files?.[0];
+      const name = basenameFromFile(file);
+      fileInput.value = '';
+      if (!name) return;
+      const text = root.querySelector('.hd-process-input');
+      if (text) text.value = name;
+      submitAdd(kind, name);
     });
 
     root.querySelector('.hd-process-remove')?.addEventListener('click', () => {
@@ -84,5 +112,21 @@
     syncActions(root);
   }
 
-  window.HeimdallProcessList = { init };
+  function wireAppBrowse() {
+    const btn = document.getElementById('browse-new-app');
+    const file = document.getElementById('browse-new-app-file');
+    const process = document.getElementById('new-app-process');
+    const display = document.getElementById('new-app-display');
+    if (!btn || !file) return;
+    btn.addEventListener('click', () => file.click());
+    file.addEventListener('change', () => {
+      const name = basenameFromFile(file.files?.[0]);
+      file.value = '';
+      if (!name) return;
+      if (process) process.value = name;
+      if (display && !display.value.trim()) display.value = name;
+    });
+  }
+
+  window.HeimdallProcessList = { init, basenameFromFile, wireAppBrowse };
 })();

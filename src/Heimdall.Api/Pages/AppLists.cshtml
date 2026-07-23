@@ -1,0 +1,372 @@
+@page
+@model AppListsModel
+@using Heimdall.Api.Data
+@{
+    ViewData["Title"] = "App lists";
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+    <div>
+        <h1 class="hd-title mb-1">App lists</h1>
+        <p class="hd-sub mb-0">Named process schemas · apply anywhere · analyze machines · approve before tracking</p>
+    </div>
+    <div class="d-flex gap-2">
+        <a class="btn btn-ghost" asp-page="/TrackSoftware">Track Software</a>
+        <a class="btn btn-ghost" asp-page="/Apps">Applications</a>
+    </div>
+</div>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<div class="hd-panel mb-3">
+    <p class="mb-2 small text-secondary">
+        <strong>Pre-approval:</strong> agents still track existing Config includes, known apps enabled by default, and any already-assigned app lists.
+        Analysis proposals are <em>not</em> tracked until you Approve all, Approve selected, or Apply team app list.
+        <strong>Team path</strong> replaces machine auto-discovered lists with that team schema only.
+    </p>
+    <p class="mb-0 small text-secondary">
+        <strong>CSV upload:</strong> header <code>ProcessName</code> or <code>DisplayName,ProcessName</code>; optional <code>Team</code>, <code>ListName</code> columns for bulk create.
+        JSON: array of <code>{"processName","displayName?","team?","listName?"}</code>.
+    </p>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-5">
+        <div class="hd-panel mb-4">
+            <h2 class="h5 mb-3">@(Model.EditId is null ? "Create app list" : $"Edit list #{Model.EditId}")</h2>
+            <form method="post" asp-page-handler="SaveList">
+                <input type="hidden" asp-for="EditId" />
+                <div class="mb-3">
+                    <label class="form-label">Name</label>
+                    <input class="form-control" asp-for="ListName" required placeholder="e.g. Structural – APAC" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Team (optional)</label>
+                    <select class="form-select" asp-for="TeamId">
+                        <option value="">— none —</option>
+                        @foreach (var t in Model.Teams)
+                        {
+                            <option value="@t.Id">@t.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Notes</label>
+                    <input class="form-control" asp-for="Notes" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Processes (one per line; optional <code>DisplayName,ProcessName</code>)</label>
+                    <textarea class="form-control font-monospace" asp-for="ProcessesText" rows="8" placeholder="Revit&#10;acad&#10;Speckle Connector,Speckle"></textarea>
+                </div>
+                <button type="submit" class="btn btn-hd">@(Model.EditId is null ? "Create" : "Save")</button>
+                @if (Model.EditId is not null)
+                {
+                    <a class="btn btn-ghost" asp-page="/AppLists">Cancel</a>
+                }
+            </form>
+        </div>
+
+        <div class="hd-panel mb-4">
+            <h2 class="h5 mb-3">Upload CSV / JSON</h2>
+            <form method="post" asp-page-handler="Upload" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <label class="form-label">Default team (if column omitted)</label>
+                    <select class="form-select" asp-for="DefaultUploadTeamId">
+                        <option value="">— none —</option>
+                        @foreach (var t in Model.Teams)
+                        {
+                            <option value="@t.Id">@t.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <input class="form-control" type="file" name="UploadFile" accept=".csv,.json,text/csv,application/json" required />
+                </div>
+                <button type="submit" class="btn btn-ghost">Upload</button>
+            </form>
+        </div>
+
+        <div class="hd-panel">
+            <h2 class="h5 mb-3">Existing lists</h2>
+            @if (Model.Lists.Count == 0)
+            {
+                <p class="text-secondary mb-0">No app lists yet.</p>
+            }
+            else
+            {
+                <table class="hd-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Team</th>
+                            <th>Apps</th>
+                            <th>Scopes</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var l in Model.Lists)
+                    {
+                        <tr>
+                            <td>
+                                <strong>@l.Name</strong>
+                                @if (l.IsAutoDiscovered)
+                                {
+                                    <span class="badge-pill badge-ended ms-1">auto</span>
+                                }
+                            </td>
+                            <td>@(l.TeamName ?? "—")</td>
+                            <td>@l.EntryCount</td>
+                            <td>@l.AssignmentCount</td>
+                            <td><a class="btn btn-ghost btn-sm" asp-page-handler="Edit" asp-route-id="@l.Id">Edit</a></td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+
+    <div class="col-lg-7">
+        <div class="hd-panel mb-4">
+            <h2 class="h5 mb-3">Apply list to scope</h2>
+            <form method="post" asp-page-handler="Apply" id="apply-form">
+                <div class="mb-3">
+                    <label class="form-label">App list</label>
+                    <select class="form-select" asp-for="ApplyAppListId" required>
+                        <option value="">— select —</option>
+                        @foreach (var l in Model.Lists)
+                        {
+                            <option value="@l.Id">@l.Name (@l.EntryCount apps)</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" asp-for="ApplyGlobal" id="apply-global" />
+                    <label class="form-check-label" for="apply-global">Global (all machines)</label>
+                </div>
+                @{
+                    ViewData["TreeId"] = "app-list-tree";
+                    ViewData["TreeInputPrefix"] = "Selected";
+                }
+                <partial name="_MachineTree" model="Model.Tree" />
+                <button type="submit" class="btn btn-hd mt-3">Apply</button>
+            </form>
+        </div>
+
+        <div class="hd-panel mb-4" id="machine-focus">
+            <h2 class="h5 mb-3">Machine lookup &amp; analysis</h2>
+            <form method="post" asp-page-handler="Lookup" class="row g-2 align-items-end mb-3">
+                <div class="col-md-8">
+                    <label class="form-label">Machine</label>
+                    <select class="form-select" asp-for="LookupHostname">
+                        <option value="">— select —</option>
+                        @foreach (var m in Model.AllMachines)
+                        {
+                            <option value="@m.Hostname">@m.Hostname</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-4 d-flex gap-2">
+                    <button type="submit" class="btn btn-ghost flex-grow-1">Lookup</button>
+                </div>
+            </form>
+            <form method="post" asp-page-handler="Analyze" class="mb-3">
+                <input type="hidden" name="AnalyzeHostname" value="@(Model.FocusHostname ?? Model.LookupHostname)" />
+                <input type="hidden" name="LookupHostname" value="@(Model.FocusHostname ?? Model.LookupHostname)" />
+                <button type="submit" class="btn btn-hd" @(string.IsNullOrEmpty(Model.FocusHostname ?? Model.LookupHostname) ? "disabled" : null)>Analyze apps</button>
+                <span class="text-secondary small ms-2">Discovers non-SOE apps → Pending approval (does not auto-track)</span>
+            </form>
+
+            @if (Model.Lookup is not null && Model.FocusHostname is not null)
+            {
+                var status = Model.FocusStatus ?? AppAnalysisStatus.None;
+                <div class="mb-3">
+                    <strong>@Model.FocusHostname</strong>
+                    @if (status == AppAnalysisStatus.PendingApproval)
+                    {
+                        <span class="badge-pill badge-rdp ms-2">Pending approval</span>
+                    }
+                    else if (status == AppAnalysisStatus.Approved)
+                    {
+                        <span class="badge-pill badge-active ms-2">Approved</span>
+                    }
+                    else if (status == AppAnalysisStatus.Dismissed)
+                    {
+                        <span class="badge-pill badge-ended ms-2">Dismissed</span>
+                    }
+                    else
+                    {
+                        <span class="badge-pill badge-ended ms-2">Not analyzed</span>
+                    }
+                </div>
+
+                <h3 class="h6">Active app lists</h3>
+                @if (Model.Lookup.ActiveLists.Count == 0)
+                {
+                    <p class="text-secondary small">No app lists assigned to this host yet. Pre-approval tracking still uses Config / known defaults.</p>
+                }
+                else
+                {
+                    <ul class="small">
+                        @foreach (var a in Model.Lookup.ActiveLists)
+                        {
+                            <li>
+                                <strong>@a.Name</strong>
+                                (@a.Scope@(string.IsNullOrEmpty(a.ScopeValue) ? "" : $":{a.ScopeValue}"))
+                                · @a.EntryCount apps
+                                @if (!string.IsNullOrEmpty(a.TeamName)) { <span>· team @a.TeamName</span> }
+                            </li>
+                        }
+                    </ul>
+                }
+
+                <h3 class="h6">Merged processes currently tracked (from lists)</h3>
+                <p class="small font-monospace">@(Model.Lookup.MergedProcesses.Count == 0 ? "—" : string.Join(", ", Model.Lookup.MergedProcesses))</p>
+
+                @if (status == AppAnalysisStatus.PendingApproval && Model.PendingProposals.Count > 0)
+                {
+                    <hr />
+                    <h3 class="h6">Pending approval — proposed non-SOE apps</h3>
+                    <p class="small text-secondary">Choose how to proceed. Nothing below is tracked until you confirm.</p>
+
+                    <form method="post" id="approval-form">
+                        <input type="hidden" name="AnalyzeHostname" value="@Model.FocusHostname" />
+                        <input type="hidden" name="LookupHostname" value="@Model.FocusHostname" />
+                        <table class="hd-table mb-3">
+                            <thead>
+                                <tr>
+                                    <th style="width:2rem"></th>
+                                    <th>App</th>
+                                    <th>Process</th>
+                                    <th>Source</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (var p in Model.PendingProposals)
+                            {
+                                <tr>
+                                    <td>
+                                        <input class="form-check-input" type="checkbox" name="SelectedProcesses" value="@p.ProcessName" checked />
+                                    </td>
+                                    <td>@p.DisplayName</td>
+                                    <td><code>@p.ProcessName</code></td>
+                                    <td>@p.Source</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+
+                        <div class="d-flex flex-wrap gap-2 mb-3">
+                            <button type="submit" formaction="?handler=ApproveAll" class="btn btn-hd">Approve all</button>
+                            <button type="submit" formaction="?handler=ApproveSelected" class="btn btn-ghost">Approve selected</button>
+                            <button type="submit" formaction="?handler=Dismiss" class="btn btn-ghost" onclick="return confirm('Ignore all proposed apps for this machine?');">Dismiss / Ignore</button>
+                        </div>
+                        <p class="small text-secondary mb-2">
+                            <strong>Approve all / selected</strong> → creates machine-scoped list “Discovered on @Model.FocusHostname” and tracks those apps.
+                        </p>
+
+                        <div class="border-top pt-3 mt-2">
+                            <h3 class="h6">Apply team app list instead</h3>
+                            <p class="small text-secondary">Tracks <em>only</em> the chosen team schema on this machine (discards discovered proposals; disables auto-discovered machine lists).</p>
+                            @if (Model.TeamOptions.Count == 0)
+                            {
+                                <p class="text-secondary small mb-0">No team-linked app lists yet. Create a list with a Team on the left.</p>
+                            }
+                            else
+                            {
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-md-8">
+                                        <select class="form-select" name="ApplyTeamListId" asp-for="ApplyTeamListId">
+                                            <option value="">— select team list —</option>
+                                            @foreach (var o in Model.TeamOptions)
+                                            {
+                                                <option value="@o.AppListId">
+                                                    @o.ListName (@(o.TeamName ?? "team")) · @o.EntryCount apps@(o.MatchesMachineUsers ? " · matches users" : "")
+                                                </option>
+                                            }
+                                        </select>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <button type="submit" formaction="?handler=ApplyTeam" class="btn btn-hd w-100">Apply team list</button>
+                                    </div>
+                                </div>
+                                @if (Model.TeamOptions.FirstOrDefault(o => o.AppListId == Model.ApplyTeamListId) is { } preview)
+                                {
+                                    <p class="small mt-2 mb-0">Will track: <code>@string.Join(", ", preview.ProcessNames)</code></p>
+                                }
+                                else
+                                {
+                                    <p class="small mt-2 text-secondary mb-0">Pick a list to see which processes will be tracked.</p>
+                                }
+                            }
+                        </div>
+                    </form>
+                }
+            }
+        </div>
+
+        <div class="hd-panel">
+            <h2 class="h5 mb-3">Change log</h2>
+            @if (Model.AuditLogs.Count == 0)
+            {
+                <p class="text-secondary mb-0">No changes yet.</p>
+            }
+            else
+            {
+                <div class="table-responsive" style="max-height:28rem;overflow:auto">
+                    <table class="hd-table">
+                        <thead>
+                            <tr>
+                                <th>When (UTC)</th>
+                                <th>Action</th>
+                                <th>List / host</th>
+                                <th>Detail</th>
+                                <th>Actor</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var log in Model.AuditLogs)
+                        {
+                            <tr>
+                                <td class="small text-nowrap">@log.Utc.ToString("u")</td>
+                                <td><code>@log.Action</code></td>
+                                <td class="small">
+                                    @(log.AppListName ?? "—")
+                                    @if (!string.IsNullOrEmpty(log.MachineHostname))
+                                    {
+                                        <div>@log.MachineHostname</div>
+                                    }
+                                    @if (log.Scope is not null)
+                                    {
+                                        <div class="text-secondary">@log.Scope:@(log.ScopeValue ?? "*")</div>
+                                    }
+                                </td>
+                                <td class="small">@log.Detail</td>
+                                <td class="small">@(log.Actor ?? "—")</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+<script src="~/js/machine-tree.js" asp-append-version="true"></script>
+<script>
+(() => {
+  const tree = document.getElementById('app-list-tree');
+  if (tree && window.HeimdallTree) HeimdallTree.init(tree);
+})();
+</script>
+}
