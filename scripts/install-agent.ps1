@@ -130,14 +130,20 @@ try {
     }
 
     Invoke-Logged "dotnet publish (verbose)" {
-        Write-Log "Command: dotnet publish `"$project`" -c Release -o `"$InstallDir`" --self-contained false -v detailed"
-        & dotnet publish $project -c Release -o $InstallDir --self-contained false -v detailed 2>&1 | ForEach-Object {
+        $nugetOrg = "https://api.nuget.org/v3/index.json"
+        Write-Log "NuGet sources (dotnet nuget list source):"
+        & dotnet nuget list source 2>&1 | ForEach-Object {
+            Write-Log "  $_"
+        }
+        Write-Log "Forcing restore source: $nugetOrg (needed when only VS Offline Packages are registered)"
+        Write-Log "Command: dotnet publish `"$project`" -c Release -o `"$InstallDir`" --self-contained false --source `"$nugetOrg`" -v detailed"
+        & dotnet publish $project -c Release -o $InstallDir --self-contained false --source $nugetOrg -v detailed 2>&1 | ForEach-Object {
             $line = "$_"
             Write-Host $line
             Add-Content -Path $script:LogPath -Value $line -Encoding UTF8
         }
         if ($LASTEXITCODE -ne 0) {
-            throw "dotnet publish exited with code $LASTEXITCODE"
+            throw "dotnet publish exited with code $LASTEXITCODE (if NU1101: allow HTTPS to api.nuget.org or add: dotnet nuget add source $nugetOrg -n nuget.org)"
         }
         $exe = Join-Path $InstallDir "Heimdall.Agent.exe"
         if (-not (Test-Path $exe)) {

@@ -53,7 +53,16 @@ After the first successful heartbeat, the hostname appears on the dashboard **Ma
 | `README.md` / `FILES.md` | This documentation (optional on targets) |
 | `PACKED.txt` | Build stamp from pack (optional) |
 
-You **must** copy the **whole folder**, not just the `.cmd`. Without `payload\Heimdall.Agent.exe`, install fails.
+**Do not confuse folders:**
+
+| Path | What it is |
+|------|------------|
+| `scripts\workstation-collector\` | Docs only in the git repo (`README.md` + `FILES.md`) — **not** installable |
+| `dist\workstation-collector\` | Created by pack — **this** is what you copy to other PCs |
+
+If your folder only has README/FILES and no `Install-WorkstationCollector.cmd` / `payload\`, pack has not succeeded yet.
+
+You **must** copy the **whole** `dist\workstation-collector` folder, not just the `.cmd`. Without `payload\Heimdall.Agent.exe`, install fails.
 
 Do **not** need on the target:
 

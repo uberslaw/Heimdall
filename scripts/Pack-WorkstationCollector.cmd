@@ -19,6 +19,7 @@ set "OUT=%ROOT%\dist\workstation-collector"
 set "PAYLOAD=%OUT%\payload"
 set "PROJECT=%ROOT%\src\Heimdall.Agent\Heimdall.Agent.csproj"
 set "RID=win-x64"
+set "NUGET_ORG=https://api.nuget.org/v3/index.json"
 set "EXITCODE=1"
 
 echo.
@@ -29,6 +30,10 @@ echo.
 echo Repo:    %ROOT%
 echo Output:  %OUT%
 echo RID:     %RID% (self-contained)
+echo.
+echo NOTE: scripts\workstation-collector\ is DOCS ONLY ^(README + FILES^).
+echo       The copyable pack is created at dist\workstation-collector\
+echo       after this script succeeds ^(installer + payload\^).
 echo.
 
 where dotnet >nul 2>&1
@@ -59,30 +64,39 @@ if errorlevel 1 (
   goto fail
 )
 
-echo [*] Checking NuGet can reach nuget.org...
-dotnet nuget list source 2>nul | findstr /I "nuget.org" >nul
-if errorlevel 1 (
-  echo [WARN] nuget.org not listed in "dotnet nuget list source".
-  echo       This repo includes NuGet.config pointing at nuget.org.
-  echo       If publish fails with NU1101, you need network to nuget.org
-  echo       or an internal feed that mirrors those packages.
+if not exist "%ROOT%\NuGet.config" (
+  echo [WARN] NuGet.config missing at %ROOT%\NuGet.config
+  echo       Sync/pull branch cursor/workstation-collector-pack-1eb8, or add nuget.org:
+  echo         dotnet nuget add source %NUGET_ORG% -n nuget.org
 )
 
+echo [*] Registered NuGet sources ^(machine/user^):
+dotnet nuget list source
+echo.
+echo [*] Forcing restore source: %NUGET_ORG%
+echo     ^(your machine currently may only list offline VS packages^)
+
 echo [*] dotnet publish (self-contained %RID%)...
-echo     This can take a minute ^(needs NuGet restore on first run^)...
-dotnet publish "%PROJECT%" -c Release -r %RID% --self-contained true -o "%PAYLOAD%" -v minimal
+echo     First run can take several minutes ^(download runtime packs^)...
+dotnet publish "%PROJECT%" -c Release -r %RID% --self-contained true -o "%PAYLOAD%" --source "%NUGET_ORG%" -v minimal
 if errorlevel 1 (
   echo [ERROR] dotnet publish failed
   echo.
-  echo If you saw NU1101 / "Unable to find package" and sources listed only
-  echo "library-packs" / "Visual Studio Offline Packages":
-  echo   1. Confirm this clone has NuGet.config ^(nuget.org^) at the repo root
-  echo   2. Allow HTTPS to api.nuget.org ^(or use your corporate NuGet mirror^)
-  echo   3. Retry:  dotnet nuget list source
-  echo             scripts\Pack-WorkstationCollector.cmd
+  echo Common cause: no network to nuget.org, or proxy blocking it.
+  echo Your "dotnet nuget list source" showed only offline VS packages —
+  echo this script already passes --source nuget.org; you still need HTTPS
+  echo access to api.nuget.org ^(or a corporate mirror of those packages^).
   echo.
-  echo Offline-only NuGet cannot download Microsoft.Data.Sqlite or the
-  echo win-x64 runtime packs required for a self-contained agent.
+  echo Quick checks:
+  echo   1. Sync repo so NuGet.config exists at %ROOT%\NuGet.config
+  echo   2. Add a durable source:
+  echo        dotnet nuget add source %NUGET_ORG% -n nuget.org
+  echo   3. Test:  curl.exe -I %NUGET_ORG%
+  echo   4. Retry: scripts\Pack-WorkstationCollector.cmd
+  echo.
+  echo Until pack succeeds, dist\workstation-collector\ will NOT contain
+  echo Install-WorkstationCollector.cmd or payload\ — only docs under
+  echo scripts\workstation-collector\ exist in the repo.
   goto fail
 )
 
