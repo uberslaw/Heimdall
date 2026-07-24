@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Preview / repair session & process usernames corrupted by ANSI-as-UTF16 WTS mojibake.
 
@@ -30,7 +30,7 @@ if (-not (Test-Path -LiteralPath $DbPath)) {
 
 Add-Type -AssemblyName System.Data
 # Use Microsoft.Data.Sqlite from a nearby build if present; else System.Data.SQLite is uncommon.
-# Prefer `dotnet` exec of a tiny repair — fall back to sqlite3 CLI if available.
+# Prefer `dotnet` exec of a tiny repair - fall back to sqlite3 CLI if available.
 
 function Test-LooksLikeAccount([string]$value) {
     if ([string]::IsNullOrWhiteSpace($value) -or $value.Length -gt 256) { return $false }

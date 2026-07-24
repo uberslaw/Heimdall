@@ -1,4 +1,4 @@
-#Requires -RunAsAdministrator
+﻿#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
   Verbose Heimdall Agent Windows service installer.
@@ -59,11 +59,11 @@ function Invoke-Logged {
     Write-Log ">>> $StepName" -Level STEP
     try {
         & $Action
-        Write-Log "<<< $StepName — done" -Level OK
+        Write-Log "<<< $StepName - done" -Level OK
     }
     catch {
         $script:LastError = $_
-        Write-Log "<<< $StepName — FAILED: $($_.Exception.Message)" -Level ERROR
+        Write-Log "<<< $StepName - FAILED: $($_.Exception.Message)" -Level ERROR
         if ($_.ScriptStackTrace) {
             Write-Log $_.ScriptStackTrace -Level ERROR
         }
@@ -94,13 +94,13 @@ try {
         $sdks = & dotnet --list-sdks 2>&1
         $sdks | ForEach-Object { Write-Log "  SDK: $_" }
         if (-not ($sdks | Where-Object { $_ -match '^10\.' })) {
-            Write-Log "No .NET 10 SDK listed — publish may fail. Install .NET 10 SDK." -Level WARN
+            Write-Log "No .NET 10 SDK listed - publish may fail. Install .NET 10 SDK." -Level WARN
         }
     }
 
     Invoke-Logged "Ensure project exists" {
         if (-not (Test-Path $project)) {
-            throw "Project not found: $project — run from a full Heimdall clone (scripts next to src)."
+            throw "Project not found: $project - run from a full Heimdall clone (scripts next to src)."
         }
         Write-Log "Project OK"
     }
@@ -121,7 +121,7 @@ try {
         Write-Log "GET $health"
         try {
             $r = Invoke-WebRequest -Uri $health -UseBasicParsing -TimeoutSec 10
-            Write-Log "API reachable — HTTP $($r.StatusCode) — $($r.Content)" -Level OK
+            Write-Log "API reachable - HTTP $($r.StatusCode) - $($r.Content)" -Level OK
         }
         catch {
             Write-Log "API not reachable yet: $($_.Exception.Message)" -Level WARN
@@ -220,7 +220,7 @@ try {
         }
     }
 
-    Write-Banner "SUCCESS — Heimdall Agent installed" Green
+    Write-Banner "SUCCESS - Heimdall Agent installed" Green
     Write-Log "API:     $ApiUrl"
     Write-Log "Service: HeimdallAgent"
     Write-Log "Host:    $env:COMPUTERNAME (should appear on dashboard Machines after first heartbeat)"
@@ -229,7 +229,7 @@ try {
 }
 catch {
     $script:LastError = $_
-    Write-Banner "FAILURE — Heimdall Agent install did not complete" Red
+    Write-Banner "FAILURE - Heimdall Agent install did not complete" Red
     Write-Log "Last error: $($_.Exception.Message)" -Level ERROR
     if ($_.ScriptStackTrace) { Write-Log $_.ScriptStackTrace -Level ERROR }
     Write-Log "Send this log for analysis: $script:LogPath" -Level WARN

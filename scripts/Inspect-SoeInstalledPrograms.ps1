@@ -1,11 +1,11 @@
-<#
+﻿<#
 .SYNOPSIS
   Enumerate installed programs on a vanilla SOE / golden-image machine for Heimdall SOE excludes.
 .DESCRIPTION
   Reads Uninstall registry keys (HKLM/HKCU, 64-bit + 32-bit Wow6432Node).
   Writes a CSV of DisplayName, Publisher, EstimateProcessName, SuggestedIgnore=true,
   and optionally compares to the in-repo SoeCatalog seed names.
-  Run on a clean SOE image → review CSV → feed Config SOE excludes / Autogenerate.
+  Run on a clean SOE image -> review CSV -> feed Config SOE excludes / Autogenerate.
 .NOTES
   Prefer scripts\Inspect-SoeInstalledPrograms.cmd so the console stays open when double-clicked.
   Log + CSV under %LOCALAPPDATA%\Heimdall\ (or -OutDir).
@@ -55,7 +55,7 @@ function Get-EstimateProcessName {
     if ([string]::IsNullOrWhiteSpace($s)) { return "" }
     $parts = $s -split '\s+' | Where-Object { $_.Length -ge 2 }
     if ($parts.Count -eq 0) { return "" }
-    # Prefer a single camel/concatenated guess from first 1–2 words
+    # Prefer a single camel/concatenated guess from first 1-2 words
     if ($parts.Count -eq 1) { return $parts[0] }
     return ($parts[0] + $parts[1])
 }
@@ -109,14 +109,14 @@ function Get-CatalogProcessNames {
     param([string]$Root)
     $catalog = Join-Path $Root "src\Heimdall.Api\Services\SoeCatalog.cs"
     if (-not (Test-Path $catalog)) {
-        Write-Warn "SoeCatalog.cs not found at $catalog — skip compare"
+        Write-Warn "SoeCatalog.cs not found at $catalog - skip compare"
         return @()
     }
 
     $text = Get-Content -Path $catalog -Raw -Encoding UTF8
     $names = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($m in [regex]::Matches($text, '"([^"]+)",\s*"([^"]+)"')) {
-        # DisplayName, ProcessName pairs in seed tuples — take process name (2nd)
+        # DisplayName, ProcessName pairs in seed tuples - take process name (2nd)
         [void]$names.Add($m.Groups[2].Value)
     }
     return @($names)
@@ -144,7 +144,7 @@ try {
 
     if ($CompareCatalog -or $RepoRoot) {
         if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
-            # scripts\ → repo root
+            # scripts\ -> repo root
             $RepoRoot = Split-Path $PSScriptRoot -Parent
         }
         Write-Step "Comparing EstimateProcessName to SoeCatalog under $RepoRoot"
@@ -166,7 +166,7 @@ try {
     Write-Host "Next steps:" -ForegroundColor Green
     Write-Note "1. Open $csvPath on the golden / vanilla SOE image"
     Write-Note "2. Review EstimateProcessName (best-effort) and SuggestedIgnore=true rows"
-    Write-Note "3. Feed confirmed process names into Config → SOE excludes / Autogenerate"
+    Write-Note "3. Feed confirmed process names into Config -> SOE excludes / Autogenerate"
     Write-Note "4. Optionally merge into SoeCatalog.cs seed list for future installs"
     Write-Host ""
     Write-Step "Done. Log: $script:LogPath"

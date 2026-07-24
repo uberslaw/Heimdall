@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Collect Heimdall install/runtime diagnostics for support or Cursor AI analysis.
 .NOTES
@@ -117,7 +117,7 @@ try {
         $r = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 10
         $healthOut += "StatusCode: $($r.StatusCode)"
         $healthOut += "Content: $($r.Content)"
-        Write-Note "HTTP $($r.StatusCode) — $($r.Content)"
+        Write-Note "HTTP $($r.StatusCode) - $($r.Content)"
     }
     catch {
         $healthOut += "ERROR: $($_.Exception.Message)"
@@ -145,7 +145,7 @@ try {
     }
 
     # --- Redacted appsettings ---
-    Write-Step "Redacting appsettings (API key → last 4 only)"
+    Write-Step "Redacting appsettings (API key -> last 4 only)"
     $cfgDir = Join-Path $script:BundleDir "appsettings-redacted"
     New-Item -ItemType Directory -Force -Path $cfgDir | Out-Null
     Redact-AppSettingsJson -Path "$env:ProgramFiles\Heimdall\Api\appsettings.json" -Dest (Join-Path $cfgDir "api-appsettings.json")
@@ -200,7 +200,7 @@ try {
 
     Write-Host ""
     Write-Host "============================================================" -ForegroundColor Green
-    Write-Host "  SUCCESS — diagnostics ready" -ForegroundColor Green
+    Write-Host "  SUCCESS - diagnostics ready" -ForegroundColor Green
     Write-Host "============================================================" -ForegroundColor Green
     Write-Host ""
     Write-Host "Upload / paste in Cursor chat:" -ForegroundColor Yellow
@@ -212,7 +212,7 @@ try {
 catch {
     Write-Host ""
     Write-Host "============================================================" -ForegroundColor Red
-    Write-Host "  FAILURE — diagnostics collection hit an error" -ForegroundColor Red
+    Write-Host "  FAILURE - diagnostics collection hit an error" -ForegroundColor Red
     Write-Host "============================================================" -ForegroundColor Red
     Write-Host $_.Exception.Message -ForegroundColor Red
     if ($script:BundleDir) {
