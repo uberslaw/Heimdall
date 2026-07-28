@@ -68,21 +68,46 @@ public sealed class SocratizeQueryService(HeimdallDbContext db)
 
         var activeSeconds = sessions.Sum(s => s.ActiveSeconds);
         var disconnectedSeconds = sessions.Sum(s => s.DisconnectedSeconds);
-        var rdpSessions = sessions.Where(s => s.SessionType == SessionType.Rdp).ToList();
-        var localSessions = sessions.Where(s => s.SessionType == SessionType.Local).ToList();
-        var rdpActive = rdpSessions.Sum(s => s.ActiveSeconds);
-        var rdpDisconnected = rdpSessions.Sum(s => s.DisconnectedSeconds);
-        var localActive = localSessions.Sum(s => s.ActiveSeconds);
-        var sessionAccounted = activeSeconds + disconnectedSeconds;
-        var rdpSharePct = sessionAccounted <= 0
+
+        long localActive = 0, localDisconnected = 0, inboundActive = 0, inboundDisconnected = 0;
+        foreach (var s in sessions)
+        {
+            var (la, ld, ia, id) = AccountSessionTime(s);
+            localActive += la;
+            localDisconnected += ld;
+            inboundActive += ia;
+            inboundDisconnected += id;
+        }
+
+        var outboundSeconds = runs
+            .Where(r => RdpClientProcesses.IsRdpClient(r.ProcessName))
+            .Sum(RunDurationSeconds);
+
+        var sessionAccounted = localActive + localDisconnected + inboundActive + inboundDisconnected;
+        if (sessionAccounted <= 0)
+            sessionAccounted = activeSeconds + disconnectedSeconds;
+
+        var threeWayAccounted = sessionAccounted + outboundSeconds;
+        var rdpSharePct = threeWayAccounted <= 0
             ? 0
-            : (rdpActive + rdpDisconnected) * 100.0 / sessionAccounted;
-        var localSharePct = sessionAccounted <= 0
+            : (inboundActive + inboundDisconnected) * 100.0 / threeWayAccounted;
+        var localSharePct = threeWayAccounted <= 0
             ? 0
-            : (localActive + localSessions.Sum(s => s.DisconnectedSeconds)) * 100.0 / sessionAccounted;
-        var rdpIdleShareOfRdp = (rdpActive + rdpDisconnected) <= 0
+            : (localActive + localDisconnected) * 100.0 / threeWayAccounted;
+        var outboundSharePct = threeWayAccounted <= 0
             ? 0
-            : rdpDisconnected * 100.0 / (rdpActive + rdpDisconnected);
+            : outboundSeconds * 100.0 / threeWayAccounted;
+        var inboundShareOfSession = sessionAccounted <= 0
+            ? 0
+            : (inboundActive + inboundDisconnected) * 100.0 / sessionAccounted;
+        var rdpIdleShareOfRdp = (inboundActive + inboundDisconnected) <= 0
+            ? 0
+            : inboundDisconnected * 100.0 / (inboundActive + inboundDisconnected);
+
+        var localSessions = sessions.Where(s =>
+            s.SessionType == SessionType.Local && !LooksLikeInboundRdpFingerprint(s)).ToList();
+        var inboundSessions = sessions.Where(s =>
+            s.SessionType == SessionType.Rdp || LooksLikeInboundRdpFingerprint(s)).ToList();
 
         var users = sessions
             .GroupBy(s => NormalizeUser(s.Username, s.Domain), StringComparer.OrdinalIgnoreCase)
@@ -96,8 +121,8 @@ public sealed class SocratizeQueryService(HeimdallDbContext db)
                     LogonCount: g.Count(),
                     ActiveSeconds: g.Sum(s => s.ActiveSeconds),
                     DisconnectedSeconds: g.Sum(s => s.DisconnectedSeconds),
-                    RdpLogons: g.Count(s => s.SessionType == SessionType.Rdp),
-                    LocalLogons: g.Count(s => s.SessionType == SessionType.Local)
+                    RdpLogons: g.Count(s => s.SessionType == SessionType.Rdp || LooksLikeInboundRdpFingerprint(s)),
+                    LocalLogons: g.Count(s => s.SessionType == SessionType.Local && !LooksLikeInboundRdpFingerprint(s))
                 );
             })
             .OrderByDescending(u => u.ActiveSeconds)
@@ -173,7 +198,7 @@ public sealed class SocratizeQueryService(HeimdallDbContext db)
             hasCpuSamples,
             hasGpuSamples,
             hasDiskSamples,
-            rdpSharePct,
+            inboundShareOfSession,
             rdpIdleShareOfRdp);
 
         return new SocratizeBrief(
@@ -190,14 +215,16 @@ public sealed class SocratizeQueryService(HeimdallDbContext db)
             ActiveSeconds: activeSeconds,
             DisconnectedSeconds: disconnectedSeconds,
             LocalSessionCount: localSessions.Count,
-            RdpSessionCount: rdpSessions.Count,
+            RdpSessionCount: inboundSessions.Count,
             LocalSharePct: localSharePct,
             RdpSharePct: rdpSharePct,
             LocalActiveSeconds: localActive,
-            LocalDisconnectedSeconds: localSessions.Sum(s => s.DisconnectedSeconds),
-            RdpActiveSeconds: rdpActive,
-            RdpDisconnectedSeconds: rdpDisconnected,
+            LocalDisconnectedSeconds: localDisconnected,
+            RdpActiveSeconds: inboundActive,
+            RdpDisconnectedSeconds: inboundDisconnected,
             RdpIdleShareOfRdpPct: rdpIdleShareOfRdp,
+            OutboundRdpSeconds: (long)Math.Round(outboundSeconds),
+            OutboundRdpSharePct: outboundSharePct,
             Users: users,
             Teams: teams,
             Apps: apps,
@@ -411,6 +438,33 @@ public sealed class SocratizeQueryService(HeimdallDbContext db)
         return Math.Max(0, (end - r.StartedAtUtc).TotalSeconds);
     }
 
+    /// <summary>
+    /// Prefer per-kind buckets when the agent has reported them; otherwise attribute all
+    /// Active/Disconnected seconds to the stored SessionType (legacy rows).
+    /// </summary>
+    private static (long LocalActive, long LocalDisc, long InboundActive, long InboundDisc) AccountSessionTime(UserSession s)
+    {
+        var bucketed = s.LocalActiveSeconds + s.LocalDisconnectedSeconds
+                       + s.InboundRdpActiveSeconds + s.InboundRdpDisconnectedSeconds;
+        if (bucketed > 0)
+            return (s.LocalActiveSeconds, s.LocalDisconnectedSeconds, s.InboundRdpActiveSeconds, s.InboundRdpDisconnectedSeconds);
+
+        if (s.SessionType == SessionType.Rdp || LooksLikeInboundRdpFingerprint(s))
+            return (0, 0, s.ActiveSeconds, s.DisconnectedSeconds);
+
+        return (s.ActiveSeconds, s.DisconnectedSeconds, 0, 0);
+    }
+
+    private static bool LooksLikeInboundRdpFingerprint(UserSession s)
+    {
+        if (!string.IsNullOrWhiteSpace(s.ClientName))
+            return true;
+        if (string.IsNullOrWhiteSpace(s.ClientAddress))
+            return false;
+        var addr = s.ClientAddress.Trim();
+        return addr is not ("0.0.0.0" or "::" or "::1");
+    }
+
     private static string NormalizeUser(string username, string? domain)
     {
         if (string.IsNullOrWhiteSpace(username))
@@ -451,6 +505,8 @@ public sealed record SocratizeBrief(
     long RdpActiveSeconds,
     long RdpDisconnectedSeconds,
     double RdpIdleShareOfRdpPct,
+    long OutboundRdpSeconds,
+    double OutboundRdpSharePct,
     IReadOnlyList<SocratizeUserRow> Users,
     IReadOnlyList<SocratizeTeamRow> Teams,
     IReadOnlyList<SocratizeAppRow> Apps,

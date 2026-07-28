@@ -4,9 +4,12 @@
 
 ```text
 workstation-collector/
-├── Install-WorkstationCollector.cmd   # Run elevated on each PC
-├── README.md                          # How to pack / install
-├── FILES.md                           # This file
+├── Heimdall-LaunchControl.cmd         # PREFERRED — guided setup UI
+├── Heimdall-LaunchControl.ps1
+├── Install-WorkstationCollector.cmd   # Direct/elevated install (or opens Launch Control if no args)
+├── README.md
+├── FILES.md
+├── VERSION.json                       # productVersion for server match
 ├── PACKED.txt                         # When/where it was built
 └── payload/                           # REQUIRED — do not omit
     ├── Heimdall.Agent.exe
@@ -17,6 +20,7 @@ workstation-collector/
 
 | Path | Purpose |
 |------|---------|
+| `scripts/Heimdall-LaunchControl.cmd` / `.ps1` | Guided setup UI (API / pack / collector / logs / remote logs / verify) |
 | `scripts/Pack-WorkstationCollector.cmd` | Builds `dist/workstation-collector` + optional zip |
 | `scripts/Install-WorkstationCollector.cmd` | Copied into the package; installs the service |
 | `scripts/workstation-collector/README.md` | Copied into the package |
@@ -29,6 +33,7 @@ workstation-collector/
 | Dependency | Bundled? | Notes |
 |------------|----------|--------|
 | .NET 10 runtime | **Yes** (self-contained publish) | No separate runtime install |
+| Windows PowerShell 5.1+ | OS | Launch Control WinForms UI |
 | Windows Service Control (`sc.exe`) | OS | Create/start `HeimdallAgent` |
 | WMI / `System.Management` | OS + bundled assemblies | Hardware inventory |
 | SQLite (offline queue) | Bundled via publish | `%ProgramData%\Heimdall\queue.db` |
@@ -48,7 +53,7 @@ workstation-collector/
 
 | Tool | Location |
 |------|----------|
-| API / dashboard installer | `scripts/Install-Api.cmd` |
+| API / dashboard installer | `scripts/Install-Api.cmd` (also via Launch Control) |
 | Repo-based agent installer (needs SDK) | `scripts/Install-Agent.cmd` |
 | SOE installed-programs inspector (CSV) | `scripts/Inspect-SoeInstalledPrograms.cmd` |
-| Diagnostics zip | `scripts/Collect-Diagnostics.cmd` |
+| Diagnostics zip | `scripts/Collect-Diagnostics.cmd` (also via Launch Control) |

@@ -2,11 +2,23 @@
 
 Use this when you want to install the **Heimdall Agent** on other PCs (vanilla SOE / golden image / modelling boxes) **without** copying the full git repo or installing the .NET SDK on those machines.
 
+## Preferred: Launch Control
+
+After packing, on each target PC open:
+
+```text
+Heimdall-LaunchControl.cmd
+```
+
+It checks prerequisites (admin + `payload\`), asks for API URL / key / machine group, probes the server (`/api/health` + version), installs the service, then verifies (including **ApiBaseUrl on disk** matches what you entered). Logs: `%ProgramData%\Heimdall\logs\`.
+
+After install, use **Client health check** to re-run service/settings/API probes. That writes `client-check-*.log` locally and, when the API host is reachable via admin share, copies to `\\API-HOST\C$\ProgramData\Heimdall\logs\clients\<this-pc>\` so server-side **Open remote logs** can open `logs\clients\`.
+
 ## Two-step workflow
 
 ### 1. Pack once (build PC — needs .NET 10 SDK + this repo)
 
-From an elevated or normal prompt in the Heimdall clone:
+From the Heimdall clone, prefer Launch Control → **Pack collector**, or:
 
 ```text
 scripts\Pack-WorkstationCollector.cmd
@@ -16,17 +28,22 @@ Produces:
 
 ```text
 dist\workstation-collector\
+  Heimdall-LaunchControl.cmd / .ps1
   Install-WorkstationCollector.cmd
-  README.md
-  FILES.md
-  PACKED.txt
+  README.md, FILES.md, VERSION.json, PACKED.txt
   payload\                  ← published agent binaries
 dist\heimdall-workstation-collector.zip   ← if `tar` is available
 ```
 
 ### 2. Install on each target PC (admin; no SDK)
 
-Copy the whole `workstation-collector` folder (or unzip the zip) to the target machine, then **Run as administrator**:
+Copy the whole `workstation-collector` folder (or unzip the zip) to the target machine, then:
+
+```text
+Heimdall-LaunchControl.cmd
+```
+
+Or elevated direct install:
 
 ```text
 Install-WorkstationCollector.cmd -ApiUrl http://YOUR-API-HOST:5080 -MachineGroup SOE
@@ -48,11 +65,12 @@ After the first successful heartbeat, the hostname appears on the dashboard **Ma
 
 | Item | Role |
 |------|------|
-| `Install-WorkstationCollector.cmd` | Installer (CMD only — no PowerShell) |
+| `Heimdall-LaunchControl.cmd` | **Preferred** guided UI (install, client health check, logs) |
+| `Install-WorkstationCollector.cmd` | Direct installer (CMD); opens Launch Control if double-clicked with no args |
 | `payload\` | **Required.** Entire published agent output (`Heimdall.Agent.exe` + deps). Created by the pack script. |
+| `VERSION.json` | Pack product version — compared to API `/api/health` |
 | `README.md` / `FILES.md` | This documentation (optional on targets) |
 | `PACKED.txt` | Build stamp from pack (optional) |
-
 **Do not confuse folders:**
 
 | Path | What it is |

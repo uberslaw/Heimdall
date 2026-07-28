@@ -10,14 +10,28 @@ Live repo: https://github.com/uberslaw/Heimdall
 
 ---
 
+## Preferred: Launch Control (guided)
+
+Double-click:
+
+```text
+scripts\Heimdall-LaunchControl.cmd
+```
+
+One form for: Install API, Pack collector, Install collector (prereqs → API URL → health/version → install → verify), **Client health check** (service, settings, API probes; logs to local + `logs\clients\<hostname>\` on API host), Open logs, **Open remote logs folder** (saved recent hosts; browse `clients\` subfolder for agent checks), Collect diagnostics, Open dashboard.
+
+On-screen progress mirrors `%ProgramData%\Heimdall\logs\`. Installer consoles **pause until you press a key**. Portable packs include Launch Control — run it from `dist\workstation-collector\` on targets.
+
+---
+
 ## Prerequisites
 
 | Requirement | Notes |
 |-------------|--------|
 | **Windows** | Server or workstation; local **Administrator** for service install |
-| **.NET 10 SDK** | Needed to `dotnet publish` during install ([download](https://dotnet.microsoft.com/download/dotnet/10.0)) |
-| **.NET 10 runtime** | On machines that only run published binaries; SDK includes a compatible runtime |
-| **Firewall / port** | API listens on **5080** by default (`http://0.0.0.0:5080`). Allow inbound TCP **5080** on the API host if agents are remote |
+| **.NET 10 SDK** | Needed to `dotnet publish` during **API install** or **pack** ([download](https://dotnet.microsoft.com/download/dotnet/10.0)) |
+| **.NET 10 runtime** | Bundled in the portable collector pack (self-contained). Repo-based agent install still needs SDK/runtime. |
+| **Firewall / port** | API listens on **5080** by default (`http://0.0.0.0:5080`). The API installer creates an inbound Windows Firewall allow rule for the chosen port (or allow TCP manually if group policy blocks local rules) |
 | **Outbound HTTPS/HTTP** | Agents must reach the API URL you configure |
 
 Check SDK:
@@ -26,6 +40,8 @@ Check SDK:
 dotnet --list-sdks
 # expect a 10.x line, e.g. 10.0.301
 ```
+
+**Important:** `Install-Agent.cmd` fails with **NETSDK1045** if only .NET 8 SDK is present. For test/SOE machines use the **portable pack** (no SDK on the target).
 
 Clone (or sync with RepoSync):
 
@@ -38,7 +54,7 @@ cd Heimdall
 
 ## 1. Install the server (API + dashboard)
 
-Run **elevated** (Run as administrator). Prefer the `.cmd` wrapper so the console stays open when double-clicked from Explorer.
+Prefer Launch Control → **Install API**, or run **elevated** (`.cmd` keeps the console open):
 
 ```text
 scripts\Install-Api.cmd
@@ -56,10 +72,13 @@ What it does:
 
 1. Publishes `src\Heimdall.Api` to `%ProgramFiles%\Heimdall\Api` (verbose `dotnet publish`)
 2. Writes `appsettings.json` with SQLite at `%ProgramData%\Heimdall\heimdall.db` and your API key
-3. Creates/recreates Windows service **`HeimdallApi`** and starts it
+3. Creates/recreates Windows Service **`HeimdallApi`** and starts it
+4. Ensures a Windows Firewall inbound allow rule for TCP on the chosen port (default **5080**; takes effect immediately — no service restart)
 
 **Install log:** `%ProgramData%\Heimdall\logs\install-api-YYYYMMDD-HHMMSS.log`  
 (The installer prints the full path and pauses at the end.)
+
+`GET /api/health` returns `productVersion` (Launch Control compares this to the pack `VERSION.json`).
 
 ---
 
@@ -70,20 +89,28 @@ What it does:
 Pack **once** on a build machine that has the repo + **.NET 10 SDK** + NuGet access (repo `NuGet.config` → nuget.org; offline-only VS feeds cause **NU1101**):
 
 ```text
+scripts\Heimdall-LaunchControl.cmd
+# or:
 scripts\Pack-WorkstationCollector.cmd
 ```
 
-Copy `dist\workstation-collector\` (or `dist\heimdall-workstation-collector.zip`) to each target PC. On the target, **elevated**, no SDK / no full repo required:
+Copy `dist\workstation-collector\` (or the zip) to each target PC. On the target prefer:
+
+```text
+Heimdall-LaunchControl.cmd
+```
+
+Or elevated direct install:
 
 ```text
 Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
 ```
 
-- Installer is **CMD only** (no PowerShell).
 - Payload is **self-contained win-x64** — target PCs do not need a separate .NET install.
-- You must copy the **whole folder** (`Install-WorkstationCollector.cmd` + `payload\`). See `scripts\workstation-collector\README.md` and `FILES.md`.
+- Copy the **whole folder** (`Heimdall-LaunchControl.*` + `Install-WorkstationCollector.cmd` + `payload\` + `VERSION.json`). Docs-only `scripts\workstation-collector\` is **not** installable.
 
-**Install log:** `%ProgramData%\Heimdall\logs\install-workstation-collector-*.log`
+**Install log:** `%ProgramData%\Heimdall\logs\install-workstation-collector-*.log`  
+**Launch Control log:** `%ProgramData%\Heimdall\logs\launch-control-*.log`
 
 ### Option B — From a full repo clone (same machine / has SDK)
 
@@ -132,6 +159,16 @@ Invoke-RestMethod http://localhost:5080/api/health
 
 ## 4. Troubleshooting
 
+### Window closed too fast / no message
+
+- Prefer **`Heimdall-LaunchControl.cmd`** — UI stays until you close it; logs always under ProgramData.
+- `.cmd` installers call `pause` at the end. If a window vanished, check `%ProgramData%\Heimdall\logs\` for the newest `install-*.log` or `launch-control-*.log`.
+- Missing `payload\Heimdall.Agent.exe` means you copied the wrong folder (docs-only `scripts\workstation-collector\` is not installable).
+
+### NETSDK1045 / only .NET 8 SDK
+
+Repo-based `Install-Agent` cannot publish `net10.0` with SDK 8. Use the portable pack, or install [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
+
 ### Service won’t start
 
 - Re-run the installer from an **elevated** prompt; read the SUCCESS/FAILURE banner and the log path it prints.
@@ -141,8 +178,8 @@ Invoke-RestMethod http://localhost:5080/api/health
 
 ### Agent can’t reach API
 
-- From the agent machine: `Invoke-WebRequest http://SERVER:5080/api/health`
-- Firewall on the API host must allow TCP **5080**.
+- From the agent machine: `Invoke-WebRequest http://SERVER:5080/api/health` (or `Test-NetConnection SERVER -Port 5080`)
+- Firewall on the API host must allow inbound TCP on the API port (the installer creates **`Heimdall API (port N)`** when policy permits; no HeimdallApi restart is required after adding a rule)
 - `ApiBaseUrl` in agent `appsettings.json` must be reachable (no `localhost` if the agent is on another PC).
 - API key mismatch → 401; keys on API and agent must match exactly.
 
@@ -153,7 +190,11 @@ Invoke-RestMethod http://localhost:5080/api/health
 | API DB | `%ProgramData%\Heimdall\heimdall.db` |
 | Agent offline queue | `%ProgramData%\Heimdall\queue.db` |
 
-Ensure `%ProgramData%\Heimdall` exists and the service account (LocalSystem by default) can write there. Do not commit or overwrite these DBs into the git clone.
+Ensure `%ProgramData%\Heimdall\` exists and the service account (LocalSystem by default) can write there. Do not commit or overwrite these DBs into the git clone.
+
+**Demo machines:** A fresh empty API database gets four `DEMO-*` placeholder hosts (`AgentVersion=seed`) once for UX. They are **not** re-added after you delete them (`SystemFlags.DemoMachinesOffered`). Launch Control → **Remove seed/demo machines** (repo layout) or `scripts\Remove-SeedDemoMachines.ps1` — stop `HeimdallApi` first if the DB is locked. Requires `sqlite3` on PATH (`winget install SQLite.SQLite`).
+
+**Backup API DB:** Launch Control → **Backup API database** copies `\\HOST\C$\ProgramData\Heimdall\heimdall.db` locally to `%LOCALAPPDATA%\Heimdall\backups\` (and tries `...\backups\` on the API PC). Same SMB/admin-share access as **Open remote logs**.
 
 ### API key mismatch
 

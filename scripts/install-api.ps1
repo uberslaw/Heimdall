@@ -70,6 +70,111 @@ function Invoke-Logged {
     }
 }
 
+function Test-ServicesMmcLikelyOpen {
+    return [bool](Get-Process -Name mmc -ErrorAction SilentlyContinue)
+}
+
+function Ensure-HeimdallApiFirewallRule {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Port
+    )
+
+    $ruleDisplayName = "Heimdall API (port $Port)"
+    $ruleInternalName = "HeimdallApi-Inbound-TCP-$Port"
+    $portText = [string]$Port
+
+    Write-Log "Ensuring Windows Firewall allows inbound TCP $Port ($ruleDisplayName)..."
+
+    try {
+        if (Get-Module -ListAvailable -Name NetSecurity) {
+            Import-Module NetSecurity -ErrorAction SilentlyContinue | Out-Null
+        }
+
+        if (Get-Command New-NetFirewallRule -ErrorAction SilentlyContinue) {
+            $stale = @(Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object {
+                $_.DisplayName -match '^Heimdall API \(port \d+\)$' -and $_.DisplayName -ne $ruleDisplayName
+            })
+            foreach ($old in $stale) {
+                Write-Log "Removing stale firewall rule: $($old.DisplayName)"
+                Remove-NetFirewallRule -Name $old.Name -ErrorAction Stop
+            }
+
+            $existing = @(Get-NetFirewallRule -DisplayName $ruleDisplayName -ErrorAction SilentlyContinue)
+            if ($existing.Count -gt 0) {
+                foreach ($rule in $existing) {
+                    $filter = Get-NetFirewallPortFilter -AssociatedNetFirewallRule $rule -ErrorAction SilentlyContinue
+                    if ($filter -and ($filter.LocalPort -ne $portText)) {
+                        Write-Log "Updating firewall rule local port to $Port..."
+                        Set-NetFirewallPortFilter -AssociatedNetFirewallRule $rule -Protocol TCP -LocalPort $Port -ErrorAction Stop
+                    }
+                    Set-NetFirewallRule -Name $rule.Name -Enabled True -Direction Inbound -Action Allow -ErrorAction Stop
+                }
+                Write-Log "Firewall rule '$ruleDisplayName' is active (TCP $Port)." -Level OK
+            }
+            else {
+                New-NetFirewallRule `
+                    -DisplayName $ruleDisplayName `
+                    -Name $ruleInternalName `
+                    -Direction Inbound `
+                    -Action Allow `
+                    -Protocol TCP `
+                    -LocalPort $Port `
+                    -Enabled True `
+                    -Profile Any `
+                    -ErrorAction Stop | Out-Null
+                Write-Log "Created firewall rule '$ruleDisplayName' (TCP $Port)." -Level OK
+            }
+        }
+        else {
+            Write-Log "NetSecurity cmdlets unavailable; using netsh advfirewall fallback." -Level WARN
+            $null = & netsh advfirewall firewall delete rule name="$ruleDisplayName" 2>&1
+            $addOut = & netsh advfirewall firewall add rule name="$ruleDisplayName" dir=in action=allow protocol=TCP localport=$Port enable=yes profile=any 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "netsh add rule failed (exit $LASTEXITCODE): $($addOut -join ' ')"
+            }
+            Write-Log "Created firewall rule '$ruleDisplayName' via netsh (TCP $Port)." -Level OK
+        }
+
+        Write-Log "Firewall rules take effect immediately; no HeimdallApi service restart is required."
+    }
+    catch {
+        Write-Log "Could not configure Windows Firewall: $($_.Exception.Message)" -Level WARN
+        Write-Log "Install continues; local API access may still work. Allow inbound TCP $Port manually if remote agents cannot connect." -Level WARN
+        Write-Log "No HeimdallApi restart is needed after you add a firewall rule; retry from the agent PC with Invoke-RestMethod or Test-NetConnection." -Level WARN
+    }
+}
+
+function Wait-ServiceRemoved {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [int]$TimeoutSec = 90
+    )
+    Write-Log "Waiting until service '$Name' is fully removed..."
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    $warnedMmc = $false
+    while ($true) {
+        $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+        if (-not $svc) {
+            $null = & sc.exe query $Name 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Log "Service '$Name' is gone"
+                return
+            }
+        }
+        if (-not $warnedMmc -and (Test-ServicesMmcLikelyOpen)) {
+            Write-Log "mmc.exe is running - close Services.msc if open; open handles delay service deletion (error 1072)." -Level WARN
+            $warnedMmc = $true
+        }
+        if ((Get-Date) -ge $deadline) {
+            Write-Log "Timed out waiting for '$Name' removal after ${TimeoutSec}s. Close services.msc if open, wait, then re-run." -Level WARN
+            return
+        }
+        Start-Sleep -Seconds 2
+    }
+}
+
 try {
     $logRoot = Join-Path $env:ProgramData "Heimdall\logs"
     New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
@@ -88,13 +193,28 @@ try {
     Write-Log "Repo root: $root"
     Write-Log "Project: $project"
 
-    Invoke-Logged "Check .NET SDK" {
+    Invoke-Logged "Check .NET SDK and runtimes" {
         $dotnet = Get-Command dotnet -ErrorAction Stop
         Write-Log "dotnet: $($dotnet.Source)"
         $sdks = & dotnet --list-sdks 2>&1
         $sdks | ForEach-Object { Write-Log "  SDK: $_" }
         if (-not ($sdks | Where-Object { $_ -match '^10\.' })) {
             Write-Log "No .NET 10 SDK listed - publish may fail. Install .NET 10 SDK." -Level WARN
+        }
+        $runtimes = & dotnet --list-runtimes 2>&1
+        $runtimes | ForEach-Object { Write-Log "  Runtime: $_" }
+        # AspNetCore patch N requires matching Microsoft.NETCore.App N (Error 1053 if missing).
+        $aspPatches = @($runtimes | ForEach-Object {
+            if ($_ -match '^Microsoft\.AspNetCore\.App (10\.\d+\.\d+)') { $Matches[1] }
+        } | Select-Object -Unique)
+        foreach ($ver in $aspPatches) {
+            $hasCore = $runtimes | Where-Object { $_ -match "^Microsoft\.NETCore\.App $([regex]::Escape($ver))\b" }
+            if (-not $hasCore) {
+                throw "Microsoft.AspNetCore.App $ver is installed but Microsoft.NETCore.App $ver is missing. Install the .NET $ver Runtime (not only ASP.NET Core) from https://dotnet.microsoft.com/download/dotnet/10.0 — otherwise Heimdall.Api.exe fails immediately and the service reports Error 1053."
+            }
+        }
+        if (-not ($runtimes | Where-Object { $_ -match '^Microsoft\.AspNetCore\.App 10\.' })) {
+            Write-Log "No Microsoft.AspNetCore.App 10.x runtime - framework-dependent publish will not start." -Level WARN
         }
     }
 
@@ -171,7 +291,7 @@ try {
             Write-Log "sc.exe delete HeimdallApi"
             $del = & sc.exe delete HeimdallApi 2>&1
             $del | ForEach-Object { Write-Log "  $_" }
-            Start-Sleep -Seconds 2
+            Wait-ServiceRemoved -Name "HeimdallApi"
         }
         else {
             Write-Log "No existing HeimdallApi service"
@@ -181,10 +301,25 @@ try {
     Invoke-Logged "Create HeimdallApi service" {
         $exe = Join-Path $InstallDir "Heimdall.Api.exe"
         Write-Log "sc.exe create HeimdallApi binPath= `"$exe`" start= auto"
-        $create = & sc.exe create HeimdallApi binPath= "`"$exe`"" start= auto DisplayName= "Heimdall API" 2>&1
-        $create | ForEach-Object { Write-Log "  $_" }
-        if ($LASTEXITCODE -ne 0) {
-            throw "sc.exe create failed with exit $LASTEXITCODE"
+        $maxAttempts = 10
+        $createExit = -1
+        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            $create = & sc.exe create HeimdallApi binPath= "`"$exe`"" start= auto DisplayName= "Heimdall API" 2>&1
+            $createExit = $LASTEXITCODE
+            $create | ForEach-Object { Write-Log "  $_" }
+            if ($createExit -eq 0) { break }
+            if ($createExit -eq 1072) {
+                Write-Log "sc.exe create exit 1072 (marked for deletion) - attempt $attempt/$maxAttempts; sleeping 3s..." -Level WARN
+                if (Test-ServicesMmcLikelyOpen) {
+                    Write-Log "mmc.exe is running - close Services.msc if open so deletion can finish." -Level WARN
+                }
+                Start-Sleep -Seconds 3
+                continue
+            }
+            throw "sc.exe create failed with exit $createExit"
+        }
+        if ($createExit -ne 0) {
+            throw "sc.exe create failed with exit $createExit after $maxAttempts attempts (1072: close services.msc, wait, retry)"
         }
         $desc = & sc.exe description HeimdallApi "Heimdall ingest API and dashboard" 2>&1
         $desc | ForEach-Object { Write-Log "  $_" }
@@ -207,6 +342,10 @@ try {
             throw "HeimdallApi did not reach Running (Status=$($svc.Status))"
         }
     }
+
+    Write-Log ">>> Windows Firewall inbound rule (TCP $Port)" -Level STEP
+    Ensure-HeimdallApiFirewallRule -Port $Port
+    Write-Log "<<< Windows Firewall inbound rule - step finished" -Level OK
 
     Invoke-Logged "Probe health endpoint" {
         $url = "http://localhost:$Port/api/health"

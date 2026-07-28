@@ -89,6 +89,10 @@ public sealed class TrackedSession
     public string? ClientAddress { get; set; }
     public long ActiveSeconds { get; set; }
     public long DisconnectedSeconds { get; set; }
+    public long LocalActiveSeconds { get; set; }
+    public long LocalDisconnectedSeconds { get; set; }
+    public long InboundRdpActiveSeconds { get; set; }
+    public long InboundRdpDisconnectedSeconds { get; set; }
 }
 
 public sealed class SessionCollector
@@ -193,10 +197,23 @@ public sealed class SessionCollector
     private static void AccumulateTime(TrackedSession tracked, DateTimeOffset now)
     {
         var delta = (long)Math.Max(0, (now - tracked.StateChangedAtUtc).TotalSeconds);
-        if (tracked.State == SessionState.Active)
-            tracked.ActiveSeconds += delta;
-        else if (tracked.State == SessionState.Disconnected)
-            tracked.DisconnectedSeconds += delta;
+        if (delta > 0)
+        {
+            var inbound = tracked.SessionType == SessionType.Rdp;
+            if (tracked.State == SessionState.Active)
+            {
+                tracked.ActiveSeconds += delta;
+                if (inbound) tracked.InboundRdpActiveSeconds += delta;
+                else tracked.LocalActiveSeconds += delta;
+            }
+            else if (tracked.State == SessionState.Disconnected)
+            {
+                tracked.DisconnectedSeconds += delta;
+                if (inbound) tracked.InboundRdpDisconnectedSeconds += delta;
+                else tracked.LocalDisconnectedSeconds += delta;
+            }
+        }
+
         tracked.StateChangedAtUtc = now;
     }
 
@@ -215,7 +232,11 @@ public sealed class SessionCollector
         ClientName = s.ClientName,
         ClientAddress = s.ClientAddress,
         ActiveSeconds = s.ActiveSeconds,
-        DisconnectedSeconds = s.DisconnectedSeconds
+        DisconnectedSeconds = s.DisconnectedSeconds,
+        LocalActiveSeconds = s.LocalActiveSeconds,
+        LocalDisconnectedSeconds = s.LocalDisconnectedSeconds,
+        InboundRdpActiveSeconds = s.InboundRdpActiveSeconds,
+        InboundRdpDisconnectedSeconds = s.InboundRdpDisconnectedSeconds
     };
 
     private static List<TrackedSession> EnumerateSessions()
@@ -251,7 +272,8 @@ public sealed class SessionCollector
                     _ => SessionState.Disconnected
                 };
 
-                var type = ClassifySessionType(winStation, protocol);
+                var resolvedClientName = string.IsNullOrWhiteSpace(clientName) ? null : clientName;
+                var type = ClassifySessionType(winStation, protocol, resolvedClientName, address);
 
                 results.Add(new TrackedSession
                 {
@@ -264,7 +286,7 @@ public sealed class SessionCollector
                     StartedAtUtc = DateTimeOffset.UtcNow,
                     LastObservedUtc = DateTimeOffset.UtcNow,
                     StateChangedAtUtc = DateTimeOffset.UtcNow,
-                    ClientName = string.IsNullOrWhiteSpace(clientName) ? null : clientName,
+                    ClientName = resolvedClientName,
                     ClientAddress = address
                 });
             }
@@ -278,28 +300,42 @@ public sealed class SessionCollector
     }
 
     /// <summary>
-    /// Prefer WinStation name (Console vs RDP-Tcp#N); fall back to WTSClientProtocolType.
-    /// Note: RDP-to-self is still RDP — physical presence is not what this field means.
+    /// Classify by protocol / RDP- WinStation first. Console alone must not force Local when
+    /// the session is RDP (common when someone RDPs into the console session).
+    /// RDP-to-self is still inbound RDP — physical presence is not what this field means.
     /// </summary>
-    internal static SessionType ClassifySessionType(string? winStation, ushort protocol)
+    internal static SessionType ClassifySessionType(
+        string? winStation,
+        ushort protocol,
+        string? clientName = null,
+        string? clientAddress = null)
     {
-        if (!string.IsNullOrWhiteSpace(winStation))
-        {
-            if (winStation.Equals("Console", StringComparison.OrdinalIgnoreCase))
-                return SessionType.Local;
+        if (protocol is NativeWts.ProtocolRdp or NativeWts.ProtocolIca)
+            return SessionType.Rdp;
 
-            if (winStation.StartsWith("RDP-", StringComparison.OrdinalIgnoreCase)
-                || winStation.StartsWith("ICA-", StringComparison.OrdinalIgnoreCase))
-                return SessionType.Rdp;
-        }
+        if (!string.IsNullOrWhiteSpace(winStation)
+            && (winStation.StartsWith("RDP-", StringComparison.OrdinalIgnoreCase)
+                || winStation.StartsWith("ICA-", StringComparison.OrdinalIgnoreCase)))
+            return SessionType.Rdp;
 
-        return protocol switch
-        {
-            NativeWts.ProtocolRdp => SessionType.Rdp,
-            NativeWts.ProtocolIca => SessionType.Rdp,
-            // Console (0) and anything else → Local (previous agent behavior for non-RDP)
-            _ => SessionType.Local
-        };
+        // Corroboration: remote client fingerprint on an otherwise "Console"/protocol-0 session
+        // (seen when inbound RDP lands on the console WinStation).
+        if (HasRemoteClientFingerprint(clientName, clientAddress))
+            return SessionType.Rdp;
+
+        return SessionType.Local;
+    }
+
+    internal static bool HasRemoteClientFingerprint(string? clientName, string? clientAddress)
+    {
+        if (!string.IsNullOrWhiteSpace(clientName))
+            return true;
+
+        if (string.IsNullOrWhiteSpace(clientAddress))
+            return false;
+
+        var addr = clientAddress.Trim();
+        return addr is not ("0.0.0.0" or "::" or "::1");
     }
 
     private static string? QueryString(int sessionId, NativeWts.WTS_INFO_CLASS infoClass)

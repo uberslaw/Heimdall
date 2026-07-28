@@ -92,6 +92,21 @@ public class IndexModel(HeimdallDbContext db) : PageModel
         return match.Key is null ? RangeOptions[1] : match;
     }
 
+    /// <summary>Short relative label for last agent check-in (Machines table).</summary>
+    public static string FormatRelativeUtc(DateTimeOffset utc)
+    {
+        var delta = DateTimeOffset.UtcNow - utc;
+        if (delta.TotalSeconds < 0 || delta.TotalMinutes < 1)
+            return "just now";
+        if (delta.TotalMinutes < 60)
+            return $"{(int)delta.TotalMinutes}m ago";
+        if (delta.TotalHours < 24)
+            return $"{(int)delta.TotalHours}h ago";
+        if (delta.TotalDays < 7)
+            return $"{(int)delta.TotalDays}d ago";
+        return utc.ToLocalTime().ToString("d");
+    }
+
     public record MachineRow(
         string Hostname,
         string? Group,

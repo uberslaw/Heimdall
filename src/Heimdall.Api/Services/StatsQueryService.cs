@@ -139,7 +139,10 @@ public sealed class StatsQueryService(HeimdallDbContext db)
                 var active = g.Sum(s => s.ActiveSeconds);
                 var disconnected = g.Sum(s => s.DisconnectedSeconds);
                 var rdpDisconnected = g
-                    .Where(s => s.SessionType == SessionType.Rdp)
+                    .Where(s => s.SessionType == SessionType.Rdp
+                                || !string.IsNullOrWhiteSpace(s.ClientName)
+                                || (!string.IsNullOrWhiteSpace(s.ClientAddress)
+                                    && s.ClientAddress is not ("0.0.0.0" or "::" or "::1")))
                     .Sum(s => s.DisconnectedSeconds);
                 var total = active + disconnected;
                 var avgSession = logonCount == 0 ? 0 : (double)active / logonCount;

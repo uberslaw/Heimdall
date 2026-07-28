@@ -1,9 +1,13 @@
+using System.Reflection;
 using Heimdall.Api.Data;
 using Heimdall.Api.Services;
 using Heimdall.Shared.Contracts;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Required for SCM registration; without this, Windows service start times out (Error 1053).
+builder.Host.UseWindowsService(options => options.ServiceName = "HeimdallApi");
 
 builder.Services.AddRazorPages();
 builder.Services.AddDbContext<HeimdallDbContext>(options =>
@@ -66,6 +70,21 @@ app.MapGet("/api/config/{hostname}", async (string hostname, ConfigService confi
     return Results.Ok(dto);
 });
 
-app.MapGet("/api/health", () => Results.Ok(new { status = "ok", service = "Heimdall" }));
+app.MapGet("/api/health", () =>
+{
+    var asm = System.Reflection.Assembly.GetExecutingAssembly();
+    var productVersion =
+        asm.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? asm.GetName().Version?.ToString()
+        ?? "unknown";
+    return Results.Ok(new
+    {
+        status = "ok",
+        service = "Heimdall",
+        productVersion,
+        machineName = Environment.MachineName,
+        utc = DateTime.UtcNow
+    });
+});
 
 app.Run();

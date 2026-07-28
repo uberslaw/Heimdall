@@ -71,6 +71,62 @@ function Invoke-Logged {
     }
 }
 
+function Test-ServicesMmcLikelyOpen {
+    return [bool](Get-Process -Name mmc -ErrorAction SilentlyContinue)
+}
+
+function Wait-ServiceRemoved {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [int]$TimeoutSec = 90
+    )
+    Write-Log "Waiting until service '$Name' is fully removed..."
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    $warnedMmc = $false
+    while ($true) {
+        $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+        if (-not $svc) {
+            $null = & sc.exe query $Name 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Log "Service '$Name' is gone"
+                return
+            }
+        }
+        if (-not $warnedMmc -and (Test-ServicesMmcLikelyOpen)) {
+            Write-Log "mmc.exe is running - close Services.msc if open; open handles delay service deletion (error 1072)." -Level WARN
+            $warnedMmc = $true
+        }
+        if ((Get-Date) -ge $deadline) {
+            Write-Log "Timed out waiting for '$Name' removal after ${TimeoutSec}s. Close services.msc if open, wait, then re-run." -Level WARN
+            return
+        }
+        Start-Sleep -Seconds 2
+    }
+}
+
+function Wait-ServiceStopped {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [int]$TimeoutSec = 60
+    )
+    Write-Log "Waiting until service '$Name' is Stopped..."
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ($true) {
+        $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+        if (-not $svc -or $svc.Status -eq "Stopped") {
+            Write-Log "Service '$Name' is stopped (or absent)"
+            return
+        }
+        if ((Get-Date) -ge $deadline) {
+            Write-Log "Timed out waiting for '$Name' to stop after ${TimeoutSec}s (Status=$($svc.Status))" -Level WARN
+            return
+        }
+        Start-Sleep -Seconds 1
+    }
+}
+
 try {
     $logRoot = Join-Path $env:ProgramData "Heimdall\logs"
     New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
@@ -126,6 +182,27 @@ try {
         catch {
             Write-Log "API not reachable yet: $($_.Exception.Message)" -Level WARN
             Write-Log "Install will continue; fix firewall/URL if the agent cannot heartbeart." -Level WARN
+        }
+    }
+
+    Invoke-Logged "Stop existing HeimdallAgent (unlock publish target)" {
+        $svc = Get-Service -Name "HeimdallAgent" -ErrorAction SilentlyContinue
+        if (-not $svc) {
+            $svc = Get-Service -DisplayName "Heimdall Agent" -ErrorAction SilentlyContinue
+        }
+        if ($svc) {
+            Write-Log "Existing service Name=$($svc.Name) DisplayName=$($svc.DisplayName) Status=$($svc.Status)"
+            if ($svc.Status -ne "Stopped") {
+                Write-Log "Stopping $($svc.Name) so publish can overwrite DLLs..."
+                Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue
+                Wait-ServiceStopped -Name $svc.Name
+            }
+            else {
+                Write-Log "Service already Stopped"
+            }
+        }
+        else {
+            Write-Log "No existing HeimdallAgent / Heimdall Agent service"
         }
     }
 
@@ -189,7 +266,7 @@ try {
             Write-Log "sc.exe delete HeimdallAgent"
             $del = & sc.exe delete HeimdallAgent 2>&1
             $del | ForEach-Object { Write-Log "  $_" }
-            Start-Sleep -Seconds 2
+            Wait-ServiceRemoved -Name "HeimdallAgent"
         }
         else {
             Write-Log "No existing HeimdallAgent service"
@@ -199,10 +276,25 @@ try {
     Invoke-Logged "Create HeimdallAgent service" {
         $exe = Join-Path $InstallDir "Heimdall.Agent.exe"
         Write-Log "sc.exe create HeimdallAgent binPath= `"$exe`" start= auto"
-        $create = & sc.exe create HeimdallAgent binPath= "`"$exe`"" start= auto DisplayName= "Heimdall Agent" 2>&1
-        $create | ForEach-Object { Write-Log "  $_" }
-        if ($LASTEXITCODE -ne 0) {
-            throw "sc.exe create failed with exit $LASTEXITCODE"
+        $maxAttempts = 10
+        $createExit = -1
+        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            $create = & sc.exe create HeimdallAgent binPath= "`"$exe`"" start= auto DisplayName= "Heimdall Agent" 2>&1
+            $createExit = $LASTEXITCODE
+            $create | ForEach-Object { Write-Log "  $_" }
+            if ($createExit -eq 0) { break }
+            if ($createExit -eq 1072) {
+                Write-Log "sc.exe create exit 1072 (marked for deletion) - attempt $attempt/$maxAttempts; sleeping 3s..." -Level WARN
+                if (Test-ServicesMmcLikelyOpen) {
+                    Write-Log "mmc.exe is running - close Services.msc if open so deletion can finish." -Level WARN
+                }
+                Start-Sleep -Seconds 3
+                continue
+            }
+            throw "sc.exe create failed with exit $createExit"
+        }
+        if ($createExit -ne 0) {
+            throw "sc.exe create failed with exit $createExit after $maxAttempts attempts (1072: close services.msc, wait, retry)"
         }
         $desc = & sc.exe description HeimdallAgent "Heimdall workstation usage reporter" 2>&1
         $desc | ForEach-Object { Write-Log "  $_" }

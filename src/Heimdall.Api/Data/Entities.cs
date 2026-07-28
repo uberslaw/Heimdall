@@ -113,8 +113,14 @@ public class UserSession
     public DateTimeOffset LastObservedUtc { get; set; }
     public string? ClientName { get; set; }
     public string? ClientAddress { get; set; }
+    /// <summary>Total active seconds (Local + Inbound RDP buckets).</summary>
     public long ActiveSeconds { get; set; }
+    /// <summary>Total disconnected seconds (Local + Inbound RDP buckets).</summary>
     public long DisconnectedSeconds { get; set; }
+    public long LocalActiveSeconds { get; set; }
+    public long LocalDisconnectedSeconds { get; set; }
+    public long InboundRdpActiveSeconds { get; set; }
+    public long InboundRdpDisconnectedSeconds { get; set; }
 }
 
 public class ProcessRun

@@ -6,7 +6,7 @@
 }
 
 <h1 class="hd-title">Sessions</h1>
-<p class="hd-sub">Local and RDP logons · active vs disconnected time</p>
+<p class="hd-sub">Local and inbound RDP logons · active vs disconnected time</p>
 
 <div class="hd-panel">
     <table class="hd-table">
@@ -38,7 +38,7 @@
                 <td>
                     @if (s.SessionType == Heimdall.Shared.Contracts.SessionType.Rdp)
                     {
-                        <span class="badge-pill badge-rdp">RDP</span>
+                        <span class="badge-pill badge-rdp">Inbound RDP</span>
                     }
                     else
                     {

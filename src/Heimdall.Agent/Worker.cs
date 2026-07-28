@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.Versioning;
 using Heimdall.Agent.Collectors;
 using Heimdall.Agent.Services;
@@ -129,7 +130,11 @@ public sealed class Worker(
         List<ProcessRunDto> processes;
         lock (_sessionBuffer)
         {
-            sessions = _sessionBuffer.ToList();
+            // Sample ticks can append the same EventId twice before upload; dedupe so ingest does not 500.
+            sessions = _sessionBuffer
+                .GroupBy(s => s.EventId)
+                .Select(g => g.OrderByDescending(s => s.ObservedAtUtc).First())
+                .ToList();
             _sessionBuffer.Clear();
         }
 
@@ -162,7 +167,11 @@ public sealed class Worker(
                 TimestampUtc = DateTimeOffset.UtcNow,
                 IsInUse = _sessions.ActiveCount > 0,
                 ActiveSessionCount = _sessions.ActiveCount,
-                AgentVersion = "0.1.0",
+                AgentVersion = System.Reflection.Assembly.GetExecutingAssembly()
+                    .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+                    ?.InformationalVersion
+                    ?? System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+                    ?? "0.1.0",
                 HardwareSerialNumber = hw?.PreferredSerial,
                 HardwareBrand = hw?.Brand,
                 HardwareModel = hw?.Model,
@@ -228,7 +237,10 @@ public sealed class Worker(
         KnownApps =
         [
             new KnownAppDto { DisplayName = "Revit", ProcessName = "Revit" },
-            new KnownAppDto { DisplayName = "AutoCAD", ProcessName = "acad" }
+            new KnownAppDto { DisplayName = "AutoCAD", ProcessName = "acad" },
+            new KnownAppDto { DisplayName = "Remote Desktop (mstsc)", ProcessName = "mstsc" },
+            new KnownAppDto { DisplayName = "Remote Desktop (msrdc)", ProcessName = "msrdc" },
+            new KnownAppDto { DisplayName = "Remote Desktop (msrdcw)", ProcessName = "msrdcw" }
         ]
     };
 }

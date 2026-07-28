@@ -24,6 +24,20 @@ set "PAYLOAD=%~dp0payload"
 set "LOGROOT=%ProgramData%\Heimdall\logs"
 set "EXITCODE=1"
 
+REM Prefer Launch Control when present (guided UI). Set HEIMDALL_SKIP_LAUNCH=1 to force this script.
+if /I not "%HEIMDALL_SKIP_LAUNCH%"=="1" (
+  if exist "%~dp0Heimdall-LaunchControl.cmd" (
+    if "%~1"=="" (
+      echo.
+      echo Opening Heimdall Launch Control ^(guided setup^)...
+      echo To run this CMD installer directly: set HEIMDALL_SKIP_LAUNCH=1
+      echo.
+      call "%~dp0Heimdall-LaunchControl.cmd" -Mode InstallCollector
+      exit /b %ERRORLEVEL%
+    )
+  )
+)
+
 :parse_args
 if "%~1"=="" goto args_done
 if /I "%~1"=="-ApiUrl" goto arg_apiurl
@@ -79,12 +93,22 @@ echo ================================================================
 echo   Heimdall Workstation Collector installer
 echo ================================================================
 echo.
+echo Window stays open until you press a key — do not close it early.
+echo Prefer guided setup: Heimdall-LaunchControl.cmd
+echo.
 
 net session >nul 2>&1
 if errorlevel 1 (
   echo [ERROR] Administrator rights required.
-  echo Right-click this script -^> Run as administrator.
-  goto fail
+  echo.
+  echo Attempting to relaunch elevated - accept the UAC prompt.
+  echo This window will wait until the elevated installer finishes.
+  echo.
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -ArgumentList '%*' -Verb RunAs -Wait; exit $LASTEXITCODE"
+  set "EXITCODE=!ERRORLEVEL!"
+  echo.
+  echo Elevated installer finished ^(exit !EXITCODE!^).
+  goto end
 )
 
 if not exist "%PAYLOAD%\Heimdall.Agent.exe" (
@@ -93,7 +117,10 @@ if not exist "%PAYLOAD%\Heimdall.Agent.exe" (
   echo This installer expects a packed folder from Pack-WorkstationCollector.cmd.
   echo From a full Heimdall clone ^(with .NET 10 SDK^):
   echo   scripts\Pack-WorkstationCollector.cmd
-  echo Then copy the whole dist\workstation-collector folder to this PC.
+  echo   OR scripts\Heimdall-LaunchControl.cmd -^> Pack collector
+  echo Then copy the WHOLE dist\workstation-collector folder ^(must include payload\^).
+  echo.
+  echo If you only have README/FILES under scripts\workstation-collector\, that is docs only — not installable.
   goto fail
 )
 

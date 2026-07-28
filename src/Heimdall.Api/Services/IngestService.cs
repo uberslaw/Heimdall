@@ -259,7 +259,10 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, IConfi
         var domain = WindowsAccountEncoding.RepairAccountField(dto.Domain);
         var clientName = WindowsAccountEncoding.RepairAccountField(dto.ClientName);
 
-        var existing = await db.Sessions.FirstOrDefaultAsync(s => s.ExternalEventId == dto.EventId, ct);
+        // Agent buffers can emit the same EventId twice in one batch (periodic refresh across sample ticks).
+        // DB lookup alone misses pending Added rows and causes UNIQUE constraint failures on SaveChanges.
+        var existing = await db.Sessions.FirstOrDefaultAsync(s => s.ExternalEventId == dto.EventId, ct)
+            ?? db.Sessions.Local.FirstOrDefault(s => s.ExternalEventId == dto.EventId);
         if (existing is null)
         {
             existing = new UserSession
@@ -277,7 +280,11 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, IConfi
                 ClientName = clientName,
                 ClientAddress = dto.ClientAddress,
                 ActiveSeconds = dto.ActiveSeconds,
-                DisconnectedSeconds = dto.DisconnectedSeconds
+                DisconnectedSeconds = dto.DisconnectedSeconds,
+                LocalActiveSeconds = dto.LocalActiveSeconds,
+                LocalDisconnectedSeconds = dto.LocalDisconnectedSeconds,
+                InboundRdpActiveSeconds = dto.InboundRdpActiveSeconds,
+                InboundRdpDisconnectedSeconds = dto.InboundRdpDisconnectedSeconds
             };
             db.Sessions.Add(existing);
             return;
@@ -288,6 +295,10 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, IConfi
         existing.EndedAtUtc = dto.EndedAtUtc ?? existing.EndedAtUtc;
         existing.ActiveSeconds = Math.Max(existing.ActiveSeconds, dto.ActiveSeconds);
         existing.DisconnectedSeconds = Math.Max(existing.DisconnectedSeconds, dto.DisconnectedSeconds);
+        existing.LocalActiveSeconds = Math.Max(existing.LocalActiveSeconds, dto.LocalActiveSeconds);
+        existing.LocalDisconnectedSeconds = Math.Max(existing.LocalDisconnectedSeconds, dto.LocalDisconnectedSeconds);
+        existing.InboundRdpActiveSeconds = Math.Max(existing.InboundRdpActiveSeconds, dto.InboundRdpActiveSeconds);
+        existing.InboundRdpDisconnectedSeconds = Math.Max(existing.InboundRdpDisconnectedSeconds, dto.InboundRdpDisconnectedSeconds);
         existing.ClientName = clientName ?? existing.ClientName;
         existing.ClientAddress = dto.ClientAddress ?? existing.ClientAddress;
         // Refresh identity when a fixed agent re-reports the same EventId, or when ingest can repair mojibake.
@@ -678,6 +689,17 @@ public class ConfigService(HeimdallDbContext db)
 
 public static class SeedData
 {
+    /// <summary>Placeholder hosts seeded only on a brand-new empty database (see DemoMachinesOffered flag).</summary>
+    public static readonly string[] DemoHostnames =
+    [
+        "DEMO-SYD-01",
+        "DEMO-SYD-02",
+        "DEMO-LON-01",
+        "DEMO-POC-01"
+    ];
+
+    private const string DemoMachinesOfferedFlag = "DemoMachinesOffered";
+
     public static async Task EnsureSeededAsync(HeimdallDbContext db)
     {
         await db.Database.EnsureCreatedAsync();
@@ -695,8 +717,17 @@ public static class SeedData
                 new KnownApp { DisplayName = "PowerPoint", ProcessName = "POWERPNT" },
                 new KnownApp { DisplayName = "Chrome", ProcessName = "chrome" },
                 new KnownApp { DisplayName = "Edge", ProcessName = "msedge" },
-                new KnownApp { DisplayName = "Teams", ProcessName = "ms-teams" }
+                new KnownApp { DisplayName = "Teams", ProcessName = "ms-teams" },
+                new KnownApp { DisplayName = "Remote Desktop (mstsc)", ProcessName = "mstsc" },
+                new KnownApp { DisplayName = "Remote Desktop (msrdc)", ProcessName = "msrdc" },
+                new KnownApp { DisplayName = "Remote Desktop (msrdcw)", ProcessName = "msrdcw" }
             );
+        }
+        else
+        {
+            await EnsureKnownAppAsync(db, "Remote Desktop (mstsc)", "mstsc");
+            await EnsureKnownAppAsync(db, "Remote Desktop (msrdc)", "msrdc");
+            await EnsureKnownAppAsync(db, "Remote Desktop (msrdcw)", "msrdcw");
         }
 
         if (!await db.TrackingConfigs.AnyAsync())
@@ -737,14 +768,14 @@ public static class SeedData
         foreach (var m in machines)
             MachineHierarchy.EnsureDefaults(m);
 
-        // Demo hierarchy if we have no machines yet — seed placeholder hosts for empty tree UX
-        if (!machines.Any())
+        // Demo hierarchy only once on a brand-new empty DB; never re-offer after removal (DemoMachinesOffered flag).
+        if (!machines.Any() && !await HasSystemFlagAsync(db, DemoMachinesOfferedFlag))
         {
             var now = DateTimeOffset.UtcNow;
             db.Machines.AddRange(
                 new Machine
                 {
-                    Hostname = "DEMO-SYD-01",
+                    Hostname = DemoHostnames[0],
                     MachineGroup = "APAC/Sydney",
                     Region = "APAC",
                     Office = "Sydney",
@@ -756,7 +787,7 @@ public static class SeedData
                 },
                 new Machine
                 {
-                    Hostname = "DEMO-SYD-02",
+                    Hostname = DemoHostnames[1],
                     MachineGroup = "APAC/Sydney",
                     Region = "APAC",
                     Office = "Sydney",
@@ -768,7 +799,7 @@ public static class SeedData
                 },
                 new Machine
                 {
-                    Hostname = "DEMO-LON-01",
+                    Hostname = DemoHostnames[2],
                     MachineGroup = "EMEA/London",
                     Region = "EMEA",
                     Office = "London",
@@ -780,7 +811,7 @@ public static class SeedData
                 },
                 new Machine
                 {
-                    Hostname = "DEMO-POC-01",
+                    Hostname = DemoHostnames[3],
                     MachineGroup = "POC",
                     Region = MachineHierarchy.DefaultRegion,
                     Office = MachineHierarchy.DefaultOffice,
@@ -791,6 +822,7 @@ public static class SeedData
                     AgentVersion = "seed"
                 }
             );
+            await SetSystemFlagAsync(db, DemoMachinesOfferedFlag, "1");
         }
 
         if (!await db.MetricPolicies.AnyAsync())
@@ -860,6 +892,22 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE ProcessRuns ADD COLUMN PeakGpuPercent REAL NULL");
         await TryExec(db, "ALTER TABLE ProcessRuns ADD COLUMN DiskReadBytes INTEGER NULL");
         await TryExec(db, "ALTER TABLE ProcessRuns ADD COLUMN DiskWriteBytes INTEGER NULL");
+        await TryExec(db, "ALTER TABLE Sessions ADD COLUMN LocalActiveSeconds INTEGER NOT NULL DEFAULT 0");
+        await TryExec(db, "ALTER TABLE Sessions ADD COLUMN LocalDisconnectedSeconds INTEGER NOT NULL DEFAULT 0");
+        await TryExec(db, "ALTER TABLE Sessions ADD COLUMN InboundRdpActiveSeconds INTEGER NOT NULL DEFAULT 0");
+        await TryExec(db, "ALTER TABLE Sessions ADD COLUMN InboundRdpDisconnectedSeconds INTEGER NOT NULL DEFAULT 0");
+        // Misclassified inbound RDP stored as Local (Console short-circuit) — flip type when remote client is present.
+        // Time buckets stay 0 until a new agent republishes; Socratize falls back to SessionType for legacy rows.
+        await TryExec(db, """
+            UPDATE Sessions
+            SET SessionType = 1
+            WHERE SessionType = 0
+              AND (
+                    (ClientName IS NOT NULL AND TRIM(ClientName) != '')
+                 OR (ClientAddress IS NOT NULL AND TRIM(ClientAddress) != ''
+                     AND ClientAddress NOT IN ('0.0.0.0', '::', '::1'))
+              )
+            """);
         await TryExec(db, """
             CREATE TABLE IF NOT EXISTS MetricPolicies (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1036,6 +1084,55 @@ public static class SeedData
                 FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE
             )
             """);
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS SystemFlags (
+                Key TEXT PRIMARY KEY,
+                Value TEXT NOT NULL
+            )
+            """);
+    }
+
+    private static async Task<bool> HasSystemFlagAsync(HeimdallDbContext db, string key)
+    {
+        var conn = db.Database.GetDbConnection();
+        var openedHere = conn.State != System.Data.ConnectionState.Open;
+        if (openedHere)
+            await conn.OpenAsync();
+        try
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT 1 FROM SystemFlags WHERE Key = $k LIMIT 1;";
+            var p = cmd.CreateParameter();
+            p.ParameterName = "$k";
+            p.Value = key;
+            cmd.Parameters.Add(p);
+            var result = await cmd.ExecuteScalarAsync();
+            return result is not null and not DBNull;
+        }
+        finally
+        {
+            if (openedHere)
+                await conn.CloseAsync();
+        }
+    }
+
+    private static async Task SetSystemFlagAsync(HeimdallDbContext db, string key, string value)
+    {
+        await db.Database.ExecuteSqlRawAsync(
+            "INSERT OR REPLACE INTO SystemFlags (Key, Value) VALUES ({0}, {1});",
+            key, value);
+    }
+
+    private static async Task EnsureKnownAppAsync(HeimdallDbContext db, string displayName, string processName)
+    {
+        if (await db.KnownApps.AnyAsync(a => a.ProcessName == processName))
+            return;
+        db.KnownApps.Add(new KnownApp
+        {
+            DisplayName = displayName,
+            ProcessName = processName,
+            EnabledByDefault = true
+        });
     }
 
     private static async Task TryExec(HeimdallDbContext db, string sql)

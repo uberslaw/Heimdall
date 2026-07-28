@@ -17,9 +17,11 @@
 
 ### What shipped on this branch
 
-- `scripts/Pack-WorkstationCollector.cmd` — publishes self-contained `win-x64` agent into `dist/workstation-collector/`
-- `scripts/Install-WorkstationCollector.cmd` — **CMD-only** elevated installer (no PowerShell on target)
+- `scripts/Heimdall-LaunchControl.cmd` (+ `.ps1`) — guided WinForms setup (API / pack / collector / logs / remote logs / verify); UTF-8 BOM + ASCII-safe
+- `scripts/Pack-WorkstationCollector.cmd` — publishes self-contained `win-x64` agent into `dist/workstation-collector/` (includes Launch Control + `VERSION.json`)
+- `scripts/Install-WorkstationCollector.cmd` — **CMD-only** elevated installer (self-elevate + pause; opens Launch Control when double-clicked with no args)
 - `scripts/workstation-collector/README.md` + `FILES.md` — files + dependencies
+- `Directory.Build.props` — shared `productVersion` 0.1.0; `/api/health` returns it for pack matching
 - Repo-root `NuGet.config` → nuget.org
 - Pack / `Install-Agent` publish now **force** `--source https://api.nuget.org/v3/index.json`
 - Fixed Windows PowerShell 5.1 parse error: UTF-8 em-dashes without BOM → ASCII dashes + UTF-8 BOM on `scripts/*.ps1`
@@ -250,7 +252,7 @@ Dashboard nav (on `main`): Machines | Sessions | Applications | App lists | Cost
 | **Docs vs pack folder** | `scripts\workstation-collector\` = docs; `dist\workstation-collector\` = real pack after SUCCESS. |
 | **PS 5.1 + UTF-8** | Em-dashes without BOM broke `install-agent.ps1` parse; fixed on this branch (BOM + ASCII). |
 | **Mojibake usernames** | Encoding fix shipped; **restart agent**. Repair DB with `scripts\Repair-SessionMojibake.ps1`. |
-| **RDP vs local** | Classification by **protocol**. RDP-to-self still **RDP**. |
+| **RDP vs local** | Classify by **protocol** first (then RDP-/ICA- WinStation, then ClientName/Address). Console alone must not force Local. Session time splits into Local / Inbound RDP buckets. Outbound RDP = mstsc/msrdc/msrdcw process open time. RDP-to-self still **inbound RDP**. |
 | **PSU / power draw** | Rated wattage = manual. Live draw = **not** collected (impossible reliably for desktops via agent POC). |
 | **OS InstallDate** | Feature updates often rewrite WMI/registry InstallDate — show both signals on Cost. |
 | **GPU / disk samples** | Thresholds exist; agent sampling often still stubbed. |

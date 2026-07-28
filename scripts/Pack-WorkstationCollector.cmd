@@ -105,12 +105,27 @@ if not exist "%PAYLOAD%\Heimdall.Agent.exe" (
   goto fail
 )
 
-echo [*] Copying installer + docs into package...
+echo [*] Copying installer + Launch Control + docs into package...
 copy /Y "%ROOT%\scripts\Install-WorkstationCollector.cmd" "%OUT%\Install-WorkstationCollector.cmd" >nul
+copy /Y "%ROOT%\scripts\Heimdall-LaunchControl.cmd" "%OUT%\Heimdall-LaunchControl.cmd" >nul
+copy /Y "%ROOT%\scripts\Heimdall-LaunchControl.ps1" "%OUT%\Heimdall-LaunchControl.ps1" >nul
 copy /Y "%ROOT%\scripts\workstation-collector\README.md" "%OUT%\README.md" >nul
 copy /Y "%ROOT%\scripts\workstation-collector\FILES.md" "%OUT%\FILES.md" >nul
 
-echo [*] Writing package stamp...
+echo [*] Writing VERSION.json + PACKED.txt...
+(
+  echo {
+  echo   "productVersion": "0.1.0",
+  echo   "rid": "%RID%",
+  echo   "selfContained": true,
+  echo   "targetFramework": "net10.0",
+  echo   "packedAtUtc": "%DATE% %TIME%",
+  echo   "packedBy": "%USERNAME%",
+  echo   "packedFrom": "%COMPUTERNAME%",
+  echo   "repo": "%ROOT:\=\\%"
+  echo }
+) > "%OUT%\VERSION.json"
+
 (
   echo Packed from: %COMPUTERNAME%
   echo Packed by:   %USERNAME%
@@ -118,6 +133,7 @@ echo [*] Writing package stamp...
   echo Repo:        %ROOT%
   echo RID:         %RID%
   echo SelfContained: true
+  echo ProductVersion: 0.1.0
 ) > "%OUT%\PACKED.txt"
 
 set "ZIP=%ROOT%\dist\heimdall-workstation-collector.zip"
@@ -145,7 +161,11 @@ echo.
 echo Folder:
 echo   %OUT%
 echo.
-echo Copy that folder ^(or the zip^) to each workstation, then elevated:
+echo Copy that folder ^(or the zip^) to each workstation, then prefer:
+echo   Heimdall-LaunchControl.cmd
+echo ^(guided setup: prerequisites, API URL, install, verify^)
+echo.
+echo Or elevated direct install:
 echo   Install-WorkstationCollector.cmd -ApiUrl http://YOUR-API-HOST:5080 -MachineGroup SOE
 echo.
 echo Target PCs do NOT need the Heimdall repo or .NET SDK
@@ -161,5 +181,5 @@ set "EXITCODE=1"
 
 :end
 echo.
-pause
+if /I not "%HEIMDALL_NOPAUSE%"=="1" pause
 exit /b %EXITCODE%

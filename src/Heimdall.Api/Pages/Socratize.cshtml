@@ -5,11 +5,12 @@
     var brief = Model.Brief;
     var appOpenTotal = brief?.Apps.Sum(a => a.TotalOpenSeconds) ?? 0;
     var localAccounted = brief is null ? 0 : brief.LocalActiveSeconds + brief.LocalDisconnectedSeconds;
-    var rdpAccounted = brief is null ? 0 : brief.RdpActiveSeconds + brief.RdpDisconnectedSeconds;
+    var inboundAccounted = brief is null ? 0 : brief.RdpActiveSeconds + brief.RdpDisconnectedSeconds;
+    var outboundAccounted = brief?.OutboundRdpSeconds ?? 0;
 }
 
 <h1 class="hd-title">Socratize</h1>
-<p class="hd-sub">One-machine cost-justification brief — probe Heimdall’s collected data (sessions, RDP vs local, util, apps, teams). Verdict from <a asp-page="/Utilization">Utilization criteria</a>.</p>
+<p class="hd-sub">One-machine cost-justification brief — probe Heimdall’s collected data (sessions, local vs inbound/outbound RDP, util, apps, teams). Verdict from <a asp-page="/Utilization">Utilization criteria</a>.</p>
 
 <form method="get" class="hd-panel mb-3">
     <div class="row g-3 align-items-end">
@@ -172,16 +173,24 @@ else if (brief is not null)
                             <div class="value" style="font-size:1.25rem;">@FormatDur(localAccounted)</div>
                         </div>
                         <div class="hd-stat">
-                            <div class="label">RDP time</div>
-                            <div class="value" style="font-size:1.25rem;">@FormatDur(rdpAccounted)</div>
+                            <div class="label">Inbound RDP</div>
+                            <div class="value" style="font-size:1.25rem;">@FormatDur(inboundAccounted)</div>
+                        </div>
+                        <div class="hd-stat">
+                            <div class="label">Outbound RDP</div>
+                            <div class="value" style="font-size:1.25rem;">@FormatDur(outboundAccounted)</div>
                         </div>
                         <div class="hd-stat">
                             <div class="label">Local %</div>
                             <div class="value" style="font-size:1.25rem;">@brief.LocalSharePct.ToString("0")%</div>
                         </div>
                         <div class="hd-stat">
-                            <div class="label">RDP %</div>
+                            <div class="label">Inbound %</div>
                             <div class="value" style="font-size:1.25rem;">@brief.RdpSharePct.ToString("0")%</div>
+                        </div>
+                        <div class="hd-stat">
+                            <div class="label">Outbound %</div>
+                            <div class="value" style="font-size:1.25rem;">@brief.OutboundRdpSharePct.ToString("0")%</div>
                         </div>
                     </div>
                     @if (brief.Users.Count > 0)
@@ -191,7 +200,7 @@ else if (brief is not null)
                                 <tr>
                                     <th>User</th>
                                     <th>Local</th>
-                                    <th>RDP</th>
+                                    <th>Inbound RDP</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -205,7 +214,11 @@ else if (brief is not null)
                             }
                             </tbody>
                         </table>
-                        <p class="hd-meta-line mb-0 mt-2">RDP means the Windows session used the remote protocol (WinStation <code>RDP-Tcp</code>), including RDP-to-self — not whether someone is physically at the desk.</p>
+                        <p class="hd-meta-line mb-0 mt-2">
+                            <strong>Inbound RDP</strong> = remote client connected to this machine (protocol / RDP- WinStation).
+                            <strong>Outbound RDP</strong> = time with mstsc/msrdc/msrdcw running on this host (process allowlist).
+                            RDP-to-self still counts as inbound.
+                        </p>
                     }
                 }
             </div>
@@ -230,10 +243,10 @@ else if (brief is not null)
             </div>
 
             <div class="hd-qa">
-                <div class="hd-q">Active vs disconnected RDP waste?</div>
+                <div class="hd-q">Active vs disconnected inbound RDP waste?</div>
                 @if (brief.RdpDisconnectedSeconds <= 0 && brief.RdpSharePct < 1)
                 {
-                    <p class="hd-a text-secondary mb-0">Little or no RDP disconnected time in this window.</p>
+                    <p class="hd-a text-secondary mb-0">Little or no inbound RDP disconnected time in this window.</p>
                 }
                 else
                 {
@@ -246,19 +259,19 @@ else if (brief is not null)
                         </thead>
                         <tbody>
                             <tr>
-                                <td>RDP active</td>
+                                <td>Inbound RDP active</td>
                                 <td>@FormatDur(brief.RdpActiveSeconds)</td>
                             </tr>
                             <tr>
-                                <td>RDP disconnected</td>
+                                <td>Inbound RDP disconnected</td>
                                 <td>@FormatDur(brief.RdpDisconnectedSeconds)</td>
                             </tr>
                             <tr>
-                                <td>% of RDP time disconnected</td>
+                                <td>% of inbound RDP time disconnected</td>
                                 <td>@brief.RdpIdleShareOfRdpPct.ToString("0")%</td>
                             </tr>
                             <tr>
-                                <td>RDP sessions</td>
+                                <td>Inbound RDP sessions</td>
                                 <td>@brief.RdpSessionCount</td>
                             </tr>
                         </tbody>

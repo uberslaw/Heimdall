@@ -79,11 +79,11 @@
                 <th>Host</th>
                 <th>Group</th>
                 <th>Status</th>
+                <th>Last check-in</th>
                 <th>Last user</th>
                 <th>Type</th>
                 <th>Open sessions</th>
                 <th>@shortLabel utilisation</th>
-                <th>Last seen</th>
                 <th>Apps</th>
                 <th></th>
             </tr>
@@ -118,11 +118,15 @@
                         <span class="badge-pill badge-ended">Offline</span>
                     }
                 </td>
+                <td class="text-nowrap">
+                    <span title="@m.LastSeenUtc.ToString("O")">@m.LastSeenUtc.ToLocalTime().ToString("g")</span>
+                    <br /><span class="text-secondary small">@IndexModel.FormatRelativeUtc(m.LastSeenUtc)</span>
+                </td>
                 <td>@(m.LastUser ?? "—")</td>
                 <td>
                     @if (m.LastSessionType == Heimdall.Shared.Contracts.SessionType.Rdp)
                     {
-                        <span class="badge-pill badge-rdp">RDP</span>
+                        <span class="badge-pill badge-rdp">Inbound RDP</span>
                     }
                     else if (m.LastSessionType == Heimdall.Shared.Contracts.SessionType.Local)
                     {
@@ -140,7 +144,6 @@
                         <span>@m.UtilisationPct.ToString("0")%</span>
                     </div>
                 </td>
-                <td>@m.LastSeenUtc.ToLocalTime().ToString("g")</td>
                 <td>
                     @if (m.AnalysisStatus == Heimdall.Api.Data.AppAnalysisStatus.PendingApproval)
                     {

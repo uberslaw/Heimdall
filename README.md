@@ -25,6 +25,12 @@ Lightweight workstation usage tracker for justifying remote / modelling machine 
 
 See **[INSTALL.md](INSTALL.md)** for the full guide: prerequisites (.NET 10, admin, port 5080), server + agent install, verification, troubleshooting, and how to send diagnostics back for analysis.
 
+**Prefer the guided UI:**
+
+```text
+scripts\Heimdall-LaunchControl.cmd
+```
+
 **POC auth is API key only** — no Entra yet.
 
 ```text
@@ -35,7 +41,8 @@ scripts\Collect-Diagnostics.cmd
 
 # Portable collector for other PCs / vanilla SOE (pack once, copy folder, install)
 scripts\Pack-WorkstationCollector.cmd
-# then on each target: Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
+# then on each target: Heimdall-LaunchControl.cmd
+#   or: Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
 ```
 
 See `scripts\workstation-collector\README.md` for which files to copy and dependencies.

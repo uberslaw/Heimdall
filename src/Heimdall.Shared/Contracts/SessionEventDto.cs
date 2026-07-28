@@ -14,6 +14,16 @@ public sealed class SessionEventDto
     public DateTimeOffset? EndedAtUtc { get; init; }
     public string? ClientName { get; init; }
     public string? ClientAddress { get; init; }
+    /// <summary>Total active seconds (Local + Inbound RDP buckets).</summary>
     public long ActiveSeconds { get; init; }
+    /// <summary>Total disconnected seconds (Local + Inbound RDP buckets).</summary>
     public long DisconnectedSeconds { get; init; }
+    /// <summary>Active seconds accumulated while classified Local.</summary>
+    public long LocalActiveSeconds { get; init; }
+    /// <summary>Disconnected seconds accumulated while classified Local.</summary>
+    public long LocalDisconnectedSeconds { get; init; }
+    /// <summary>Active seconds accumulated while classified inbound RDP.</summary>
+    public long InboundRdpActiveSeconds { get; init; }
+    /// <summary>Disconnected seconds accumulated while classified inbound RDP.</summary>
+    public long InboundRdpDisconnectedSeconds { get; init; }
 }
