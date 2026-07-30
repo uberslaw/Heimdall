@@ -36,6 +36,8 @@
 
 If a folder only has README/FILES and no `payload\`, pack has not succeeded.
 
+**Why pack before client install:** installers never compile — they only deploy `payload\Heimdall.Agent.exe` (self-contained) so vanilla SOE boxes need no SDK. See `INSTALL.md` § “Why packing is required before client install”.
+
 ### NuGet on the pack PC (critical)
 
 User ran on **`C:\Heimdall`** (also uses Cursor path below):
