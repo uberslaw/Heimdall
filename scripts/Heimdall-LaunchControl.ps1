@@ -6,7 +6,7 @@
 .DESCRIPTION
   Single entry point for install/configure actions. Shows steps, collects input,
   logs everything under %ProgramData%\Heimdall\logs\, and verifies at the end.
-  Prefer scripts\Heimdall-LaunchControl.cmd when double-clicking from Explorer.
+  Prefer scripts\Heimdall-LaunchControl.lnk (helmet icon) or scripts\Heimdall-LaunchControl.cmd when double-clicking from Explorer.
 
 .NOTES
   Works from a full repo clone OR from a packed dist\workstation-collector folder
@@ -21,6 +21,17 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
+
+$script:ScriptDirEarly = Split-Path -Parent $MyInvocation.MyCommand.Path
+$versionHelperPath = Join-Path $script:ScriptDirEarly "Heimdall-VersionCompare.ps1"
+if (Test-Path -LiteralPath $versionHelperPath) {
+    . $versionHelperPath
+}
+$collectorHelperPath = Join-Path $script:ScriptDirEarly "Heimdall-CollectorInstall.ps1"
+if (Test-Path -LiteralPath $collectorHelperPath) {
+    . $collectorHelperPath
+}
+Import-HeimdallVersionCompare -ScriptDir $script:ScriptDirEarly
 
 $script:ProductVersionExpected = "0.1.0"
 $script:ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -402,22 +413,10 @@ function Save-LastInstallSettings {
 }
 
 function Get-DefaultCollectorApiUrl {
-    $last = Get-LastInstallSettings
-    if ($last -and $last.apiUrl) {
-        $u = Normalize-ApiUrl ([string]$last.apiUrl)
-        if ($u) {
-            Write-HeimdallLog "Prefill ApiUrl from last successful install: $u" -Level INFO
-            return $u
-        }
+    return Resolve-HeimdallDefaultCollectorApiUrl -LastInstallSettingsFile $script:LastInstallSettingsFile -Log {
+        param([string]$Message, [string]$Level)
+        Write-HeimdallLog $Message -Level $Level
     }
-    $targets = @(Get-RemoteLogTargets)
-    if ($targets.Count -gt 0 -and $targets[0].host) {
-        $hostName = [string]$targets[0].host
-        $u = "http://${hostName}:5080"
-        Write-HeimdallLog "Prefill ApiUrl from recent remote log target: $u" -Level INFO
-        return $u
-    }
-    return "http://localhost:5080"
 }
 
 function Get-DefaultCollectorMachineGroup {
@@ -1632,7 +1631,7 @@ function Start-GuidedPack {
         Update-UiStep 3 "[OK] 4. Pack ready: $out"
         Set-UiStatus "Pack ready"
         [System.Windows.Forms.MessageBox]::Show(
-            "Portable pack ready.`r`n`r`n$out`r`n`r`nCopy that whole folder to target PCs, then run Launch Control or Install-WorkstationCollector.cmd there.`r`n`r`nLog: $($script:LogPath)",
+            "Portable pack ready.`r`n`r`n$out`r`n`r`nCopy that whole folder to target PCs, then double-click Install.cmd.`r`n`r`nLog: $($script:LogPath)",
             "Pack success", "OK", "Information") | Out-Null
         Start-Process explorer.exe $out
     }
@@ -1704,20 +1703,27 @@ function Start-GuidedCollectorInstall {
     $localPv = if ($localVer -and $localVer.productVersion) { $localVer.productVersion } else { $script:ProductVersionExpected }
 
     if ($health.Ok) {
-        $serverPv = $health.Payload.productVersion
+        $serverPv = [string]$health.Payload.productVersion
         Write-HeimdallLog "API reachable. productVersion=$serverPv machine=$($health.Payload.machineName)" -Level OK
-        if ($serverPv -and $localPv -and ($serverPv -ne $localPv)) {
-            Write-HeimdallLog "Version mismatch: pack=$localPv server=$serverPv" -Level WARN
+        $versionOk = Test-HeimdallProductVersionAccept -LocalVersion $localPv -ServerVersion $serverPv -Log {
+            param([string]$Message, [string]$Level)
+            Write-HeimdallLog $Message -Level $Level
+        } -ConfirmMismatch {
+            param([string]$PackPv, [string]$SrvPv)
             $r = [System.Windows.Forms.MessageBox]::Show(
-                "API is reachable, but versions differ.`r`n`r`nPack:   $localPv`r`nServer: $serverPv`r`n`r`nInstall anyway?",
-                "Version check",
+                "API is reachable, but product versions differ (core SemVer).`r`n`r`nPack:   $PackPv`r`nServer: $SrvPv`r`n`r`nInstall anyway?",
+                "Version mismatch",
                 [System.Windows.Forms.MessageBoxButtons]::YesNo,
                 [System.Windows.Forms.MessageBoxIcon]::Warning)
-            if ($r -ne [System.Windows.Forms.DialogResult]::Yes) { return }
-            Update-UiStep 2 "[!] 3. Health OK - version mismatch pack=$localPv server=$serverPv"
+            return ($r -eq [System.Windows.Forms.DialogResult]::Yes)
+        }
+        if (-not $versionOk) { return }
+        if (Test-HeimdallProductVersionMatch -VersionA $localPv -VersionB $serverPv) {
+            $corePv = Get-HeimdallCoreProductVersion -Version $localPv
+            Update-UiStep 2 "[OK] 3. Health OK - productVersion=$corePv"
         }
         else {
-            Update-UiStep 2 "[OK] 3. Health OK - productVersion=$serverPv"
+            Update-UiStep 2 "[!] 3. Health OK - version mismatch pack=$localPv server=$serverPv"
         }
 
         $auth = Test-ApiConfigAuth -ApiUrl $inputs.ApiUrl -ApiKey $inputs.ApiKey
@@ -1753,15 +1759,42 @@ function Start-GuidedCollectorInstall {
         return
     }
 
-    Write-HeimdallLog "Starting installer: $installer" -Level STEP
-    Update-UiStep 3 "[...] 4. Installing service..."
-    Set-UiStatus "Installing - watch the installer window; it will pause at the end"
+    $packDir = Split-Path -Parent $installer
+    $installCmdWizard = Join-Path $packDir "Install.cmd"
+    if (Test-Path -LiteralPath $installCmdWizard) {
+        Write-HeimdallLog "Tip: Install.cmd in pack folder runs the guided Install-Client wizard." -Level INFO
+    }
 
-    # HEIMDALL_SKIP_LAUNCH avoids re-entering this GUI if the CMD has no parseable args
-    $argList = "/c `"set HEIMDALL_SKIP_LAUNCH=1&& `"$installer`" -ApiUrl `"$($inputs.ApiUrl)`" -ApiKey `"$($inputs.ApiKey)`" -MachineGroup `"$($inputs.MachineGroup)`" -Payload `"$payload`""
-    $p = Start-Process -FilePath "cmd.exe" -Verb RunAs -ArgumentList $argList -PassThru
-    $exit = Wait-ProcessWithUiPump -Process $p -StatusText "Installing collector (watch elevated console)..."
-    Write-HeimdallLog "Installer process exit: $exit" -Level $(if ($exit -eq 0) { "OK" } else { "WARN" })
+    Write-HeimdallLog "Starting installer: $installer" -Level STEP
+    Write-HeimdallLog "Pack folder: $packDir" -Level INFO
+    Write-HeimdallLog "Payload: $payload" -Level INFO
+    Update-UiStep 3 "[...] 4. Installing service..."
+    Set-UiStatus "Installing - accept UAC; installer window will pause at end"
+
+    $exit = Invoke-HeimdallElevatedCollectorInstall `
+        -InstallerCmdPath $installer `
+        -ApiUrl (Normalize-ApiUrl $inputs.ApiUrl) `
+        -ApiKey $inputs.ApiKey `
+        -MachineGroup $inputs.MachineGroup `
+        -PayloadPath $payload `
+        -AlreadyElevated:(Test-IsAdministrator) `
+        -PumpUi { [System.Windows.Forms.Application]::DoEvents() } `
+        -Log { param($m, $l) Write-HeimdallLog $m -Level $l }
+
+    Write-HeimdallLog "Installer process exit: $exit" -Level $(if ($exit -eq 0) { "OK" } else { "ERROR" })
+
+    if ($exit -ne 0) {
+        $installLog = Get-HeimdallInstallWorkstationCollectorLogTail -LineCount 30 -LogRoot $script:LogRoot
+        if ($installLog) {
+            Write-HeimdallLog "Latest installer log: $($installLog.Path)" -Level INFO
+            foreach ($line in $installLog.Lines) {
+                Write-HeimdallLog "  install> $line" -Level INFO
+            }
+        }
+        else {
+            Write-HeimdallLog "No install-workstation-collector-*.log found under $($script:LogRoot)" -Level WARN
+        }
+    }
 
     # Verify
     Write-HeimdallLog "Post-install verification..." -Level STEP
@@ -1793,11 +1826,14 @@ function Start-GuidedCollectorInstall {
         Write-HeimdallLog "ApiBaseUrl on disk matches install input: $diskUrl" -Level OK
     }
 
+    $diskUrlDisplay = if ([string]::IsNullOrWhiteSpace($diskUrl)) { "(missing)" } else { $diskUrl }
+    $expectedUrlDisplay = if ([string]::IsNullOrWhiteSpace($expectedUrl)) { "(empty)" } else { $expectedUrl }
+
     $verifyBits = @()
     $verifyBits += "Service running: $svcOk"
     $verifyBits += "Agent exe present: $exeOk"
     $verifyBits += "appsettings present: $settingsOk"
-    $verifyBits += "ApiBaseUrl on disk matches input: $urlMatchOk (disk=$diskUrl expected=$expectedUrl)"
+    $verifyBits += "ApiBaseUrl match: $urlMatchOk | disk='$diskUrlDisplay' expected='$expectedUrlDisplay'"
     $health2 = Test-ApiHealth -ApiUrl $inputs.ApiUrl
     $verifyBits += "API health: $($health2.Ok)"
     if ($health2.Ok) {
@@ -1820,8 +1856,17 @@ function Start-GuidedCollectorInstall {
         Update-UiStep 4 "[X] 5. Verify failed"
         Set-UiStatus "Verify failed - see log"
         $extra = ""
+        if ($exit -ne 0) {
+            $installLog = Get-HeimdallInstallWorkstationCollectorLogTail -LineCount 30 -LogRoot $script:LogRoot
+            if ($installLog) {
+                $extra = "`r`n`r`nInstaller exited $exit. Last lines from:`r`n$($installLog.Path)`r`n`r`n$($installLog.Text)"
+            }
+            else {
+                $extra = "`r`n`r`nInstaller exited $exit. No install-workstation-collector-*.log found yet."
+            }
+        }
         if ($settingsOk -and -not $urlMatchOk) {
-            $extra = "`r`n`r`nApiBaseUrl on disk does not match what you entered. Fix appsettings.json or re-run install with the correct URL."
+            $extra += "`r`n`r`nApiBaseUrl on disk does not match what you entered. Fix appsettings.json or re-run install with the correct URL."
         }
         [System.Windows.Forms.MessageBox]::Show(
             ("Verification failed.`r`n`r`n" + ($verifyBits -join "`r`n") + $extra + "`r`n`r`nOpen the logs folder and send the latest install-*.log + launch-control-*.log.`r`n`r`n$($script:LogPath)"),
@@ -2024,11 +2069,11 @@ function Show-LaunchControl {
 
     Write-HeimdallLog "Launch Control UI ready. PackedLayout=$($script:IsPackedLayout) Admin=$(Test-IsAdministrator)" -Level OK
     if ($script:IsPackedLayout) {
-        Write-HeimdallLog "Packed folder mode: API install / pack buttons disabled. Use Install collector." -Level INFO
+        Write-HeimdallLog "Packed folder mode: use Install.cmd on target PCs. Launch Control available for advanced actions." -Level INFO
         Set-UiSteps @(
             "This folder is a portable pack.",
-            "Use: Install collector (this PC)",
-            "Then: Client health check",
+            "On target PCs: double-click Install.cmd",
+            "Advanced: Install collector here",
             "Need API first on your server."
         )
     }

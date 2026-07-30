@@ -105,12 +105,31 @@ if not exist "%PAYLOAD%\Heimdall.Agent.exe" (
   goto fail
 )
 
-echo [*] Copying installer + Launch Control + docs into package...
+echo [*] Copying installer + client wizard + docs into package...
+copy /Y "%ROOT%\scripts\Install.cmd" "%OUT%\Install.cmd" >nul
+copy /Y "%ROOT%\scripts\Install-Client.ps1" "%OUT%\Install-Client.ps1" >nul
+copy /Y "%ROOT%\scripts\Heimdall-VersionCompare.ps1" "%OUT%\Heimdall-VersionCompare.ps1" >nul
+copy /Y "%ROOT%\scripts\Heimdall-CollectorInstall.ps1" "%OUT%\Heimdall-CollectorInstall.ps1" >nul
 copy /Y "%ROOT%\scripts\Install-WorkstationCollector.cmd" "%OUT%\Install-WorkstationCollector.cmd" >nul
 copy /Y "%ROOT%\scripts\Heimdall-LaunchControl.cmd" "%OUT%\Heimdall-LaunchControl.cmd" >nul
 copy /Y "%ROOT%\scripts\Heimdall-LaunchControl.ps1" "%OUT%\Heimdall-LaunchControl.ps1" >nul
 copy /Y "%ROOT%\scripts\workstation-collector\README.md" "%OUT%\README.md" >nul
 copy /Y "%ROOT%\scripts\workstation-collector\FILES.md" "%OUT%\FILES.md" >nul
+
+if exist "%ROOT%\assets\heimdall.ico" (
+  copy /Y "%ROOT%\assets\heimdall.ico" "%OUT%\heimdall.ico" >nul
+  echo [*] Creating helmet-icon shortcuts in package...
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Heimdall-LaunchControl.lnk" -TargetPath "%OUT%\Heimdall-LaunchControl.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Heimdall Launch Control"
+  if errorlevel 1 (
+    echo [WARN] Could not create Heimdall-LaunchControl.lnk — use Heimdall-LaunchControl.cmd instead.
+  )
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Install.lnk" -TargetPath "%OUT%\Install.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Heimdall Workstation Collector Install"
+  if errorlevel 1 (
+    echo [WARN] Could not create Install.lnk — use Install.cmd instead.
+  )
+) else (
+  echo [WARN] assets\heimdall.ico missing — pack will not include helmet icon shortcuts.
+)
 
 echo [*] Writing VERSION.json + PACKED.txt...
 (
@@ -161,11 +180,13 @@ echo.
 echo Folder:
 echo   %OUT%
 echo.
-echo Copy that folder ^(or the zip^) to each workstation, then prefer:
-echo   Heimdall-LaunchControl.cmd
-echo ^(guided setup: prerequisites, API URL, install, verify^)
+echo Copy that folder ^(or the zip^) to each workstation, then double-click:
+echo   Install.lnk   ^(helmet icon^)  or  Install.cmd
+echo ^(guided client install: prerequisites, API URL, test, install, verify^)
 echo.
-echo Or elevated direct install:
+echo Advanced / build PC: Heimdall-LaunchControl.lnk ^(helmet icon^)  or  Heimdall-LaunchControl.cmd
+echo.
+echo Or elevated scripted install:
 echo   Install-WorkstationCollector.cmd -ApiUrl http://YOUR-API-HOST:5080 -MachineGroup SOE
 echo.
 echo Target PCs do NOT need the Heimdall repo or .NET SDK

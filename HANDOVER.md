@@ -17,8 +17,9 @@
 
 ### What shipped on this branch
 
-- `scripts/Heimdall-LaunchControl.cmd` (+ `.ps1`) — guided WinForms setup (API / pack / collector / logs / remote logs / verify); UTF-8 BOM + ASCII-safe
-- `scripts/Pack-WorkstationCollector.cmd` — publishes self-contained `win-x64` agent into `dist/workstation-collector/` (includes Launch Control + `VERSION.json`)
+- `scripts/Heimdall-LaunchControl.lnk` (+ `.cmd` / `.ps1`) — guided WinForms setup; **prefer `.lnk`** for helmet icon in Explorer
+- `assets/heimdall.ico` — helmet icon copied into pack; shortcuts created at pack time
+- `scripts/Pack-WorkstationCollector.cmd` — publishes self-contained `win-x64` agent into `dist/workstation-collector/` (includes Launch Control + `VERSION.json` + icon shortcuts)
 - `scripts/Install-WorkstationCollector.cmd` — **CMD-only** elevated installer (self-elevate + pause; opens Launch Control when double-clicked with no args)
 - `scripts/workstation-collector/README.md` + `FILES.md` — files + dependencies
 - `Directory.Build.props` — shared `productVersion` 0.1.0; `/api/health` returns it for pack matching

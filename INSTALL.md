@@ -12,15 +12,23 @@ Live repo: https://github.com/uberslaw/Heimdall
 
 ## Preferred: Launch Control (guided)
 
-Double-click:
+Double-click the **helmet icon** shortcut (recommended — Windows shows the Heimdall icon in Explorer):
+
+```text
+scripts\Heimdall-LaunchControl.lnk
+```
+
+Or the underlying launcher:
 
 ```text
 scripts\Heimdall-LaunchControl.cmd
 ```
 
+The `.lnk` points at the same `.cmd`; use the shortcut so Explorer shows the helmet icon instead of the generic CMD icon.
+
 One form for: Install API, Pack collector, Install collector (prereqs → API URL → health/version → install → verify), **Client health check** (service, settings, API probes; logs to local + `logs\clients\<hostname>\` on API host), Open logs, **Open remote logs folder** (saved recent hosts; browse `clients\` subfolder for agent checks), Collect diagnostics, Open dashboard.
 
-On-screen progress mirrors `%ProgramData%\Heimdall\logs\`. Installer consoles **pause until you press a key**. Portable packs include Launch Control — run it from `dist\workstation-collector\` on targets.
+On-screen progress mirrors `%ProgramData%\Heimdall\logs\`. Installer consoles **pause until you press a key**. Portable packs include Launch Control — on build PCs double-click **`Heimdall-LaunchControl.lnk`** (helmet icon) in `dist\workstation-collector\`; on target PCs use **`Install.lnk`** for the guided install wizard.
 
 ---
 
@@ -78,7 +86,7 @@ What it does:
 **Install log:** `%ProgramData%\Heimdall\logs\install-api-YYYYMMDD-HHMMSS.log`  
 (The installer prints the full path and pauses at the end.)
 
-`GET /api/health` returns `productVersion` (Launch Control compares this to the pack `VERSION.json`).
+`GET /api/health` returns `productVersion` (Install wizard and Launch Control compare core version before `+`; e.g. `0.1.0` matches `0.1.0+gitsha`).
 
 ---
 
@@ -94,23 +102,23 @@ scripts\Heimdall-LaunchControl.cmd
 scripts\Pack-WorkstationCollector.cmd
 ```
 
-Copy `dist\workstation-collector\` (or the zip) to each target PC. On the target prefer:
+Copy `dist\workstation-collector\` (or the zip) to each target PC. On the target **double-click**:
 
 ```text
-Heimdall-LaunchControl.cmd
+Install.cmd
 ```
 
-Or elevated direct install:
+Or elevated scripted install:
 
 ```text
 Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
 ```
 
 - Payload is **self-contained win-x64** — target PCs do not need a separate .NET install.
-- Copy the **whole folder** (`Heimdall-LaunchControl.*` + `Install-WorkstationCollector.cmd` + `payload\` + `VERSION.json`). Docs-only `scripts\workstation-collector\` is **not** installable.
+- Copy the **whole folder** (`Install.cmd` + `payload\` + `VERSION.json`). Docs-only `scripts\workstation-collector\` is **not** installable.
 
-**Install log:** `%ProgramData%\Heimdall\logs\install-workstation-collector-*.log`  
-**Launch Control log:** `%ProgramData%\Heimdall\logs\launch-control-*.log`
+**Install log:** `%ProgramData%\Heimdall\logs\install-workstation-collector-*.log` and `install-client-*.log`  
+**Launch Control log:** `%ProgramData%\Heimdall\logs\launch-control-*.log` (advanced / build PC only)
 
 ### Option B — From a full repo clone (same machine / has SDK)
 
@@ -161,7 +169,8 @@ Invoke-RestMethod http://localhost:5080/api/health
 
 ### Window closed too fast / no message
 
-- Prefer **`Heimdall-LaunchControl.cmd`** — UI stays until you close it; logs always under ProgramData.
+- Prefer **`Install.cmd`** on target PCs — wizard stays open until you close it; logs always under ProgramData.
+- **`Heimdall-LaunchControl.lnk`** (helmet icon) for build/server PCs (API install, pack, remote logs). Same as `Heimdall-LaunchControl.cmd`.
 - `.cmd` installers call `pause` at the end. If a window vanished, check `%ProgramData%\Heimdall\logs\` for the newest `install-*.log` or `launch-control-*.log`.
 - Missing `payload\Heimdall.Agent.exe` means you copied the wrong folder (docs-only `scripts\workstation-collector\` is not installable).
 

@@ -16,7 +16,7 @@ REM   payload\Heimdall.Agent.exe   (+ other published files)
 
 cd /d "%~dp0"
 
-set "APIURL=http://localhost:5080"
+set "APIURL=http://BNELT5CG5152D8R:5080"
 set "APIKEY=heimdall-poc-key"
 set "MACHINEGROUP=POC"
 set "INSTALLDIR=%ProgramFiles%\Heimdall\Agent"
@@ -24,15 +24,15 @@ set "PAYLOAD=%~dp0payload"
 set "LOGROOT=%ProgramData%\Heimdall\logs"
 set "EXITCODE=1"
 
-REM Prefer Launch Control when present (guided UI). Set HEIMDALL_SKIP_LAUNCH=1 to force this script.
+REM Prefer Install.cmd when present (guided client wizard). Set HEIMDALL_SKIP_LAUNCH=1 to force this script.
 if /I not "%HEIMDALL_SKIP_LAUNCH%"=="1" (
-  if exist "%~dp0Heimdall-LaunchControl.cmd" (
-    if "%~1"=="" (
+  if "%~1"=="" (
+    if exist "%~dp0Install.cmd" (
       echo.
-      echo Opening Heimdall Launch Control ^(guided setup^)...
+      echo Opening Heimdall Install ^(guided setup^)...
       echo To run this CMD installer directly: set HEIMDALL_SKIP_LAUNCH=1
       echo.
-      call "%~dp0Heimdall-LaunchControl.cmd" -Mode InstallCollector
+      call "%~dp0Install.cmd"
       exit /b %ERRORLEVEL%
     )
   )
@@ -94,7 +94,7 @@ echo   Heimdall Workstation Collector installer
 echo ================================================================
 echo.
 echo Window stays open until you press a key — do not close it early.
-echo Prefer guided setup: Heimdall-LaunchControl.cmd
+echo Prefer guided setup: Install.cmd
 echo.
 
 net session >nul 2>&1
@@ -104,8 +104,18 @@ if errorlevel 1 (
   echo Attempting to relaunch elevated - accept the UAC prompt.
   echo This window will wait until the elevated installer finishes.
   echo.
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -ArgumentList '%*' -Verb RunAs -Wait; exit $LASTEXITCODE"
+  set "ELEVATE_CMD=%TEMP%\heimdall-elev-%RANDOM%.cmd"
+  (
+    echo @echo off
+    echo setlocal EnableExtensions EnableDelayedExpansion
+    echo cd /d "%~dp0"
+    echo set HEIMDALL_SKIP_LAUNCH=1
+    echo call "%~f0" -ApiUrl "!APIURL!" -ApiKey "!APIKEY!" -MachineGroup "!MACHINEGROUP!" -InstallDir "!INSTALLDIR!" -Payload "!PAYLOAD!"
+    echo exit /b %%ERRORLEVEL%%
+  ) > "!ELEVATE_CMD!"
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%ELEVATE_CMD%' -Verb RunAs -Wait -PassThru | ForEach-Object { exit $_.ExitCode }"
   set "EXITCODE=!ERRORLEVEL!"
+  del /F /Q "!ELEVATE_CMD!" >nul 2>&1
   echo.
   echo Elevated installer finished ^(exit !EXITCODE!^).
   goto end
@@ -134,7 +144,7 @@ set "STAMP=!STAMP:.=!"
 set "LOGFILE=%LOGROOT%\install-workstation-collector-!STAMP!.log"
 
 call :log INFO "Log file: !LOGFILE!"
-call :log INFO "User: %USERNAME% | Machine: %COMPUTERNAME%"
+call :log INFO "User: %USERNAME%  Machine: %COMPUTERNAME%"
 call :log INFO "ApiUrl=!APIURL! MachineGroup=!MACHINEGROUP! InstallDir=!INSTALLDIR!"
 call :log INFO "Payload=!PAYLOAD!"
 
@@ -262,7 +272,7 @@ echo.
 echo Usage: Install-WorkstationCollector.cmd [options]
 echo.
 echo Options:
-echo   -ApiUrl URL          Heimdall API base URL (default http://localhost:5080^)
+echo   -ApiUrl URL          Heimdall API base URL (default http://BNELT5CG5152D8R:5080^)
 echo   -ApiKey KEY          Must match API key (default heimdall-poc-key^)
 echo   -MachineGroup NAME   e.g. SOE, POC, APAC/Sydney (default POC^)
 echo   -InstallDir PATH     Default %%ProgramFiles%%\Heimdall\Agent
@@ -291,7 +301,7 @@ echo.
 echo Full log path:
 if defined LOGFILE (echo   !LOGFILE!) else (echo   ^(none^))
 echo.
-pause
+if /I not "%HEIMDALL_NOPAUSE%"=="1" pause
 exit /b !EXITCODE!
 
 :log

@@ -4,9 +4,16 @@
 
 ```text
 workstation-collector/
-├── Heimdall-LaunchControl.cmd         # PREFERRED — guided setup UI
+├── Install.lnk                          # PRIMARY — double-click on target PCs (helmet icon)
+├── Install.cmd                        # Guided install launcher (same as Install.lnk)
+├── Install-Client.ps1                 # Guided install wizard (WinForms)
+├── Heimdall-VersionCompare.ps1        # Shared version compare helper
+├── Heimdall-CollectorInstall.ps1      # Shared install launch + default ApiUrl
+├── Install-WorkstationCollector.cmd   # Scripted/silent install (no args -> Install.cmd)
+├── Heimdall-LaunchControl.lnk         # Advanced / build PC (helmet icon)
+├── Heimdall-LaunchControl.cmd         # Same as .lnk (generic CMD icon)
 ├── Heimdall-LaunchControl.ps1
-├── Install-WorkstationCollector.cmd   # Direct/elevated install (or opens Launch Control if no args)
+├── heimdall.ico                       # Helmet icon for shortcuts
 ├── README.md
 ├── FILES.md
 ├── VERSION.json                       # productVersion for server match
@@ -20,7 +27,13 @@ workstation-collector/
 
 | Path | Purpose |
 |------|---------|
-| `scripts/Heimdall-LaunchControl.cmd` / `.ps1` | Guided setup UI (API / pack / collector / logs / remote logs / verify) |
+| `scripts/Install.cmd` / `Install-Client.ps1` | Client-facing guided install |
+| `scripts/Install.lnk` | Helmet-icon shortcut to Install.cmd (client pack + repo) |
+| `scripts/Heimdall-VersionCompare.ps1` | Core SemVer compare (strips `+` build metadata) |
+| `scripts/Heimdall-CollectorInstall.ps1` | Elevated CMD install wrapper; default ApiUrl `http://BNELT5CG5152D8R:5080` |
+| `scripts/Heimdall-LaunchControl.lnk` / `.cmd` / `.ps1` | Advanced setup UI (prefer `.lnk` for helmet icon) |
+| `scripts/New-HeimdallShortcut.ps1` | Creates `.lnk` with custom icon (used by pack + maintainers) |
+| `assets/heimdall.ico` / `heimdall-icon.png` | Launch Control / Install shortcut icon |
 | `scripts/Pack-WorkstationCollector.cmd` | Builds `dist/workstation-collector` + optional zip |
 | `scripts/Install-WorkstationCollector.cmd` | Copied into the package; installs the service |
 | `scripts/workstation-collector/README.md` | Copied into the package |
@@ -33,7 +46,7 @@ workstation-collector/
 | Dependency | Bundled? | Notes |
 |------------|----------|--------|
 | .NET 10 runtime | **Yes** (self-contained publish) | No separate runtime install |
-| Windows PowerShell 5.1+ | OS | Launch Control WinForms UI |
+| Windows PowerShell 5.1+ | OS | Install wizard WinForms UI |
 | Windows Service Control (`sc.exe`) | OS | Create/start `HeimdallAgent` |
 | WMI / `System.Management` | OS + bundled assemblies | Hardware inventory |
 | SQLite (offline queue) | Bundled via publish | `%ProgramData%\Heimdall\queue.db` |
