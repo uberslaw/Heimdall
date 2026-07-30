@@ -124,13 +124,13 @@ if errorlevel 1 (
 if not exist "%PAYLOAD%\Heimdall.Agent.exe" (
   echo [ERROR] Payload not found: "%PAYLOAD%\Heimdall.Agent.exe"
   echo.
-  echo This installer expects a packed folder from Pack-WorkstationCollector.cmd.
+  echo This installer expects the Heimdall-Client pack from Setup / Pack.
   echo From a full Heimdall clone ^(with .NET 10 SDK^):
-  echo   scripts\Pack-WorkstationCollector.cmd
-  echo   OR scripts\Heimdall-LaunchControl.cmd -^> Pack collector
-  echo Then copy the WHOLE dist\workstation-collector folder ^(must include payload\^).
+  echo   scripts\Heimdall-Setup.lnk  -^> Create client pack
+  echo   OR scripts\Pack-WorkstationCollector.cmd
+  echo Then copy the WHOLE dist\Heimdall-Client folder ^(must include payload\^).
   echo.
-  echo If you only have README/FILES under scripts\workstation-collector\, that is docs only — not installable.
+  echo docs\portable-client\ in the repo is documentation only — not installable.
   goto fail
 )
 
@@ -278,8 +278,8 @@ echo   -MachineGroup NAME   e.g. SOE, POC, APAC/Sydney (default POC^)
 echo   -InstallDir PATH     Default %%ProgramFiles%%\Heimdall\Agent
 echo   -Payload PATH        Folder containing Heimdall.Agent.exe (default .\payload^)
 echo.
-echo Pack on a build PC first: scripts\Pack-WorkstationCollector.cmd
-echo See scripts\workstation-collector\README.md for files and dependencies.
+echo Pack on a build PC first: scripts\Heimdall-Setup.lnk -^> Create client pack
+echo See docs\portable-client\README.md for files and dependencies.
 echo.
 set "EXITCODE=1"
 goto end

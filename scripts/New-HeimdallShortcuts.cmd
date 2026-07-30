@@ -9,11 +9,19 @@ if not exist "%ROOT%\assets\heimdall.ico" (
 )
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" ^
-  -ShortcutPath "%ROOT%\scripts\Heimdall-LaunchControl.lnk" ^
-  -TargetPath "%ROOT%\scripts\Heimdall-LaunchControl.cmd" ^
+  -ShortcutPath "%ROOT%\scripts\Heimdall-Setup.lnk" ^
+  -TargetPath "%ROOT%\scripts\Heimdall-Setup.cmd" ^
   -IconPath "%ROOT%\assets\heimdall.ico" ^
   -WorkingDirectory "%ROOT%\scripts" ^
-  -Description "Heimdall Launch Control"
+  -Description "Heimdall Setup"
+if errorlevel 1 exit /b 1
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" ^
+  -ShortcutPath "%ROOT%\scripts\Heimdall-LaunchControl.lnk" ^
+  -TargetPath "%ROOT%\scripts\Heimdall-Setup.cmd" ^
+  -IconPath "%ROOT%\assets\heimdall.ico" ^
+  -WorkingDirectory "%ROOT%\scripts" ^
+  -Description "Heimdall Setup"
 if errorlevel 1 exit /b 1
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" ^
@@ -21,7 +29,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-Heim
   -TargetPath "%ROOT%\scripts\Install.cmd" ^
   -IconPath "%ROOT%\assets\heimdall.ico" ^
   -WorkingDirectory "%ROOT%\scripts" ^
-  -Description "Heimdall Workstation Collector Install"
+  -Description "Install Heimdall Agent on this PC"
 if errorlevel 1 exit /b 1
 
 echo [OK] shortcuts updated in scripts\

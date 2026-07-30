@@ -10,25 +10,24 @@ Live repo: https://github.com/uberslaw/Heimdall
 
 ---
 
-## Preferred: Launch Control (guided)
+## Preferred: Heimdall Setup (guided)
 
-Double-click the **helmet icon** shortcut (recommended — Windows shows the Heimdall icon in Explorer):
-
-```text
-scripts\Heimdall-LaunchControl.lnk
-```
-
-Or the underlying launcher:
+Double-click the **helmet icon** shortcut:
 
 ```text
-scripts\Heimdall-LaunchControl.cmd
+scripts\Heimdall-Setup.lnk
 ```
 
-The `.lnk` points at the same `.cmd`; use the shortcut so Explorer shows the helmet icon instead of the generic CMD icon.
+(`Heimdall-LaunchControl.lnk` is the same Setup UI — kept for older bookmarks.)
 
-One form for: Install API, Pack collector, Install collector (prereqs → API URL → health/version → install → verify), **Client health check** (service, settings, API probes; logs to local + `logs\clients\<hostname>\` on API host), Open logs, **Open remote logs folder** (saved recent hosts; browse `clients\` subfolder for agent checks), Collect diagnostics, Open dashboard.
+Self-explanatory options with prompts:
 
-On-screen progress mirrors `%ProgramData%\Heimdall\logs\`. Installer consoles **pause until you press a key**. Portable packs include Launch Control — on build PCs double-click **`Heimdall-LaunchControl.lnk`** (helmet icon) in `dist\workstation-collector\`; on target PCs use **`Install.lnk`** for the guided install wizard.
+1. **Install API on this PC** — server / dashboard  
+2. **Create client pack** — builds one `dist\Heimdall-Client\` folder for other PCs  
+3. **Install agent on this PC** — guided install (offers to create the pack first if missing)  
+4+ tools — health check, logs, backup, diagnostics, dashboard  
+
+On client PCs you only need the packed folder’s **`Install.lnk`** (same wizard). Logs: `%ProgramData%\Heimdall\logs\`.
 
 ---
 
@@ -38,7 +37,7 @@ On-screen progress mirrors `%ProgramData%\Heimdall\logs\`. Installer consoles **
 |-------------|--------|
 | **Windows** | Server or workstation; local **Administrator** for service install |
 | **.NET 10 SDK** | Needed to `dotnet publish` during **API install** or **pack** ([download](https://dotnet.microsoft.com/download/dotnet/10.0)) |
-| **.NET 10 runtime** | Bundled in the portable collector pack (self-contained). Repo-based agent install still needs SDK/runtime. |
+| **.NET 10 runtime** | Bundled in the portable Heimdall-Client pack (self-contained). Repo-based agent install still needs SDK/runtime. |
 | **Firewall / port** | API listens on **5080** by default (`http://0.0.0.0:5080`). The API installer creates an inbound Windows Firewall allow rule for the chosen port (or allow TCP manually if group policy blocks local rules) |
 | **Outbound HTTPS/HTTP** | Agents must reach the API URL you configure |
 
@@ -62,7 +61,7 @@ cd Heimdall
 
 ## 1. Install the server (API + dashboard)
 
-Prefer Launch Control → **Install API**, or run **elevated** (`.cmd` keeps the console open):
+Prefer Heimdall Setup → **Install API on this PC**, or run **elevated** (`.cmd` keeps the console open):
 
 ```text
 scripts\Install-Api.cmd
@@ -86,65 +85,57 @@ What it does:
 **Install log:** `%ProgramData%\Heimdall\logs\install-api-YYYYMMDD-HHMMSS.log`  
 (The installer prints the full path and pauses at the end.)
 
-`GET /api/health` returns `productVersion` (Install wizard and Launch Control compare core version before `+`; e.g. `0.1.0` matches `0.1.0+gitsha`).
+`GET /api/health` returns `productVersion` (Install wizard and Setup compare core version before `+`; e.g. `0.1.0` matches `0.1.0+gitsha`).
 
 ---
 
-## 2. Install the agent (workstation collector)
+## 2. Install the agent (one client folder)
 
-### Why packing is required before client install
+### Simple model
 
-Install and build are deliberately split. The portable client installers (`Install.cmd`, `Install-WorkstationCollector.cmd`) **never compile** the agent — they only copy a prebuilt `payload\Heimdall.Agent.exe` and register the Windows service.
+| Role | What you run | Folder involved |
+|------|--------------|-----------------|
+| Build / server PC | `scripts\Heimdall-Setup.lnk` | Creates `dist\Heimdall-Client\` |
+| Every client PC | `Install.lnk` inside that folder | Copy **only** `dist\Heimdall-Client\` |
 
-| Reason | Detail |
-|--------|--------|
-| **Binaries are not in git** | `scripts\workstation-collector\` is docs only (`README.md` + `FILES.md`). `dist\` is gitignored and only appears after a successful pack. |
-| **Installers only deploy** | Without `payload\Heimdall.Agent.exe`, install fails and tells you to run `Pack-WorkstationCollector.cmd` first. |
-| **Targets are vanilla SOE** | No full repo, no .NET 10 SDK, no NuGet on those PCs. Pack publishes **self-contained win-x64** so the runtime is bundled. |
+There is no separate “workstation collector” folder vs “client install” folder — same pack. Docs live under `docs\portable-client\` in git (not installable).
 
-**Flow:** build PC (repo + SDK) → pack once → copy `dist\workstation-collector\` → each target runs `Install.lnk` / `Install.cmd`.
-
-Pack **once** per agent build; reuse the same folder (or zip) on every target until the agent code/version changes, or until `dist\` was cleaned / never produced.
-
-If the machine already has the full clone and .NET 10 SDK, skip the portable pack and use **Option B** (`Install-Agent.cmd`) instead.
+Create the pack **once** per agent change; reuse it on every PC. Setup prompts you through API URL / key / group, tests the connection, installs, and verifies.
 
 ### Option A — Portable pack (recommended for other PCs / vanilla SOE)
 
-Pack **once** on a build machine that has the repo + **.NET 10 SDK** + NuGet access (repo `NuGet.config` → nuget.org; offline-only VS feeds cause **NU1101**):
+On a build machine (repo + **.NET 10 SDK** + NuGet / nuget.org):
 
 ```text
-scripts\Heimdall-LaunchControl.cmd
-# or:
-scripts\Pack-WorkstationCollector.cmd
+scripts\Heimdall-Setup.lnk
 ```
 
-That publishes `Heimdall.Agent` as self-contained `win-x64` into:
+Choose **Create client pack** (or run `scripts\Pack-WorkstationCollector.cmd`). After success, Setup can offer **Install agent on this PC now**.
+
+Output:
 
 ```text
-dist\workstation-collector\
-  Install.lnk / Install.cmd / Install-Client.ps1
-  Install-WorkstationCollector.cmd
+dist\Heimdall-Client\
+  Install.lnk          ← only entry clients need
+  Install.cmd + wizard scripts
   payload\Heimdall.Agent.exe   ← required
-  VERSION.json, PACKED.txt, …
+  VERSION.json, …
 ```
 
-Copy `dist\workstation-collector\` (or the zip) to each target PC. On the target **double-click**:
+Copy **that one folder** (or `dist\heimdall-client.zip`) to each target. On the target:
 
 ```text
-Install.cmd
+Install.lnk
 ```
 
-Or elevated scripted install:
+Silent/scripted (advanced):
 
 ```text
 Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
 ```
 
-- Payload is **self-contained win-x64** — target PCs do not need a separate .NET install.
-- Copy the **whole folder** (`Install.cmd` + `payload\` + `VERSION.json`). Docs-only `scripts\workstation-collector\` is **not** installable.
-
-**Install log:** `%ProgramData%\Heimdall\logs\install-workstation-collector-*.log` and `install-client-*.log`  
-**Launch Control log:** `%ProgramData%\Heimdall\logs\launch-control-*.log` (advanced / build PC only)
+**Install log:** `%ProgramData%\Heimdall\logs\install-client-*.log` and `install-workstation-collector-*.log`  
+**Setup log:** `%ProgramData%\Heimdall\logs\launch-control-*.log`
 
 ### Option B — From a full repo clone (same machine / has SDK)
 
@@ -195,10 +186,10 @@ Invoke-RestMethod http://localhost:5080/api/health
 
 ### Window closed too fast / no message
 
-- Prefer **`Install.cmd`** on target PCs — wizard stays open until you close it; logs always under ProgramData.
-- **`Heimdall-LaunchControl.lnk`** (helmet icon) for build/server PCs (API install, pack, remote logs). Same as `Heimdall-LaunchControl.cmd`.
+- Prefer **`Install.lnk`** on target PCs — wizard stays open until you close it; logs always under ProgramData.
+- **`Heimdall-Setup.lnk`** on build/server PCs (API install, create client pack, tools).
 - `.cmd` installers call `pause` at the end. If a window vanished, check `%ProgramData%\Heimdall\logs\` for the newest `install-*.log` or `launch-control-*.log`.
-- Missing `payload\Heimdall.Agent.exe` means you copied the wrong folder (docs-only `scripts\workstation-collector\` is not installable).
+- Missing `payload\Heimdall.Agent.exe` means you do not have a successful pack — copy `dist\Heimdall-Client\` (not `docs\portable-client\`).
 
 ### NETSDK1045 / only .NET 8 SDK
 
@@ -227,9 +218,9 @@ Repo-based `Install-Agent` cannot publish `net10.0` with SDK 8. Use the portable
 
 Ensure `%ProgramData%\Heimdall\` exists and the service account (LocalSystem by default) can write there. Do not commit or overwrite these DBs into the git clone.
 
-**Demo machines:** A fresh empty API database gets four `DEMO-*` placeholder hosts (`AgentVersion=seed`) once for UX. They are **not** re-added after you delete them (`SystemFlags.DemoMachinesOffered`). Launch Control → **Remove seed/demo machines** (repo layout) or `scripts\Remove-SeedDemoMachines.ps1` — stop `HeimdallApi` first if the DB is locked. Requires `sqlite3` on PATH (`winget install SQLite.SQLite`).
+**Demo machines:** A fresh empty API database gets four `DEMO-*` placeholder hosts (`AgentVersion=seed`) once for UX. They are **not** re-added after you delete them (`SystemFlags.DemoMachinesOffered`). Heimdall Setup → **Remove seed/demo machines** (repo layout) or `scripts\Remove-SeedDemoMachines.ps1` — stop `HeimdallApi` first if the DB is locked. Requires `sqlite3` on PATH (`winget install SQLite.SQLite`).
 
-**Backup API DB:** Launch Control → **Backup API database** copies `\\HOST\C$\ProgramData\Heimdall\heimdall.db` locally to `%LOCALAPPDATA%\Heimdall\backups\` (and tries `...\backups\` on the API PC). Same SMB/admin-share access as **Open remote logs**.
+**Backup API DB:** Heimdall Setup → **Backup API database** copies `\\HOST\C$\ProgramData\Heimdall\heimdall.db` locally to `%LOCALAPPDATA%\Heimdall\backups\` (and tries `...\backups\` on the API PC). Same SMB/admin-share access as **Open remote logs**.
 
 ### API key mismatch
 

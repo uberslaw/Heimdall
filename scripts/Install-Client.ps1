@@ -4,8 +4,8 @@
   Heimdall client-only install wizard (workstation collector).
 
 .DESCRIPTION
-  Single-purpose guided install for packed workstation-collector folders.
-  Launched by Install.cmd on target PCs. ASCII-only; PS 5.1; UTF-8 BOM.
+  Single-purpose guided install for the packed Heimdall-Client folder.
+  Launched by Install.cmd / Install.lnk on target PCs. ASCII-only; PS 5.1; UTF-8 BOM.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -232,6 +232,7 @@ function Get-DefaultMachineGroup {
 function Get-PayloadPath {
     $candidates = @(
         (Join-Path $script:ScriptDir "payload"),
+        (Join-Path $script:ScriptDir "..\dist\Heimdall-Client\payload"),
         (Join-Path $script:ScriptDir "..\dist\workstation-collector\payload")
     )
     foreach ($c in $candidates) {
@@ -415,7 +416,7 @@ function Invoke-StepPrerequisites {
         }
     }
     else {
-        $issues.Add("payload\Heimdall.Agent.exe not found. Copy the whole workstation-collector folder from the build PC.")
+        $issues.Add("payload\Heimdall.Agent.exe not found. Copy the whole dist\Heimdall-Client folder from the build PC.")
         Write-InstallLog "Payload: MISSING" -Level ERROR
     }
 

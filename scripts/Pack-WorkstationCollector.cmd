@@ -1,21 +1,20 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title Heimdall Pack Workstation Collector
+title Heimdall Create Client Pack
 
-REM Build a portable workstation-collector folder you can copy to other PCs.
+REM Build one portable Heimdall-Client folder to copy to other PCs.
 REM Requires: .NET 10 SDK on THIS machine. Target PCs need no SDK (self-contained).
 REM
 REM Output:
-REM   dist\workstation-collector\
-REM     Install-WorkstationCollector.cmd
-REM     README.md
-REM     FILES.md
-REM     payload\   (published Heimdall.Agent.exe + deps)
-REM   dist\heimdall-workstation-collector.zip  (optional, if tar available)
+REM   dist\Heimdall-Client\
+REM     Install.lnk          ← only entry clients need
+REM     Install.cmd / wizard scripts
+REM     payload\             (published Heimdall.Agent.exe + deps)
+REM   dist\heimdall-client.zip  (optional, if tar available)
 
 cd /d "%~dp0.."
 set "ROOT=%CD%"
-set "OUT=%ROOT%\dist\workstation-collector"
+set "OUT=%ROOT%\dist\Heimdall-Client"
 set "PAYLOAD=%OUT%\payload"
 set "PROJECT=%ROOT%\src\Heimdall.Agent\Heimdall.Agent.csproj"
 set "RID=win-x64"
@@ -24,16 +23,15 @@ set "EXITCODE=1"
 
 echo.
 echo ================================================================
-echo   Pack Heimdall Workstation Collector
+echo   Create Heimdall Client pack
 echo ================================================================
 echo.
 echo Repo:    %ROOT%
 echo Output:  %OUT%
 echo RID:     %RID% (self-contained)
 echo.
-echo NOTE: scripts\workstation-collector\ is DOCS ONLY ^(README + FILES^).
-echo       The copyable pack is created at dist\workstation-collector\
-echo       after this script succeeds ^(installer + payload\^).
+echo Copy ONLY dist\Heimdall-Client\ to target PCs after SUCCESS.
+echo docs\portable-client\ in the repo is documentation only.
 echo.
 
 where dotnet >nul 2>&1
@@ -58,6 +56,8 @@ if errorlevel 1 (
 
 echo [*] Cleaning output folder...
 if exist "%OUT%" rmdir /S /Q "%OUT%"
+REM Remove legacy pack folder name if present (avoid two confusing packs)
+if exist "%ROOT%\dist\workstation-collector" rmdir /S /Q "%ROOT%\dist\workstation-collector"
 mkdir "%PAYLOAD%" >nul 2>&1
 if errorlevel 1 (
   echo [ERROR] Could not create %PAYLOAD%
@@ -66,7 +66,7 @@ if errorlevel 1 (
 
 if not exist "%ROOT%\NuGet.config" (
   echo [WARN] NuGet.config missing at %ROOT%\NuGet.config
-  echo       Sync/pull branch cursor/workstation-collector-pack-1eb8, or add nuget.org:
+  echo       Add nuget.org:
   echo         dotnet nuget add source %NUGET_ORG% -n nuget.org
 )
 
@@ -74,7 +74,6 @@ echo [*] Registered NuGet sources ^(machine/user^):
 dotnet nuget list source
 echo.
 echo [*] Forcing restore source: %NUGET_ORG%
-echo     ^(your machine currently may only list offline VS packages^)
 
 echo [*] dotnet publish (self-contained %RID%)...
 echo     First run can take several minutes ^(download runtime packs^)...
@@ -83,9 +82,6 @@ if errorlevel 1 (
   echo [ERROR] dotnet publish failed
   echo.
   echo Common cause: no network to nuget.org, or proxy blocking it.
-  echo Your "dotnet nuget list source" showed only offline VS packages —
-  echo this script already passes --source nuget.org; you still need HTTPS
-  echo access to api.nuget.org ^(or a corporate mirror of those packages^).
   echo.
   echo Quick checks:
   echo   1. Sync repo so NuGet.config exists at %ROOT%\NuGet.config
@@ -93,10 +89,8 @@ if errorlevel 1 (
   echo        dotnet nuget add source %NUGET_ORG% -n nuget.org
   echo   3. Test:  curl.exe -I %NUGET_ORG%
   echo   4. Retry: scripts\Pack-WorkstationCollector.cmd
+  echo     or:    scripts\Heimdall-Setup.lnk -^> Create client pack
   echo.
-  echo Until pack succeeds, dist\workstation-collector\ will NOT contain
-  echo Install-WorkstationCollector.cmd or payload\ — only docs under
-  echo scripts\workstation-collector\ exist in the repo.
   goto fail
 )
 
@@ -105,28 +99,30 @@ if not exist "%PAYLOAD%\Heimdall.Agent.exe" (
   goto fail
 )
 
-echo [*] Copying installer + client wizard + docs into package...
+echo [*] Copying installers + docs into package...
 copy /Y "%ROOT%\scripts\Install.cmd" "%OUT%\Install.cmd" >nul
 copy /Y "%ROOT%\scripts\Install-Client.ps1" "%OUT%\Install-Client.ps1" >nul
 copy /Y "%ROOT%\scripts\Heimdall-VersionCompare.ps1" "%OUT%\Heimdall-VersionCompare.ps1" >nul
 copy /Y "%ROOT%\scripts\Heimdall-CollectorInstall.ps1" "%OUT%\Heimdall-CollectorInstall.ps1" >nul
 copy /Y "%ROOT%\scripts\Install-WorkstationCollector.cmd" "%OUT%\Install-WorkstationCollector.cmd" >nul
+copy /Y "%ROOT%\scripts\Heimdall-Setup.cmd" "%OUT%\Heimdall-Setup.cmd" >nul
 copy /Y "%ROOT%\scripts\Heimdall-LaunchControl.cmd" "%OUT%\Heimdall-LaunchControl.cmd" >nul
 copy /Y "%ROOT%\scripts\Heimdall-LaunchControl.ps1" "%OUT%\Heimdall-LaunchControl.ps1" >nul
-copy /Y "%ROOT%\scripts\workstation-collector\README.md" "%OUT%\README.md" >nul
-copy /Y "%ROOT%\scripts\workstation-collector\FILES.md" "%OUT%\FILES.md" >nul
+copy /Y "%ROOT%\docs\portable-client\README.md" "%OUT%\README.md" >nul
+copy /Y "%ROOT%\docs\portable-client\FILES.md" "%OUT%\FILES.md" >nul
 
 if exist "%ROOT%\assets\heimdall.ico" (
   copy /Y "%ROOT%\assets\heimdall.ico" "%OUT%\heimdall.ico" >nul
   echo [*] Creating helmet-icon shortcuts in package...
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Heimdall-LaunchControl.lnk" -TargetPath "%OUT%\Heimdall-LaunchControl.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Heimdall Launch Control"
-  if errorlevel 1 (
-    echo [WARN] Could not create Heimdall-LaunchControl.lnk — use Heimdall-LaunchControl.cmd instead.
-  )
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Install.lnk" -TargetPath "%OUT%\Install.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Heimdall Workstation Collector Install"
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Install.lnk" -TargetPath "%OUT%\Install.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Install Heimdall Agent on this PC"
   if errorlevel 1 (
     echo [WARN] Could not create Install.lnk — use Install.cmd instead.
   )
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Heimdall-Setup.lnk" -TargetPath "%OUT%\Heimdall-Setup.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Heimdall Setup (advanced)"
+  if errorlevel 1 (
+    echo [WARN] Could not create Heimdall-Setup.lnk — use Heimdall-Setup.cmd instead.
+  )
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Heimdall-LaunchControl.lnk" -TargetPath "%OUT%\Heimdall-Setup.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Heimdall Setup (advanced)"
 ) else (
   echo [WARN] assets\heimdall.ico missing — pack will not include helmet icon shortcuts.
 )
@@ -153,15 +149,17 @@ echo [*] Writing VERSION.json + PACKED.txt...
   echo RID:         %RID%
   echo SelfContained: true
   echo ProductVersion: 0.1.0
+  echo Output:      Heimdall-Client
 ) > "%OUT%\PACKED.txt"
 
-set "ZIP=%ROOT%\dist\heimdall-workstation-collector.zip"
+set "ZIP=%ROOT%\dist\heimdall-client.zip"
 if exist "%ZIP%" del /F /Q "%ZIP%" >nul 2>&1
+if exist "%ROOT%\dist\heimdall-workstation-collector.zip" del /F /Q "%ROOT%\dist\heimdall-workstation-collector.zip" >nul 2>&1
 where tar >nul 2>&1
 if not errorlevel 1 (
   echo [*] Creating zip with tar...
   pushd "%ROOT%\dist"
-  tar -a -cf "heimdall-workstation-collector.zip" "workstation-collector"
+  tar -a -cf "heimdall-client.zip" "Heimdall-Client"
   popd
   if exist "%ZIP%" (
     echo [OK] Zip: %ZIP%
@@ -174,23 +172,16 @@ if not errorlevel 1 (
 
 echo.
 echo ================================================================
-echo   SUCCESS — portable collector package ready
+echo   SUCCESS — one client folder ready
 echo ================================================================
 echo.
-echo Folder:
+echo Folder to copy:
 echo   %OUT%
 echo.
-echo Copy that folder ^(or the zip^) to each workstation, then double-click:
-echo   Install.lnk   ^(helmet icon^)  or  Install.cmd
-echo ^(guided client install: prerequisites, API URL, test, install, verify^)
+echo On each client PC, double-click:
+echo   Install.lnk
 echo.
-echo Advanced / build PC: Heimdall-LaunchControl.lnk ^(helmet icon^)  or  Heimdall-LaunchControl.cmd
-echo.
-echo Or elevated scripted install:
-echo   Install-WorkstationCollector.cmd -ApiUrl http://YOUR-API-HOST:5080 -MachineGroup SOE
-echo.
-echo Target PCs do NOT need the Heimdall repo or .NET SDK
-echo ^(self-contained win-x64 payload^).
+echo Pack again only when the agent changes.
 echo.
 set "EXITCODE=0"
 goto end

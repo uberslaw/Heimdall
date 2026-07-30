@@ -1,16 +1,17 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  Heimdall Launch Control - guided setup for API, pack, and workstation collector.
+  Heimdall Setup - guided API install, client pack, and agent install.
 
 .DESCRIPTION
   Single entry point for install/configure actions. Shows steps, collects input,
   logs everything under %ProgramData%\Heimdall\logs\, and verifies at the end.
-  Prefer scripts\Heimdall-LaunchControl.lnk (helmet icon) or scripts\Heimdall-LaunchControl.cmd when double-clicking from Explorer.
+  Prefer scripts\Heimdall-Setup.lnk (helmet icon) or scripts\Heimdall-Setup.cmd.
+  Heimdall-LaunchControl.* are compatibility wrappers to this UI.
 
 .NOTES
-  Works from a full repo clone OR from a packed dist\workstation-collector folder
-  (collector install + verify + logs only when payload\ is present).
+  Works from a full repo clone OR from a packed dist\Heimdall-Client folder
+  (agent install + verify + logs only when payload\ is present).
 #>
 param(
     [ValidateSet("Menu", "InstallApi", "PackCollector", "InstallCollector", "ClientCheck", "OpenLogs", "OpenRemoteLogs", "BackupApiDatabase", "RemoveSeedDemos", "Diagnostics")]
@@ -76,7 +77,7 @@ function Initialize-HeimdallLogging {
     $header = @"
 
 ================================================================
-  Heimdall Launch Control
+  Heimdall Setup
 ================================================================
 Log: $($script:LogPath)
 User: $env:USERNAME | Machine: $env:COMPUTERNAME
@@ -209,10 +210,10 @@ function Invoke-LaunchControlAction {
         & $Action
     }
     catch {
-        Write-HeimdallLog "Launch Control action failed: $($_.Exception.Message)" -Level ERROR
+        Write-HeimdallLog "Setup action failed: $($_.Exception.Message)" -Level ERROR
         [System.Windows.Forms.MessageBox]::Show(
             "An error occurred:`r`n$($_.Exception.Message)`r`n`r`nLog: $($script:LogPath)",
-            "Heimdall Launch Control",
+            "Heimdall Setup",
             "OK",
             "Error") | Out-Null
     }
@@ -235,7 +236,7 @@ function Request-Elevation {
     param([string]$Reason)
     Write-HeimdallLog $Reason -Level ASK
     $r = [System.Windows.Forms.MessageBox]::Show(
-        "$Reason`r`n`r`nRelaunch Launch Control as Administrator now?",
+        "$Reason`r`n`r`nRelaunch Heimdall Setup as Administrator now?",
         "Administrator required",
         [System.Windows.Forms.MessageBoxButtons]::YesNo,
         [System.Windows.Forms.MessageBoxIcon]::Warning)
@@ -264,6 +265,8 @@ function Read-LocalPackVersion {
         (Join-Path $script:ScriptDir "PACKED.txt")
     )
     if ($script:RepoRoot) {
+        $candidates += (Join-Path $script:RepoRoot "dist\Heimdall-Client\VERSION.json")
+        $candidates += (Join-Path $script:RepoRoot "dist\Heimdall-Client\PACKED.txt")
         $candidates += (Join-Path $script:RepoRoot "dist\workstation-collector\VERSION.json")
         $candidates += (Join-Path $script:RepoRoot "dist\workstation-collector\PACKED.txt")
     }
@@ -1371,7 +1374,7 @@ function Invoke-RemoveSeedDemoMachines {
         }
         Write-HeimdallLog "Seed/demo machine removal finished." -Level OK
         [System.Windows.Forms.MessageBox]::Show(
-            "Seed/demo machines removed.`r`n`r`nSee Launch Control log for hostnames deleted.`r`n`r`nLog: $($script:LogPath)",
+            "Seed/demo machines removed.`r`n`r`nSee Setup log for hostnames deleted.`r`n`r`nLog: $($script:LogPath)",
             "Removal complete",
             "OK",
             "Information") | Out-Null
@@ -1388,13 +1391,22 @@ function Invoke-RemoveSeedDemoMachines {
     }
 }
 
-function Get-PayloadPath {
-    $candidates = @(
-        (Join-Path $script:ScriptDir "payload"),
-        (Join-Path $script:ScriptDir "..\dist\workstation-collector\payload")
-    )
+function Get-ClientPackRootCandidates {
+    $list = New-Object System.Collections.Generic.List[string]
     if ($script:RepoRoot) {
-        $candidates += (Join-Path $script:RepoRoot "dist\workstation-collector\payload")
+        $list.Add((Join-Path $script:RepoRoot "dist\Heimdall-Client"))
+        $list.Add((Join-Path $script:RepoRoot "dist\workstation-collector")) # legacy pack name
+    }
+    $list.Add((Join-Path $script:ScriptDir "..\dist\Heimdall-Client"))
+    $list.Add((Join-Path $script:ScriptDir "..\dist\workstation-collector"))
+    return $list
+}
+
+function Get-PayloadPath {
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $candidates.Add((Join-Path $script:ScriptDir "payload"))
+    foreach ($root in Get-ClientPackRootCandidates) {
+        $candidates.Add((Join-Path $root "payload"))
     }
     foreach ($c in $candidates) {
         $exe = Join-Path $c "Heimdall.Agent.exe"
@@ -1404,16 +1416,28 @@ function Get-PayloadPath {
 }
 
 function Get-InstallerCmdPath {
-    $names = @(
-        (Join-Path $script:ScriptDir "Install-WorkstationCollector.cmd"),
-        (Join-Path $script:ScriptDir "Install-WorkstationCollector.cmd")
-    )
+    $names = New-Object System.Collections.Generic.List[string]
+    $names.Add((Join-Path $script:ScriptDir "Install-WorkstationCollector.cmd"))
     if ($script:RepoRoot) {
-        $names += (Join-Path $script:RepoRoot "scripts\Install-WorkstationCollector.cmd")
-        $names += (Join-Path $script:RepoRoot "dist\workstation-collector\Install-WorkstationCollector.cmd")
+        $names.Add((Join-Path $script:RepoRoot "scripts\Install-WorkstationCollector.cmd"))
+    }
+    foreach ($root in Get-ClientPackRootCandidates) {
+        $names.Add((Join-Path $root "Install-WorkstationCollector.cmd"))
     }
     foreach ($n in $names) {
         if (Test-Path $n) { return (Resolve-Path $n).Path }
+    }
+    return $null
+}
+
+function Get-ClientPackFolder {
+    $payload = Get-PayloadPath
+    if ($payload) {
+        return (Split-Path -Parent $payload)
+    }
+    if ($script:RepoRoot) {
+        $preferred = Join-Path $script:RepoRoot "dist\Heimdall-Client"
+        if (Test-Path $preferred) { return $preferred }
     }
     return $null
 }
@@ -1482,7 +1506,7 @@ function Invoke-PrerequisiteCheck {
                 if (-not $pv) { $pv = $script:ProductVersionExpected }
                 Write-HeimdallLog "Local pack productVersion: $pv" -Level INFO
                 if ($pv -and $pv -ne $script:ProductVersionExpected) {
-                    $notes.Add("Pack productVersion ($pv) differs from Launch Control expected ($($script:ProductVersionExpected)). Continue only if intentional.")
+                    $notes.Add("Pack productVersion ($pv) differs from Setup expected ($($script:ProductVersionExpected)). Continue only if intentional.")
                     Write-HeimdallLog $notes[-1] -Level WARN
                 }
             }
@@ -1492,7 +1516,7 @@ function Invoke-PrerequisiteCheck {
             }
         }
         else {
-            $issues.Add("payload\Heimdall.Agent.exe not found. On a build PC run Pack Workstation Collector, then copy the whole dist\workstation-collector folder here.")
+            $issues.Add("payload\Heimdall.Agent.exe not found. On a build PC open Heimdall Setup -> Create client pack, then copy the whole dist\Heimdall-Client folder here.")
             Write-HeimdallLog "Payload: MISSING" -Level ERROR
         }
     }
@@ -1574,37 +1598,41 @@ function Start-GuidedApiInstall {
 }
 
 function Start-GuidedPack {
+    param(
+        [switch]$OfferInstallAfter
+    )
+
     Set-UiSteps @(
         "[ ] 1. Prerequisites (.NET 10 SDK, repo, NuGet)",
-        "[ ] 2. Publish self-contained payload",
-        "[ ] 3. Write VERSION.json + copy installer",
-        "[ ] 4. Confirm dist\workstation-collector"
+        "[ ] 2. Publish self-contained agent",
+        "[ ] 3. Assemble Heimdall-Client folder",
+        "[ ] 4. Confirm dist\Heimdall-Client"
     )
-    Set-UiStatus "Guided: Pack collector"
+    Set-UiStatus "Guided: Create client pack"
 
     $pre = Invoke-PrerequisiteCheck -Scenario Pack
     if (-not $pre.Ok) {
         Update-UiStep 0 "[X] 1. Prerequisites FAILED"
         [System.Windows.Forms.MessageBox]::Show(
             ("Prerequisites failed:`r`n`r`n- " + ($pre.Issues -join "`r`n- ")),
-            "Cannot pack", "OK", "Error") | Out-Null
-        return
+            "Cannot create client pack", "OK", "Error") | Out-Null
+        return $false
     }
     Update-UiStep 0 "[OK] 1. Prerequisites"
 
     $cmd = Join-Path $script:ScriptDir "Pack-WorkstationCollector.cmd"
     if (-not (Test-Path $cmd)) {
         Write-HeimdallLog "Pack-WorkstationCollector.cmd missing" -Level ERROR
-        return
+        return $false
     }
 
-    Write-HeimdallLog "Running pack (console window; no pause when launched from Launch Control)..." -Level STEP
+    Write-HeimdallLog "Running pack (console window; no pause when launched from Setup)..." -Level STEP
     Update-UiStep 1 "[...] 2. Publishing..."
     $prevNoPause = $env:HEIMDALL_NOPAUSE
     $env:HEIMDALL_NOPAUSE = "1"
     try {
         $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$cmd`"" -WorkingDirectory $script:ScriptDir -PassThru
-        $exit = Wait-ProcessWithUiPump -Process $p -StatusText "Packing collector (watch console window)..."
+        $exit = Wait-ProcessWithUiPump -Process $p -StatusText "Creating client pack (watch console window)..."
         Write-HeimdallLog "Pack process exit: $exit" -Level $(if ($exit -eq 0) { "OK" } else { "ERROR" })
     }
     finally {
@@ -1616,24 +1644,38 @@ function Start-GuidedPack {
         }
     }
 
-    $out = Join-Path $script:RepoRoot "dist\workstation-collector"
+    $out = Join-Path $script:RepoRoot "dist\Heimdall-Client"
     $exe = Join-Path $out "payload\Heimdall.Agent.exe"
     $verFile = Join-Path $out "VERSION.json"
     if (Test-Path $exe) {
-        Update-UiStep 1 "[OK] 2. Payload published"
+        Update-UiStep 1 "[OK] 2. Agent published"
         if (Test-Path $verFile) {
-            Update-UiStep 2 "[OK] 3. VERSION.json present"
+            Update-UiStep 2 "[OK] 3. Heimdall-Client assembled"
             Write-HeimdallLog (Get-Content -Raw $verFile) -Level INFO
         }
         else {
             Update-UiStep 2 "[!] 3. VERSION.json missing (pack script may be outdated)"
         }
         Update-UiStep 3 "[OK] 4. Pack ready: $out"
-        Set-UiStatus "Pack ready"
-        [System.Windows.Forms.MessageBox]::Show(
-            "Portable pack ready.`r`n`r`n$out`r`n`r`nCopy that whole folder to target PCs, then double-click Install.cmd.`r`n`r`nLog: $($script:LogPath)",
-            "Pack success", "OK", "Information") | Out-Null
+        Set-UiStatus "Client pack ready"
+        $installNow = [System.Windows.Forms.DialogResult]::No
+        if ($OfferInstallAfter) {
+            $installNow = [System.Windows.Forms.MessageBox]::Show(
+                "Client pack ready.`r`n`r`n$out`r`n`r`nCopy that ONE folder to other PCs, then run Install.lnk there.`r`n`r`nInstall the agent on THIS PC now?",
+                "Client pack ready",
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Question)
+        }
+        else {
+            [System.Windows.Forms.MessageBox]::Show(
+                "Client pack ready.`r`n`r`n$out`r`n`r`nCopy that ONE folder to other PCs, then double-click Install.lnk.`r`n`r`nLog: $($script:LogPath)",
+                "Client pack ready", "OK", "Information") | Out-Null
+        }
         Start-Process explorer.exe $out
+        if ($installNow -eq [System.Windows.Forms.DialogResult]::Yes) {
+            Start-GuidedCollectorInstall
+        }
+        return $true
     }
     else {
         Update-UiStep 1 "[X] 2. Payload missing after pack"
@@ -1642,28 +1684,60 @@ function Start-GuidedPack {
         [System.Windows.Forms.MessageBox]::Show(
             "Pack did not produce payload\Heimdall.Agent.exe.`r`nUsually: missing .NET 10 SDK or NuGet.org blocked.`r`n`r`nLog: $($script:LogPath)",
             "Pack failed", "OK", "Error") | Out-Null
+        return $false
     }
 }
 
 function Start-GuidedCollectorInstall {
     Set-UiSteps @(
-        "[ ] 1. Prerequisites (admin + payload)",
+        "[ ] 1. Prerequisites (admin + client pack)",
         "[ ] 2. Enter API URL / key / group",
         "[ ] 3. Probe API health + version",
         "[ ] 4. Install HeimdallAgent service",
         "[ ] 5. Verify service + API auth"
     )
-    Set-UiStatus "Guided: Install collector"
+    Set-UiStatus "Guided: Install agent on this PC"
+
+    # Packed folder: prefer the dedicated Install.cmd wizard (one install UX)
+    if ($script:IsPackedLayout) {
+        $installCmd = Join-Path $script:ScriptDir "Install.cmd"
+        if (Test-Path -LiteralPath $installCmd) {
+            Write-HeimdallLog "Opening Install.cmd guided wizard..." -Level STEP
+            Set-UiStatus "Opening Install wizard..."
+            Start-Process -FilePath $installCmd -WorkingDirectory $script:ScriptDir
+            Set-UiSteps @(
+                "Opened Install.lnk / Install.cmd wizard.",
+                "Complete the prompts in that window.",
+                "Then use Client health check here if needed."
+            )
+            return
+        }
+    }
 
     $pre = Invoke-PrerequisiteCheck -Scenario Collector
     if (-not $pre.Ok) {
+        $missingPayload = ($pre.Issues | Where-Object { $_ -match "payload\\" }).Count -gt 0
+        if ($missingPayload -and -not $script:IsPackedLayout -and $script:RepoRoot) {
+            $r = [System.Windows.Forms.MessageBox]::Show(
+                "No client pack found yet (dist\Heimdall-Client\payload).`r`n`r`nCreate the client pack now, then continue installing on this PC?",
+                "Client pack required",
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Question)
+            if ($r -eq [System.Windows.Forms.DialogResult]::Yes) {
+                $packed = Start-GuidedPack -OfferInstallAfter:$false
+                if ($packed) {
+                    Start-GuidedCollectorInstall
+                }
+                return
+            }
+        }
         Update-UiStep 0 "[X] 1. Prerequisites FAILED"
         $msg = "Prerequisites failed:`r`n`r`n- " + ($pre.Issues -join "`r`n- ")
         if ($pre.Notes.Count) { $msg += "`r`n`r`nNotes:`r`n- " + ($pre.Notes -join "`r`n- ") }
         $msg += "`r`n`r`nLog:`r`n$($script:LogPath)"
-        [System.Windows.Forms.MessageBox]::Show($msg, "Cannot install collector", "OK", "Error") | Out-Null
+        [System.Windows.Forms.MessageBox]::Show($msg, "Cannot install agent", "OK", "Error") | Out-Null
         if (-not (Test-IsAdministrator)) {
-            if (Request-Elevation -Reason "Collector install needs Administrator.") { return }
+            if (Request-Elevation -Reason "Agent install needs Administrator.") { return }
         }
         return
     }
@@ -1672,7 +1746,7 @@ function Start-GuidedCollectorInstall {
     $defaultUrl = Get-DefaultCollectorApiUrl
     $defaultGroup = Get-DefaultCollectorMachineGroup
     # Prefer non-localhost hint when this is clearly a remote target
-    $inputs = Show-InputForm -Title "Collector connection settings" `
+    $inputs = Show-InputForm -Title "Agent connection settings" `
         -Prompt "Enter the Heimdall API this PC should report to.`r`nDo NOT use localhost unless the API runs on THIS machine.`r`nUse the server hostname or IP (e.g. http://YOUR-SERVER:5080)." `
         -Fields ([ordered]@{
             ApiUrl       = $defaultUrl
@@ -1933,7 +2007,7 @@ function Show-LaunchControl {
     Initialize-HeimdallLogging | Out-Null
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Heimdall Launch Control"
+    $form.Text = "Heimdall Setup"
     $form.Width = 980
     $form.Height = 640
     $form.StartPosition = "CenterScreen"
@@ -1941,7 +2015,7 @@ function Show-LaunchControl {
     $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 
     $header = New-Object System.Windows.Forms.Label
-    $header.Text = "Heimdall Launch Control"
+    $header.Text = "Heimdall Setup"
     $header.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 14)
     $header.Left = 16
     $header.Top = 12
@@ -1950,7 +2024,7 @@ function Show-LaunchControl {
     $form.Controls.Add($header)
 
     $sub = New-Object System.Windows.Forms.Label
-    $sub.Text = "Guided install / pack / verify. All actions log to %ProgramData%\Heimdall\logs\"
+    $sub.Text = "Choose one action. Each step prompts you. Logs: %ProgramData%\Heimdall\logs\"
     $sub.Left = 16
     $sub.Top = 42
     $sub.Width = 700
@@ -1960,7 +2034,7 @@ function Show-LaunchControl {
     $btnPanel = New-Object System.Windows.Forms.Panel
     $btnPanel.Left = 12
     $btnPanel.Top = 72
-    $btnPanel.Width = 260
+    $btnPanel.Width = 280
     $btnPanel.Height = 544
     $form.Height = 620
     $form.Controls.Add($btnPanel)
@@ -1970,7 +2044,7 @@ function Show-LaunchControl {
         $b.Text = $text
         $b.Left = 0
         $b.Top = $top
-        $b.Width = 248
+        $b.Width = 268
         $b.Height = 40
         $b.Enabled = $enabled
         $b.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
@@ -1980,39 +2054,46 @@ function Show-LaunchControl {
     }
 
     $repoActions = -not $script:IsPackedLayout
-    $btnApi = New-ActionButton "1. Install API (this PC)" 0 $repoActions
-    $btnPack = New-ActionButton "2. Pack collector (build PC)" 48 $repoActions
-    $btnAgent = New-ActionButton "3. Install collector (this PC)" 96 $true
-    $btnClientCheck = New-ActionButton "4. Client health check" 144 $true
-    $btnLogs = New-ActionButton "5. Open logs folder" 192 $true
-    $btnRemoteLogs = New-ActionButton "6. Open remote logs folder..." 240 $true
-    $btnBackupDb = New-ActionButton "7. Backup API database..." 288 $true
-    $btnRemoveDemos = New-ActionButton "8. Remove seed/demo machines..." 336 $repoActions
-    $btnDiag = New-ActionButton "9. Collect diagnostics" 384 $repoActions
-    $btnDash = New-ActionButton "10. Open dashboard..." 432 $true
-    $btnPre = New-ActionButton "Check prerequisites only" 480 $true
+    if ($script:IsPackedLayout) {
+        $btnAgent = New-ActionButton "1. Install agent on this PC" 0 $true
+        $btnClientCheck = New-ActionButton "2. Client health check" 48 $true
+        $btnLogs = New-ActionButton "3. Open logs folder" 96 $true
+        $btnRemoteLogs = New-ActionButton "4. Open remote logs folder..." 144 $true
+        $btnBackupDb = New-ActionButton "5. Backup API database..." 192 $true
+        $btnDash = New-ActionButton "6. Open dashboard..." 240 $true
+        $btnPre = New-ActionButton "Check prerequisites" 288 $true
+        $btnApi = $null
+        $btnPack = $null
+        $btnRemoveDemos = $null
+        $btnDiag = $null
+    }
+    else {
+        $btnApi = New-ActionButton "1. Install API on this PC" 0 $true
+        $btnPack = New-ActionButton "2. Create client pack" 48 $true
+        $btnAgent = New-ActionButton "3. Install agent on this PC" 96 $true
+        $btnClientCheck = New-ActionButton "4. Client health check" 144 $true
+        $btnLogs = New-ActionButton "5. Open logs folder" 192 $true
+        $btnRemoteLogs = New-ActionButton "6. Open remote logs folder..." 240 $true
+        $btnBackupDb = New-ActionButton "7. Backup API database..." 288 $true
+        $btnRemoveDemos = New-ActionButton "8. Remove seed/demo machines..." 336 $true
+        $btnDiag = New-ActionButton "9. Collect diagnostics" 384 $true
+        $btnDash = New-ActionButton "10. Open dashboard..." 432 $true
+        $btnPre = New-ActionButton "Check prerequisites" 480 $true
+    }
 
-    Register-LaunchControlActionButton -Button $btnApi
-    Register-LaunchControlActionButton -Button $btnPack
-    Register-LaunchControlActionButton -Button $btnAgent
-    Register-LaunchControlActionButton -Button $btnClientCheck
-    Register-LaunchControlActionButton -Button $btnLogs
-    Register-LaunchControlActionButton -Button $btnRemoteLogs
-    Register-LaunchControlActionButton -Button $btnBackupDb
-    Register-LaunchControlActionButton -Button $btnRemoveDemos
-    Register-LaunchControlActionButton -Button $btnDiag
-    Register-LaunchControlActionButton -Button $btnDash
-    Register-LaunchControlActionButton -Button $btnPre
+    foreach ($btn in @($btnApi, $btnPack, $btnAgent, $btnClientCheck, $btnLogs, $btnRemoteLogs, $btnBackupDb, $btnRemoveDemos, $btnDiag, $btnDash, $btnPre)) {
+        if ($btn) { Register-LaunchControlActionButton -Button $btn }
+    }
 
     $stepsLabel = New-Object System.Windows.Forms.Label
-    $stepsLabel.Text = "Steps"
-    $stepsLabel.Left = 290
+    $stepsLabel.Text = "What to do"
+    $stepsLabel.Left = 310
     $stepsLabel.Top = 72
     $stepsLabel.Width = 200
     $form.Controls.Add($stepsLabel)
 
     $steps = New-Object System.Windows.Forms.ListBox
-    $steps.Left = 290
+    $steps.Left = 310
     $steps.Top = 96
     $steps.Width = 320
     $steps.Height = 160
@@ -2021,15 +2102,15 @@ function Show-LaunchControl {
 
     $logLabel = New-Object System.Windows.Forms.Label
     $logLabel.Text = "Progress log (also saved to disk)"
-    $logLabel.Left = 290
+    $logLabel.Left = 310
     $logLabel.Top = 268
     $logLabel.Width = 400
     $form.Controls.Add($logLabel)
 
     $logBox = New-Object System.Windows.Forms.RichTextBox
-    $logBox.Left = 290
+    $logBox.Left = 310
     $logBox.Top = 292
-    $logBox.Width = 650
+    $logBox.Width = 630
     $logBox.Height = 250
     $logBox.ReadOnly = $true
     $logBox.Font = New-Object System.Drawing.Font("Consolas", 9)
@@ -2048,9 +2129,9 @@ function Show-LaunchControl {
 
     $logPathLbl = New-Object System.Windows.Forms.LinkLabel
     $logPathLbl.Text = $script:LogPath
-    $logPathLbl.Left = 290
+    $logPathLbl.Left = 310
     $logPathLbl.Top = 548
-    $logPathLbl.Width = 650
+    $logPathLbl.Width = 630
     $logPathLbl.Add_LinkClicked({
         if ($script:LogPath -and (Test-Path $script:LogPath)) {
             Start-Process notepad.exe $script:LogPath
@@ -2060,42 +2141,42 @@ function Show-LaunchControl {
 
     # Layout resize
     $form.Add_Resize({
-        $logBox.Width = $form.ClientSize.Width - 310
+        $logBox.Width = $form.ClientSize.Width - 330
         $logBox.Height = [Math]::Max(120, $form.ClientSize.Height - 360)
         $status.Top = $form.ClientSize.Height - 36
         $logPathLbl.Top = $form.ClientSize.Height - 48
-        $logPathLbl.Width = $form.ClientSize.Width - 310
+        $logPathLbl.Width = $form.ClientSize.Width - 330
     })
 
-    Write-HeimdallLog "Launch Control UI ready. PackedLayout=$($script:IsPackedLayout) Admin=$(Test-IsAdministrator)" -Level OK
+    Write-HeimdallLog "Setup UI ready. PackedLayout=$($script:IsPackedLayout) Admin=$(Test-IsAdministrator)" -Level OK
     if ($script:IsPackedLayout) {
-        Write-HeimdallLog "Packed folder mode: use Install.cmd on target PCs. Launch Control available for advanced actions." -Level INFO
+        Write-HeimdallLog "Client pack mode: use Install agent (opens Install.lnk wizard)." -Level INFO
         Set-UiSteps @(
-            "This folder is a portable pack.",
-            "On target PCs: double-click Install.cmd",
-            "Advanced: Install collector here",
-            "Need API first on your server."
+            "This is the Heimdall-Client pack.",
+            "Click: Install agent on this PC",
+            "(Same as double-clicking Install.lnk)",
+            "API must already be running on your server."
         )
     }
     else {
         Set-UiSteps @(
             "Typical order:",
-            "1) Install API on server",
-            "2) Pack collector on build PC",
-            "3) Copy pack to targets",
-            "4) Install collector on each PC"
+            "1) Install API on this PC (server)",
+            "2) Create client pack (once)",
+            "3) Copy dist\Heimdall-Client to PCs",
+            "4) On each PC: Install.lnk"
         )
     }
 
-    $btnApi.Add_Click({ Invoke-LaunchControlAction { Start-GuidedApiInstall } })
-    $btnPack.Add_Click({ Invoke-LaunchControlAction { Start-GuidedPack } })
+    if ($btnApi) { $btnApi.Add_Click({ Invoke-LaunchControlAction { Start-GuidedApiInstall } }) }
+    if ($btnPack) { $btnPack.Add_Click({ Invoke-LaunchControlAction { Start-GuidedPack -OfferInstallAfter } }) }
     $btnAgent.Add_Click({ Invoke-LaunchControlAction { Start-GuidedCollectorInstall } })
     $btnClientCheck.Add_Click({ Invoke-LaunchControlAction { Start-ClientHealthCheck } })
     $btnLogs.Add_Click({ Open-LogsFolder })
     $btnRemoteLogs.Add_Click({ Open-RemoteLogsFolder })
     $btnBackupDb.Add_Click({ Invoke-LaunchControlAction { Backup-ApiDatabase } })
-    $btnRemoveDemos.Add_Click({ Invoke-LaunchControlAction { Invoke-RemoveSeedDemoMachines } })
-    $btnDiag.Add_Click({ Invoke-LaunchControlAction { Start-Diagnostics } })
+    if ($btnRemoveDemos) { $btnRemoveDemos.Add_Click({ Invoke-LaunchControlAction { Invoke-RemoveSeedDemoMachines } }) }
+    if ($btnDiag) { $btnDiag.Add_Click({ Invoke-LaunchControlAction { Start-Diagnostics } }) }
     $btnDash.Add_Click({
         $u = Show-InputForm -Title "Open dashboard" -Prompt "API base URL" -Fields ([ordered]@{ ApiUrl = "http://localhost:5080" }) -AcceptLabel "Open"
         if ($u -and $u.ApiUrl) { Start-Process $u.ApiUrl.TrimEnd("/") }
@@ -2104,7 +2185,7 @@ function Show-LaunchControl {
         Invoke-LaunchControlAction {
             $scenario = if ($script:IsPackedLayout) { "Collector" } else {
                 $choice = [System.Windows.Forms.MessageBox]::Show(
-                    "Yes = Collector prerequisites`r`nNo = Pack/API prerequisites",
+                    "Yes = Agent install prerequisites`r`nNo = Create-pack / API prerequisites",
                     "Which check?",
                     [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
                     [System.Windows.Forms.MessageBoxIcon]::Question)
@@ -2121,7 +2202,7 @@ function Show-LaunchControl {
     # Direct mode shortcuts
     switch ($Mode) {
         "InstallApi"       { $form.Add_Shown({ Start-GuidedApiInstall }) }
-        "PackCollector"    { $form.Add_Shown({ Start-GuidedPack }) }
+        "PackCollector"    { $form.Add_Shown({ Start-GuidedPack -OfferInstallAfter }) }
         "InstallCollector" { $form.Add_Shown({ Start-GuidedCollectorInstall }) }
         "ClientCheck"      { $form.Add_Shown({ Start-ClientHealthCheck }) }
         "OpenLogs"         { $form.Add_Shown({ Open-LogsFolder }) }
@@ -2132,7 +2213,7 @@ function Show-LaunchControl {
     }
 
     [void]$form.ShowDialog()
-    Write-HeimdallLog "Launch Control closed." -Level INFO
+    Write-HeimdallLog "Setup closed." -Level INFO
 }
 
 try {
@@ -2145,8 +2226,8 @@ catch {
         Add-Content -Path $script:LogPath -Value $_.ScriptStackTrace -Encoding UTF8
     }
     [System.Windows.Forms.MessageBox]::Show(
-        "Launch Control crashed:`r`n$msg`r`n`r`nLog: $($script:LogPath)",
-        "Heimdall Launch Control",
+        "Heimdall Setup crashed:`r`n$msg`r`n`r`nLog: $($script:LogPath)",
+        "Heimdall Setup",
         "OK",
         "Error") | Out-Null
     Write-Host "ERROR: $msg" -ForegroundColor Red

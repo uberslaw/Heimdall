@@ -12,31 +12,28 @@
 |------|--------|
 | **Branch** | `cursor/workstation-collector-pack-1eb8` (not merged to `main` yet) |
 | **PR** | https://github.com/uberslaw/Heimdall/pull/1 — portable workstation collector pack |
-| **Goal** | Pack a self-contained agent once → copy folder to other PCs → install vanilla SOE collectors without PowerShell / SDK / full repo on targets |
-| **User blocker** | Pack PC NuGet only had **Visual Studio Offline Packages** (no nuget.org). First self-contained publish was slow / may still be running or failed. Confirm `dist\workstation-collector\payload\Heimdall.Agent.exe` exists. |
+| **Goal** | One guided Setup UI; one `dist\Heimdall-Client\` folder to copy; clients run `Install.lnk` only |
+| **User blocker** | Pack PC NuGet only had **Visual Studio Offline Packages** (no nuget.org). Confirm `dist\Heimdall-Client\payload\Heimdall.Agent.exe` exists after pack. |
 
 ### What shipped on this branch
 
-- `scripts/Heimdall-LaunchControl.lnk` (+ `.cmd` / `.ps1`) — guided WinForms setup; **prefer `.lnk`** for helmet icon in Explorer
-- `assets/heimdall.ico` — helmet icon copied into pack; shortcuts created at pack time
-- `scripts/Pack-WorkstationCollector.cmd` — publishes self-contained `win-x64` agent into `dist/workstation-collector/` (includes Launch Control + `VERSION.json` + icon shortcuts)
-- `scripts/Install-WorkstationCollector.cmd` — **CMD-only** elevated installer (self-elevate + pause; opens Launch Control when double-clicked with no args)
-- `scripts/workstation-collector/README.md` + `FILES.md` — files + dependencies
+- `scripts/Heimdall-Setup.lnk` (+ `.cmd`) — **primary** guided Setup UI (API / create client pack / install agent)
+- `scripts/Heimdall-LaunchControl.*` — compat wrappers → same Setup UI
+- `scripts/Pack-WorkstationCollector.cmd` — publishes self-contained `win-x64` agent into `dist/Heimdall-Client/`
+- `scripts/Install.lnk` / `Install.cmd` — **only** entry clients need (inside the pack)
+- `docs/portable-client/` — docs only (copied into pack as README/FILES)
 - `Directory.Build.props` — shared `productVersion` 0.1.0; `/api/health` returns it for pack matching
 - Repo-root `NuGet.config` → nuget.org
 - Pack / `Install-Agent` publish now **force** `--source https://api.nuget.org/v3/index.json`
-- Fixed Windows PowerShell 5.1 parse error: UTF-8 em-dashes without BOM → ASCII dashes + UTF-8 BOM on `scripts/*.ps1`
 
-### Folder confusion (user hit this)
+### Folder model (simplified)
 
 | Path | What it is |
 |------|------------|
-| `scripts\workstation-collector\` | **Docs only** in git (`README.md` + `FILES.md`) — **not** installable |
-| `dist\workstation-collector\` | Created by a **successful** pack — copy **this** to other PCs (`Install-WorkstationCollector.cmd` + `payload\`) |
+| `docs\portable-client\` | Docs only in git — **not** installable |
+| `dist\Heimdall-Client\` | **The one folder** to copy after pack (`Install.lnk` + `payload\`) |
 
-If a folder only has README/FILES and no `payload\`, pack has not succeeded.
-
-**Why pack before client install:** installers never compile — they only deploy `payload\Heimdall.Agent.exe` (self-contained) so vanilla SOE boxes need no SDK. See `INSTALL.md` § “Why packing is required before client install”.
+“Workstation collector” and “client install” are the same pack — not two folders to combine.
 
 ### NuGet on the pack PC (critical)
 
@@ -54,13 +51,13 @@ cd C:\Heimdall   # or Cursor\Heimdall — must be on branch cursor/workstation-c
 dotnet nuget add source https://api.nuget.org/v3/index.json -n nuget.org
 dotnet nuget list source
 curl.exe -I https://api.nuget.org/v3/index.json
-.\scripts\Pack-WorkstationCollector.cmd
+.\scripts\Heimdall-Setup.lnk   # Create client pack
+# or: .\scripts\Pack-WorkstationCollector.cmd
 ```
 
 - First pack can take **many minutes** (download win-x64 runtime packs). OK if console still prints / `dotnet` is active in Task Manager.
 - If `curl` to nuget.org fails → corporate proxy/firewall; need network allowlist or internal NuGet mirror.
-- After SUCCESS, copy `dist\workstation-collector\` (or zip) to SOE PCs and run elevated:
-  `Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE`
+- After SUCCESS, copy `dist\Heimdall-Client\` (or zip) to SOE PCs and run `Install.lnk`
 
 ### Install-Agent.ps1 parse error (fixed on branch)
 
@@ -128,8 +125,8 @@ src/Heimdall.Shared             DTOs / contracts / hostname serial + ops. helper
 scripts/                        Installers, diagnostics, SOE inspect, repair tools
 scripts/Pack-WorkstationCollector.cmd
 scripts/Install-WorkstationCollector.cmd
-scripts/workstation-collector/  Docs only (README + FILES) — not the payload
-dist/workstation-collector/     Created by pack (gitignored) — copy to SOE PCs
+docs/portable-client/           Docs only — not the payload
+dist/Heimdall-Client/           Created by pack (gitignored) — copy to SOE PCs
 NuGet.config                    nuget.org (needed for pack/publish)
 docs/BACKLOG.md                 Parked product ideas (Flight Recorder, etc.)
 INSTALL.md                      Full install / verify / troubleshoot guide
@@ -138,7 +135,7 @@ README.md                       Product overview + quick start
 Heimdall.slnx                   Solution
 ```
 
-Read first on a new machine: **this file**, then **[INSTALL.md](INSTALL.md)**, then **[docs/BACKLOG.md](docs/BACKLOG.md)**, then `scripts/workstation-collector/README.md` if deploying agents to other PCs.
+Read first on a new machine: **this file**, then **[INSTALL.md](INSTALL.md)**, then **[docs/BACKLOG.md](docs/BACKLOG.md)**, then `docs/portable-client/README.md` if deploying agents to other PCs.
 
 ---
 
@@ -168,19 +165,20 @@ scripts\Install-Api.cmd
 scripts\Install-Agent.cmd
 ```
 
-### Other workstations / vanilla SOE (portable collector)
+### Other workstations / vanilla SOE (portable client)
 
 ```text
 # Build PC (.NET 10 SDK + NuGet access to nuget.org or mirror):
-scripts\Pack-WorkstationCollector.cmd
+scripts\Heimdall-Setup.lnk   # Create client pack
+# or: scripts\Pack-WorkstationCollector.cmd
 
-# Copy dist\workstation-collector\ (or zip) to each PC, then elevated:
-Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
+# Copy dist\Heimdall-Client\ (or zip) to each PC, then:
+Install.lnk
 ```
 
-- Installer on target is **CMD only** (no PowerShell).
+- Guided install on target via **Install.lnk** (wizard).
 - Payload is **self-contained win-x64** — no SDK/repo on target.
-- Files + deps: `scripts\workstation-collector\README.md` and `FILES.md`.
+- Files + deps: `docs\portable-client\README.md` and `FILES.md`.
 
 - Install / service logs: `%ProgramData%\Heimdall\logs\`
 - SQLite DB (typical): `%ProgramData%\Heimdall\heimdall.db`
@@ -252,7 +250,7 @@ Dashboard nav (on `main`): Machines | Sessions | Applications | App lists | Cost
 | Topic | Detail |
 |-------|--------|
 | **NuGet offline-only** | Pack/publish fails NU1101 if only VS Offline Packages. Need nuget.org (or mirror) + HTTPS to `api.nuget.org`. Pack script forces `--source` nuget.org. |
-| **Docs vs pack folder** | `scripts\workstation-collector\` = docs; `dist\workstation-collector\` = real pack after SUCCESS. |
+| **Docs vs pack folder** | `docs\portable-client\` = docs; `dist\Heimdall-Client\` = real pack after SUCCESS. |
 | **PS 5.1 + UTF-8** | Em-dashes without BOM broke `install-agent.ps1` parse; fixed on this branch (BOM + ASCII). |
 | **Mojibake usernames** | Encoding fix shipped; **restart agent**. Repair DB with `scripts\Repair-SessionMojibake.ps1`. |
 | **RDP vs local** | Classify by **protocol** first (then RDP-/ICA- WinStation, then ClientName/Address). Console alone must not force Local. Session time splits into Local / Inbound RDP buckets. Outbound RDP = mstsc/msrdc/msrdcw process open time. RDP-to-self still **inbound RDP**. |
@@ -279,8 +277,8 @@ Dashboard nav (on `main`): Machines | Sessions | Applications | App lists | Cost
 
 ## Suggested next steps
 
-1. On pack PC: confirm nuget.org reachable; finish `Pack-WorkstationCollector.cmd`; verify `dist\workstation-collector\payload\Heimdall.Agent.exe`.
-2. Deploy pack to one vanilla SOE box (`Install-WorkstationCollector.cmd -ApiUrl … -MachineGroup SOE`); confirm machine appears on dashboard after heartbeat.
+1. On pack PC: confirm nuget.org reachable; Heimdall Setup → Create client pack; verify `dist\Heimdall-Client\payload\Heimdall.Agent.exe`.
+2. Deploy pack to one vanilla SOE box (`Install.lnk`); confirm machine appears on dashboard after heartbeat.
 3. Merge PR #1 to `main` (or push continuity to `main` per user preference) so RepoSync picks it up everywhere.
 4. Run `Inspect-SoeInstalledPrograms` on a golden image for program-list excludes.
 5. Redeploy API + agent so heartbeat fields (Guid, OS dates, hostname serial) populate on the server side.
@@ -292,7 +290,7 @@ Dashboard nav (on `main`): Machines | Sessions | Applications | App lists | Cost
 
 - Checkout / open branch **`cursor/workstation-collector-pack-1eb8`** (or `main` after merge)
 - Paths: **`C:\Users\christopher.owen\Cursor\Heimdall`** or synced **`C:\Heimdall`**
-- Read **HANDOVER.md** → **INSTALL.md** → **`scripts/workstation-collector/README.md`** → **docs/BACKLOG.md**
+- Read **HANDOVER.md** → **INSTALL.md** → **`docs/portable-client/README.md`** → **docs/BACKLOG.md**
 - Unblock pack if still blocked: NuGet/network first — do not reinvent the pack scripts unless broken
 - User wants **commit + push** for cross-machine continuity; merge to **`origin/main`** when the slice is ready
 - Never update git config; no force-push; do not commit secrets

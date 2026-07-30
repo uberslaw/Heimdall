@@ -1,0 +1,73 @@
+# Heimdall Client (portable agent install)
+
+One folder. One install. No SDK on target PCs.
+
+## What you copy to each client PC
+
+After packing on a build PC, copy **this one folder**:
+
+```text
+dist\Heimdall-Client\
+```
+
+(or unzip `dist\heimdall-client.zip`)
+
+On the client, double-click:
+
+```text
+Install.lnk
+```
+
+That is the guided install (API URL → test → install service → verify).
+
+## Build PC (create the folder once)
+
+From a Heimdall repo clone with .NET 10 SDK, double-click:
+
+```text
+scripts\Heimdall-Setup.lnk
+```
+
+Then choose **Create client pack**. Or run:
+
+```text
+scripts\Pack-WorkstationCollector.cmd
+```
+
+Pack again only when the **agent** changes (or if `dist\Heimdall-Client` is missing). Reuse the same folder on every PC until then.
+
+## What is in the pack
+
+| Item | Role |
+|------|------|
+| `Install.lnk` | **Only entry you need on clients** |
+| `Install.cmd` / `Install-Client.ps1` | Guided wizard (launched by Install.lnk) |
+| `payload\` | Required agent binaries (self-contained) |
+| `Install-WorkstationCollector.cmd` | Silent/scripted install (advanced) |
+| `Heimdall-Setup.lnk` | Advanced tools (health check, logs) — optional on clients |
+| `VERSION.json` / `PACKED.txt` | Pack metadata |
+
+There is **no separate “workstation collector” folder to combine** with a “client install” folder. Those names meant the same pack.
+
+## Do not use
+
+| Path | Why |
+|------|-----|
+| `docs\portable-client\` (this folder in git) | Documentation only — not installable |
+| A folder with README/FILES but **no** `payload\` | Pack did not succeed |
+
+## Silent install (optional)
+
+```text
+Install-WorkstationCollector.cmd -ApiUrl http://YOUR-API-HOST:5080 -MachineGroup SOE
+```
+
+## Full-repo install (optional, needs SDK)
+
+On a PC that already has the Heimdall clone and .NET 10 SDK:
+
+```text
+scripts\Install-Agent.cmd
+```
+
+Prefer the portable pack for vanilla SOE / other PCs.

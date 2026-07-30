@@ -25,30 +25,26 @@ Lightweight workstation usage tracker for justifying remote / modelling machine 
 
 See **[INSTALL.md](INSTALL.md)** for the full guide: prerequisites (.NET 10, admin, port 5080), server + agent install, verification, troubleshooting, and how to send diagnostics back for analysis.
 
-**Prefer the guided UI** (helmet icon in Explorer):
+**Prefer guided Setup** (helmet icon in Explorer):
 
 ```text
-scripts\Heimdall-LaunchControl.lnk
+scripts\Heimdall-Setup.lnk
 ```
 
-Same launcher as `scripts\Heimdall-LaunchControl.cmd` — use the `.lnk` for the Heimdall helmet icon.
+Options: Install API → Create client pack → Install agent (prompts guide each step).
 
 **POC auth is API key only** — no Entra yet.
 
 ```text
-# Elevated — prefer .cmd so the console stays open when double-clicked
-scripts\Install-Api.cmd
-scripts\Install-Agent.cmd
-scripts\Collect-Diagnostics.cmd
+# Build PC: create one folder, then copy it to clients
+scripts\Heimdall-Setup.lnk
+#   -> Create client pack  =>  dist\Heimdall-Client\
 
-# Portable collector for other PCs / vanilla SOE (pack once, copy folder, install)
-# Pack is required: installers only deploy prebuilt payload\ (no compile on target)
-scripts\Pack-WorkstationCollector.cmd
-# then on each target: Install.cmd
-#   or: Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
+# Each client PC: double-click Install.lnk inside that folder
+# Pack again only when the agent changes
 ```
 
-See `scripts\workstation-collector\README.md` for why packing is required, which files to copy, and dependencies. See **[INSTALL.md](INSTALL.md)** § “Why packing is required before client install”.
+See [docs/portable-client/README.md](docs/portable-client/README.md) and **[INSTALL.md](INSTALL.md)**.
 
 Install logs: `%ProgramData%\Heimdall\logs\`  
 Diagnostics zip: `%LOCALAPPDATA%\Heimdall\diagnostics-*.zip`
