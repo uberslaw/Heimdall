@@ -92,6 +92,22 @@ What it does:
 
 ## 2. Install the agent (workstation collector)
 
+### Why packing is required before client install
+
+Install and build are deliberately split. The portable client installers (`Install.cmd`, `Install-WorkstationCollector.cmd`) **never compile** the agent — they only copy a prebuilt `payload\Heimdall.Agent.exe` and register the Windows service.
+
+| Reason | Detail |
+|--------|--------|
+| **Binaries are not in git** | `scripts\workstation-collector\` is docs only (`README.md` + `FILES.md`). `dist\` is gitignored and only appears after a successful pack. |
+| **Installers only deploy** | Without `payload\Heimdall.Agent.exe`, install fails and tells you to run `Pack-WorkstationCollector.cmd` first. |
+| **Targets are vanilla SOE** | No full repo, no .NET 10 SDK, no NuGet on those PCs. Pack publishes **self-contained win-x64** so the runtime is bundled. |
+
+**Flow:** build PC (repo + SDK) → pack once → copy `dist\workstation-collector\` → each target runs `Install.lnk` / `Install.cmd`.
+
+Pack **once** per agent build; reuse the same folder (or zip) on every target until the agent code/version changes, or until `dist\` was cleaned / never produced.
+
+If the machine already has the full clone and .NET 10 SDK, skip the portable pack and use **Option B** (`Install-Agent.cmd`) instead.
+
 ### Option A — Portable pack (recommended for other PCs / vanilla SOE)
 
 Pack **once** on a build machine that has the repo + **.NET 10 SDK** + NuGet access (repo `NuGet.config` → nuget.org; offline-only VS feeds cause **NU1101**):
@@ -100,6 +116,16 @@ Pack **once** on a build machine that has the repo + **.NET 10 SDK** + NuGet acc
 scripts\Heimdall-LaunchControl.cmd
 # or:
 scripts\Pack-WorkstationCollector.cmd
+```
+
+That publishes `Heimdall.Agent` as self-contained `win-x64` into:
+
+```text
+dist\workstation-collector\
+  Install.lnk / Install.cmd / Install-Client.ps1
+  Install-WorkstationCollector.cmd
+  payload\Heimdall.Agent.exe   ← required
+  VERSION.json, PACKED.txt, …
 ```
 
 Copy `dist\workstation-collector\` (or the zip) to each target PC. On the target **double-click**:

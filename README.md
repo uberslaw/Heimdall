@@ -42,12 +42,13 @@ scripts\Install-Agent.cmd
 scripts\Collect-Diagnostics.cmd
 
 # Portable collector for other PCs / vanilla SOE (pack once, copy folder, install)
+# Pack is required: installers only deploy prebuilt payload\ (no compile on target)
 scripts\Pack-WorkstationCollector.cmd
 # then on each target: Install.cmd
 #   or: Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
 ```
 
-See `scripts\workstation-collector\README.md` for which files to copy and dependencies.
+See `scripts\workstation-collector\README.md` for why packing is required, which files to copy, and dependencies. See **[INSTALL.md](INSTALL.md)** § “Why packing is required before client install”.
 
 Install logs: `%ProgramData%\Heimdall\logs\`  
 Diagnostics zip: `%LOCALAPPDATA%\Heimdall\diagnostics-*.zip`

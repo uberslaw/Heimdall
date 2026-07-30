@@ -2,6 +2,16 @@
 
 Use this when you want to install the **Heimdall Agent** on other PCs (vanilla SOE / golden image / modelling boxes) **without** copying the full git repo or installing the .NET SDK on those machines.
 
+## Why packing is required
+
+Install and build are deliberately split. Client installers only **copy** a prebuilt `payload\` and register the service — they do not run `dotnet publish`.
+
+1. **Git has docs only** under `scripts\workstation-collector\` — no binaries. Installable output lives in `dist\workstation-collector\` after pack (`dist\` is gitignored).
+2. **Install fails without payload** — `Install-WorkstationCollector.cmd` / `Install.cmd` require `payload\Heimdall.Agent.exe`.
+3. **Vanilla SOE targets** have no SDK/NuGet — pack produces a **self-contained win-x64** agent so those PCs need no .NET install.
+
+Pack **once** per agent build on a PC with the repo + .NET 10 SDK + nuget.org access; reuse the packed folder on every target until the agent changes. For a machine that already has the full clone and SDK, use `scripts\Install-Agent.cmd` instead (no portable pack).
+
 ## Preferred: Install.cmd
 
 After packing, on each target PC **double-click**:
