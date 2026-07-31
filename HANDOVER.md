@@ -10,14 +10,15 @@
 
 | Item | Status |
 |------|--------|
-| **Branch** | `cursor/workstation-collector-pack-1eb8` (not merged to `main` yet) |
-| **PR** | https://github.com/uberslaw/Heimdall/pull/1 — portable workstation collector pack |
-| **Goal** | One guided Setup UI; one `dist\Heimdall-Client\` folder to copy; clients run `Install.lnk` only |
-| **User blocker** | Pack PC NuGet only had **Visual Studio Offline Packages** (no nuget.org). Confirm `dist\Heimdall-Client\payload\Heimdall.Agent.exe` exists after pack. |
+| **Branch** | `cursor/heimdall-setup-c57e` — **pull this one** |
+| **PR** | https://github.com/uberslaw/Heimdall/pull/4 — unified Heimdall Setup UX |
+| **Goal** | One guided Setup UI; Client/Server step branches; one `dist\Heimdall-Client\` folder; Push via C$; clients run `Install.lnk` |
+| **After pull** | Run `scripts\New-HeimdallShortcuts.cmd` once, then open `scripts\Heimdall-Setup.lnk` (or `Heimdall-LaunchControl.lnk` — same UI). |
 
 ### What shipped on this branch
 
-- `scripts/Heimdall-Setup.lnk` (+ `.cmd`) — **primary** guided Setup UI (API / create client pack / **push to PC via C$** / install agent)
+- `scripts/Heimdall-Setup.cmd` (+ `.lnk` after `New-HeimdallShortcuts.cmd`) — **primary** guided Setup UI (API / create client pack / **push to PC via C$** / install agent)
+- Steps panel: **Client install** (default) and **Server install** branches with click-through details
 - `scripts/Heimdall-LaunchControl.*` — compat wrappers → same Setup UI
 - `scripts/Pack-WorkstationCollector.cmd` — publishes self-contained `win-x64` agent into `dist/Heimdall-Client/`
 - `scripts/Install.lnk` / `Install.cmd` — **only** entry clients need (inside the pack)
@@ -47,7 +48,7 @@ dotnet nuget list source
 That causes **NU1101** (cannot find Sqlite / runtime packs). Remediation already attempted / documented:
 
 ```powershell
-cd C:\Heimdall   # or Cursor\Heimdall — must be on branch cursor/workstation-collector-pack-1eb8
+cd C:\Heimdall   # or Cursor\Heimdall — must be on branch cursor/heimdall-setup-c57e
 dotnet nuget add source https://api.nuget.org/v3/index.json -n nuget.org
 dotnet nuget list source
 curl.exe -I https://api.nuget.org/v3/index.json
@@ -261,7 +262,7 @@ Dashboard nav (on `main`): Machines | Sessions | Applications | App lists | Cost
 | **SQLite + DateTimeOffset** | Prefer filter/order in memory where EF translation is unreliable. |
 | **Wrong folder** | Prefer **`C:\Users\christopher.owen\Cursor\Heimdall`**, not Arup. `C:\Heimdall` also used — keep synced. |
 | **POC auth** | API key only; trusted-LAN / POC. |
-| **PR not on main** | Workstation collector pack lives on `cursor/workstation-collector-pack-1eb8` until merged. |
+| **PR not on main** | Unified Setup UX lives on `cursor/heimdall-setup-c57e` (PR #4) until merged. |
 
 ---
 
@@ -279,7 +280,7 @@ Dashboard nav (on `main`): Machines | Sessions | Applications | App lists | Cost
 
 1. On pack PC: confirm nuget.org reachable; Heimdall Setup → Create client pack; verify `dist\Heimdall-Client\payload\Heimdall.Agent.exe`.
 2. Deploy pack to one vanilla SOE box (`Install.lnk`); confirm machine appears on dashboard after heartbeat.
-3. Merge PR #1 to `main` (or push continuity to `main` per user preference) so RepoSync picks it up everywhere.
+3. Merge PR #4 to `main` (or keep pulling `cursor/heimdall-setup-c57e`) so RepoSync picks up Setup UX everywhere.
 4. Run `Inspect-SoeInstalledPrograms` on a golden image for program-list excludes.
 5. Redeploy API + agent so heartbeat fields (Guid, OS dates, hostname serial) populate on the server side.
 6. Later backlog: Dell warranty API (if keys); Flight Recorder spike; inflated process durations if still an issue; CADFX demo with purchase cost + support hours + Socratize.
@@ -288,7 +289,7 @@ Dashboard nav (on `main`): Machines | Sessions | Applications | App lists | Cost
 
 ## For the next Cursor agent
 
-- Checkout / open branch **`cursor/workstation-collector-pack-1eb8`** (or `main` after merge)
+- Checkout / open branch **`cursor/heimdall-setup-c57e`** (or `main` after merge)
 - Paths: **`C:\Users\christopher.owen\Cursor\Heimdall`** or synced **`C:\Heimdall`**
 - Read **HANDOVER.md** → **INSTALL.md** → **`docs/portable-client/README.md`** → **docs/BACKLOG.md**
 - Unblock pack if still blocked: NuGet/network first — do not reinvent the pack scripts unless broken
@@ -331,5 +332,5 @@ dotnet run
 .\scripts\Repair-SessionMojibake.ps1
 ```
 
-**GitHub (branch file until merge):** https://github.com/uberslaw/Heimdall/blob/cursor/workstation-collector-pack-1eb8/HANDOVER.md  
+**GitHub (branch file until merge):** https://github.com/uberslaw/Heimdall/blob/cursor/heimdall-setup-c57e/HANDOVER.md  
 **PR:** https://github.com/uberslaw/Heimdall/pull/1

@@ -31,7 +31,9 @@ See **[INSTALL.md](INSTALL.md)** for the full guide: prerequisites (.NET 10, adm
 scripts\Heimdall-Setup.lnk
 ```
 
-Options: Install API → Create client pack → Install agent (prompts guide each step).
+Same UI: `scripts\Heimdall-LaunchControl.lnk`. After pull, run `scripts\New-HeimdallShortcuts.cmd` once if icons/targets look stale.
+
+Options: Install API → Create client pack → Push to PC → Install agent. Right-side Steps: Client (default) / Server.
 
 **POC auth is API key only** — no Entra yet.
 

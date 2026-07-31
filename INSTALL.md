@@ -31,7 +31,7 @@ On client PCs you only need **`Install.lnk`** (from the pushed/copied pack). Log
 
 **Push requirements:** your account needs admin rights on the target (C$ / SMB). After push, on the target PC run `C:\Temp\Heimdall-Client\Install.lnk` elevated.
 
-**If you still see “Heimdall Launch Control” with “Pack collector”:** pull/sync this branch and reopen `scripts\Heimdall-Setup.lnk` (or run `scripts\New-HeimdallShortcuts.cmd`).
+**If you still see “Pack collector” / old Steps text:** you are not on `cursor/heimdall-setup-c57e` yet — fetch/checkout that branch, then open `scripts\Heimdall-Setup.lnk` or `scripts\Heimdall-LaunchControl.lnk` (same UI). Optionally run `scripts\New-HeimdallShortcuts.cmd` to refresh icons/targets.
 
 ---
 
