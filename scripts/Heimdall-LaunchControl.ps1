@@ -56,6 +56,10 @@ $script:LogPath = $null
 $script:UiLogBox = $null
 $script:UiStatus = $null
 $script:UiSteps = $null
+$script:UiGuideList = $null
+$script:UiGuideDetail = $null
+$script:UiGuideBranch = "Client"
+$script:GuideStepsByBranch = $null
 $script:LaunchControlBusy = $false
 $script:LaunchControlActionButtons = @()
 $script:LaunchControlPreviousStatus = $null
@@ -2226,18 +2230,240 @@ function Start-Diagnostics {
 }
 
 # ---------------------------------------------------------------------------
-# Main form
+# Guide branches (Steps panel)
 # ---------------------------------------------------------------------------
+
+function Get-HeimdallGuideBranches {
+    $client = @(
+        [pscustomobject]@{
+            Title  = "1. Prepare (before you start)"
+            Detail = @'
+Client install = put the Heimdall Agent on workstations.
+
+Prepare in advance:
+- Heimdall API must already be running on your server (see Server install branch if not).
+- Know the API URL agents will use, e.g. http://YOUR-SERVER:5080 (not localhost unless API is on the same PC).
+- Default POC API key: heimdall-poc-key (must match the server).
+- Build PC needs .NET 10 SDK + nuget.org once, to Create client pack.
+- Target PCs need a local Administrator account. No .NET SDK on targets.
+- For Push: your account must reach \\HOSTNAME\C$ (admin + SMB / File Sharing).
+
+Where things live after pack:
+- Build PC: dist\Heimdall-Client\  (or zip dist\heimdall-client.zip)
+- After push: \\HOST\C$\Temp\Heimdall-Client\
+
+'@
+        },
+        [pscustomobject]@{
+            Title  = "2. Create client pack (build PC)"
+            Detail = @'
+On the build PC (full Heimdall repo):
+
+1. Open scripts\Heimdall-Setup.lnk (this window).
+2. Click left: Create client pack.
+3. Wait for the console publish to finish (first run can take several minutes).
+4. Success creates: dist\Heimdall-Client\
+   - Install.lnk  ← what clients run
+   - payload\Heimdall.Agent.exe  ← required
+   - VERSION.json
+
+Look for:
+- Explorer may open the pack folder.
+- Setup may ask: Install the agent on THIS PC now? (optional)
+
+Pack again only when the agent changes (or if dist\Heimdall-Client is missing).
+Reuse the same pack on every PC until then.
+
+If pack fails (NU1101): nuget.org blocked or only offline VS feeds — fix NuGet, then retry.
+
+'@
+        },
+        [pscustomobject]@{
+            Title  = "3. Push pack to a PC (or copy folder)"
+            Detail = @'
+Preferred (from this Setup window):
+
+1. Click left: Push client pack to PC...
+2. Type the target hostname or IP (C$ required).
+3. Click Push.
+4. Setup copies to \\HOST\C$\Temp\Heimdall-Client and opens that folder in Explorer.
+
+Manual alternative:
+- Copy the whole dist\Heimdall-Client\ folder (or unzip heimdall-client.zip) to the target PC.
+- Do not copy docs\portable-client\ from the repo — that is documentation only.
+
+Look for on the share:
+- Install.lnk
+- payload\Heimdall.Agent.exe
+
+If C$ is unreachable: check hostname, admin rights, SMB port 445, firewall admin shares.
+
+'@
+        },
+        [pscustomobject]@{
+            Title  = "4. Run Install.lnk on the target"
+            Detail = @'
+On the target PC (local Administrator):
+
+1. Open C:\Temp\Heimdall-Client\ (after push) or your copied pack folder.
+2. Double-click Install.lnk (helmet icon). Accept UAC if prompted.
+3. Wizard steps:
+   - Prerequisites (payload present, admin)
+   - Connection: ApiUrl, ApiKey, MachineGroup (e.g. SOE)
+   - Test connection (health + version + API key)
+   - Install service HeimdallAgent
+   - Verify
+
+Look for:
+- Success message at the end of the wizard.
+- Service Running: Get-Service HeimdallAgent
+- Files: %ProgramFiles%\Heimdall\Agent\
+- Logs: %ProgramData%\Heimdall\logs\install-client-*.log
+
+Do not use localhost for ApiUrl unless the API runs on that same PC.
+
+'@
+        },
+        [pscustomobject]@{
+            Title  = "5. Verify on dashboard"
+            Detail = @'
+After install:
+
+1. On the server, open the dashboard (Setup → Open dashboard, or http://SERVER:5080).
+2. Machines page: hostname should appear after the first heartbeat (usually 1–2 minutes).
+3. Optional from Setup: Client health check (service, settings, API probes).
+4. Logs: %ProgramData%\Heimdall\logs\ on the client; remote via Open remote logs folder...
+
+If the machine never appears:
+- ApiUrl / firewall / API key mismatch
+- Check agent log under ProgramData\Heimdall\logs\
+
+'@
+        }
+    )
+
+    $server = @(
+        [pscustomobject]@{
+            Title  = "1. Prepare (server PC)"
+            Detail = @'
+Server install = Heimdall API + dashboard on one Windows PC.
+
+Prepare in advance:
+- Windows Server or workstation with local Administrator.
+- .NET 10 SDK installed (dotnet --list-sdks shows a 10.x line).
+- Full Heimdall git clone (not the portable client pack alone).
+- Choose API port (default 5080). Plan firewall allow for inbound TCP.
+- Pick an API key (POC default: heimdall-poc-key). Agents must use the same key.
+
+This Setup window must be opened from the repo (scripts\Heimdall-Setup.lnk), not from a packed client folder.
+
+'@
+        },
+        [pscustomobject]@{
+            Title  = "2. Install API on this PC"
+            Detail = @'
+1. Open scripts\Heimdall-Setup.lnk on the server.
+2. Click left: Install API on this PC.
+3. Confirm port and API key when prompted. Accept UAC.
+4. Wait for publish + Windows service HeimdallApi to start.
+
+What it does:
+- Publishes to %ProgramFiles%\Heimdall\Api\
+- SQLite DB: %ProgramData%\Heimdall\heimdall.db
+- Firewall rule for the chosen port (when policy allows)
+- Log: %ProgramData%\Heimdall\logs\install-api-*.log
+
+Look for:
+- Setup verify step succeeds against /api/health
+- productVersion in health matches your build (core SemVer, e.g. 0.1.0)
+
+'@
+        },
+        [pscustomobject]@{
+            Title  = "3. Verify API / dashboard"
+            Detail = @'
+1. Setup → Open dashboard... (or browse http://THIS-PC:5080).
+2. Or: curl / Invoke-RestMethod http://localhost:5080/api/health
+3. Get-Service HeimdallApi → Running
+
+If agents are on other PCs, they must reach http://SERVER-HOSTNAME:5080 (not localhost).
+
+Optional tools in this window:
+- Backup API database...
+- Remove seed/demo machines...
+- Open logs folder
+
+'@
+        },
+        [pscustomobject]@{
+            Title  = "4. Next: deploy agents (Client branch)"
+            Detail = @'
+API alone does not collect workstation data. Switch the Steps branch above to Client install (default view) and:
+
+1. Create client pack (once per agent build)
+2. Push client pack to PC... (or copy dist\Heimdall-Client)
+3. On each target: Install.lnk
+4. Confirm hostnames on the Machines page
+
+You do not reinstall the API when only the agent changes — just re-pack and push/install the client.
+
+'@
+        }
+    )
+
+    return [ordered]@{
+        Client = $client
+        Server = $server
+    }
+}
+
+function Show-GuideBranch {
+    param(
+        [ValidateSet("Client", "Server")]
+        [string]$Branch = "Client"
+    )
+    $script:UiGuideBranch = $Branch
+    if (-not $script:GuideStepsByBranch) {
+        $script:GuideStepsByBranch = Get-HeimdallGuideBranches
+    }
+    if (-not $script:UiGuideList -or $script:UiGuideList.IsDisposed) { return }
+
+    $script:UiGuideList.Items.Clear()
+    foreach ($step in $script:GuideStepsByBranch[$Branch]) {
+        [void]$script:UiGuideList.Items.Add($step.Title)
+    }
+    if ($script:UiGuideList.Items.Count -gt 0) {
+        $script:UiGuideList.SelectedIndex = 0
+    }
+    else {
+        Show-GuideStepDetail -Index -1
+    }
+}
+
+function Show-GuideStepDetail {
+    param([int]$Index)
+    if (-not $script:UiGuideDetail -or $script:UiGuideDetail.IsDisposed) { return }
+    if (-not $script:GuideStepsByBranch) {
+        $script:GuideStepsByBranch = Get-HeimdallGuideBranches
+    }
+    $branch = $script:UiGuideBranch
+    if ($Index -lt 0 -or -not $script:GuideStepsByBranch[$branch] -or $Index -ge $script:GuideStepsByBranch[$branch].Count) {
+        $script:UiGuideDetail.Text = "Select a step on the left for detailed instructions."
+        return
+    }
+    $step = $script:GuideStepsByBranch[$branch][$Index]
+    $script:UiGuideDetail.Text = $step.Detail.Trim() + "`r`n"
+}
 
 function Show-LaunchControl {
     Initialize-HeimdallLogging | Out-Null
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Heimdall Setup"
-    $form.Width = 980
-    $form.Height = 640
+    $form.Width = 1100
+    $form.Height = 720
     $form.StartPosition = "CenterScreen"
-    $form.MinimumSize = New-Object System.Drawing.Size(860, 520)
+    $form.MinimumSize = New-Object System.Drawing.Size(980, 640)
     $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 
     $header = New-Object System.Windows.Forms.Label
@@ -2250,10 +2476,10 @@ function Show-LaunchControl {
     $form.Controls.Add($header)
 
     $sub = New-Object System.Windows.Forms.Label
-    $sub.Text = "Choose one action. Each step prompts you. Logs: %ProgramData%\Heimdall\logs\"
+    $sub.Text = "Left = actions. Right = guided steps (Client by default). Click a step for details. Logs: %ProgramData%\Heimdall\logs\"
     $sub.Left = 16
     $sub.Top = 42
-    $sub.Width = 700
+    $sub.Width = 1050
     $sub.Height = 22
     $form.Controls.Add($sub)
 
@@ -2261,8 +2487,7 @@ function Show-LaunchControl {
     $btnPanel.Left = 12
     $btnPanel.Top = 72
     $btnPanel.Width = 280
-    $btnPanel.Height = 544
-    $form.Height = 620
+    $btnPanel.Height = 560
     $form.Controls.Add($btnPanel)
 
     function New-ActionButton($text, $top, $enabled = $true) {
@@ -2307,41 +2532,97 @@ function Show-LaunchControl {
         $btnDash = New-ActionButton "11. Open dashboard..." 480 $true
         $btnPre = New-ActionButton "Check prerequisites" 528 $true
         $btnPanel.Height = 580
-        $form.Height = 680
-        $form.MinimumSize = New-Object System.Drawing.Size(860, 580)
     }
 
     foreach ($btn in @($btnApi, $btnPack, $btnPush, $btnAgent, $btnClientCheck, $btnLogs, $btnRemoteLogs, $btnBackupDb, $btnRemoveDemos, $btnDiag, $btnDash, $btnPre)) {
         if ($btn) { Register-LaunchControlActionButton -Button $btn }
     }
 
-    $stepsLabel = New-Object System.Windows.Forms.Label
-    $stepsLabel.Text = "What to do"
-    $stepsLabel.Left = 310
-    $stepsLabel.Top = 72
-    $stepsLabel.Width = 200
-    $form.Controls.Add($stepsLabel)
+    $guideBranchLabel = New-Object System.Windows.Forms.Label
+    $guideBranchLabel.Text = "Steps branch"
+    $guideBranchLabel.Left = 310
+    $guideBranchLabel.Top = 72
+    $guideBranchLabel.Width = 200
+    $form.Controls.Add($guideBranchLabel)
+
+    $radioClient = New-Object System.Windows.Forms.RadioButton
+    $radioClient.Text = "1. Client install"
+    $radioClient.Left = 310
+    $radioClient.Top = 94
+    $radioClient.Width = 150
+    $radioClient.Checked = $true
+    $form.Controls.Add($radioClient)
+
+    $radioServer = New-Object System.Windows.Forms.RadioButton
+    $radioServer.Text = "2. Server install"
+    $radioServer.Left = 470
+    $radioServer.Top = 94
+    $radioServer.Width = 150
+    $radioServer.Checked = $false
+    $form.Controls.Add($radioServer)
+
+    $guideStepsLabel = New-Object System.Windows.Forms.Label
+    $guideStepsLabel.Text = "Steps (click for details)"
+    $guideStepsLabel.Left = 310
+    $guideStepsLabel.Top = 122
+    $guideStepsLabel.Width = 280
+    $form.Controls.Add($guideStepsLabel)
+
+    $guideList = New-Object System.Windows.Forms.ListBox
+    $guideList.Left = 310
+    $guideList.Top = 146
+    $guideList.Width = 300
+    $guideList.Height = 150
+    $form.Controls.Add($guideList)
+    $script:UiGuideList = $guideList
+
+    $guideDetailLabel = New-Object System.Windows.Forms.Label
+    $guideDetailLabel.Text = "Step details"
+    $guideDetailLabel.Left = 620
+    $guideDetailLabel.Top = 122
+    $guideDetailLabel.Width = 200
+    $form.Controls.Add($guideDetailLabel)
+
+    $guideDetail = New-Object System.Windows.Forms.TextBox
+    $guideDetail.Left = 620
+    $guideDetail.Top = 146
+    $guideDetail.Width = 450
+    $guideDetail.Height = 150
+    $guideDetail.Multiline = $true
+    $guideDetail.ScrollBars = "Vertical"
+    $guideDetail.ReadOnly = $true
+    $guideDetail.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $guideDetail.BackColor = [System.Drawing.Color]::White
+    $form.Controls.Add($guideDetail)
+    $script:UiGuideDetail = $guideDetail
+
+    $actionStepsLabel = New-Object System.Windows.Forms.Label
+    $actionStepsLabel.Text = "Action progress (updates when you run a left-side action)"
+    $actionStepsLabel.Left = 310
+    $actionStepsLabel.Top = 304
+    $actionStepsLabel.Width = 500
+    $form.Controls.Add($actionStepsLabel)
 
     $steps = New-Object System.Windows.Forms.ListBox
     $steps.Left = 310
-    $steps.Top = 96
-    $steps.Width = 320
-    $steps.Height = 160
+    $steps.Top = 328
+    $steps.Width = 760
+    $steps.Height = 72
     $form.Controls.Add($steps)
     $script:UiSteps = $steps
 
     $logLabel = New-Object System.Windows.Forms.Label
     $logLabel.Text = "Progress log (also saved to disk)"
     $logLabel.Left = 310
-    $logLabel.Top = 268
+    $logLabel.Top = 408
     $logLabel.Width = 400
     $form.Controls.Add($logLabel)
 
     $logBox = New-Object System.Windows.Forms.RichTextBox
     $logBox.Left = 310
-    $logBox.Top = 292
-    $logBox.Width = 630
-    $logBox.Height = 250
+    $logBox.Top = 432
+    $logBox.Width = 760
+    $logBox.Height = 180
     $logBox.ReadOnly = $true
     $logBox.Font = New-Object System.Drawing.Font("Consolas", 9)
     $logBox.BackColor = [System.Drawing.Color]::WhiteSmoke
@@ -2351,7 +2632,7 @@ function Show-LaunchControl {
     $status = New-Object System.Windows.Forms.Label
     $status.Text = "Ready"
     $status.Left = 16
-    $status.Top = 560
+    $status.Top = 650
     $status.Width = 600
     $status.Anchor = "Bottom, Left"
     $form.Controls.Add($status)
@@ -2360,8 +2641,8 @@ function Show-LaunchControl {
     $logPathLbl = New-Object System.Windows.Forms.LinkLabel
     $logPathLbl.Text = $script:LogPath
     $logPathLbl.Left = 310
-    $logPathLbl.Top = 548
-    $logPathLbl.Width = 630
+    $logPathLbl.Top = 620
+    $logPathLbl.Width = 760
     $logPathLbl.Add_LinkClicked({
         if ($script:LogPath -and (Test-Path $script:LogPath)) {
             Start-Process notepad.exe $script:LogPath
@@ -2369,32 +2650,50 @@ function Show-LaunchControl {
     })
     $form.Controls.Add($logPathLbl)
 
+    $script:GuideStepsByBranch = Get-HeimdallGuideBranches
+    $guideList.Add_SelectedIndexChanged({
+        Show-GuideStepDetail -Index $script:UiGuideList.SelectedIndex
+    })
+    $radioClient.Add_CheckedChanged({
+        if ($radioClient.Checked) { Show-GuideBranch -Branch Client }
+    })
+    $radioServer.Add_CheckedChanged({
+        if ($radioServer.Checked) { Show-GuideBranch -Branch Server }
+    })
+
     # Layout resize
     $form.Add_Resize({
-        $logBox.Width = $form.ClientSize.Width - 330
-        $logBox.Height = [Math]::Max(120, $form.ClientSize.Height - 360)
+        $rightWidth = $form.ClientSize.Width - 330
+        $half = [Math]::Max(200, [int](($rightWidth - 20) / 2))
+        $guideList.Width = $half
+        $guideDetail.Left = 310 + $half + 10
+        $guideDetail.Width = [Math]::Max(200, $rightWidth - $half - 10)
+        $guideDetailLabel.Left = $guideDetail.Left
+        $steps.Width = $rightWidth
+        $logBox.Width = $rightWidth
+        $logBox.Height = [Math]::Max(100, $form.ClientSize.Height - 520)
         $status.Top = $form.ClientSize.Height - 36
         $logPathLbl.Top = $form.ClientSize.Height - 48
-        $logPathLbl.Width = $form.ClientSize.Width - 330
+        $logPathLbl.Width = $rightWidth
     })
 
     Write-HeimdallLog "Setup UI ready. PackedLayout=$($script:IsPackedLayout) Admin=$(Test-IsAdministrator)" -Level OK
+    Show-GuideBranch -Branch Client
     if ($script:IsPackedLayout) {
         Write-HeimdallLog "Client pack mode: use Install agent (opens Install.lnk wizard)." -Level INFO
         Set-UiSteps @(
-            "This is the Heimdall-Client pack.",
-            "Click: Install agent on this PC",
-            "(Same as double-clicking Install.lnk)",
-            "API must already be running on your server."
+            "Packed folder ready.",
+            "Use Client install steps on the right.",
+            "Or click: Install agent on this PC"
         )
+        $radioServer.Enabled = $false
+        $radioServer.Text = "2. Server install (need full repo)"
     }
     else {
         Set-UiSteps @(
-            "Typical order:",
-            "1) Install API on this PC (server)",
-            "2) Create client pack (once)",
-            "3) Push client pack to PC (C$)",
-            "4) On that PC: Install.lnk"
+            "Select Client or Server branch above.",
+            "Click a step for full instructions.",
+            "Use left buttons to run each action."
         )
     }
 

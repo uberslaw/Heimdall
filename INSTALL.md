@@ -20,17 +20,18 @@ scripts\Heimdall-Setup.lnk
 
 (`Heimdall-LaunchControl.lnk` is the same Setup UI — kept for older bookmarks.)
 
-Self-explanatory options with prompts:
+Left buttons run actions. Right side has **two Steps branches** (click a step for full instructions):
 
-1. **Install API on this PC** — server / dashboard  
-2. **Create client pack** — builds one `dist\Heimdall-Client\` folder for other PCs  
-3. **Push client pack to PC…** — asks for hostname, copies pack to `\\HOST\C$\Temp\Heimdall-Client`, opens that folder in Explorer  
-4. **Install agent on this PC** — guided install (offers to create the pack first if missing)  
-5+ tools — health check, logs, backup, diagnostics, dashboard  
+1. **Client install** (default) — prepare → create pack → push/copy → `Install.lnk` on target → verify on dashboard  
+2. **Server install** — prepare → install API → verify dashboard → then switch to Client branch for agents  
+
+Left actions include: Install API, Create client pack, **Push client pack to PC…** (hostname → `\\HOST\C$\Temp\Heimdall-Client`), Install agent, health/logs/backup/diagnostics.
 
 On client PCs you only need **`Install.lnk`** (from the pushed/copied pack). Logs: `%ProgramData%\Heimdall\logs\`.
 
 **Push requirements:** your account needs admin rights on the target (C$ / SMB). After push, on the target PC run `C:\Temp\Heimdall-Client\Install.lnk` elevated.
+
+**If you still see “Heimdall Launch Control” with “Pack collector”:** pull/sync this branch and reopen `scripts\Heimdall-Setup.lnk` (or run `scripts\New-HeimdallShortcuts.cmd`).
 
 ---
 
