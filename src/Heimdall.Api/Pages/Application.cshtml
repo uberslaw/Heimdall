@@ -1,0 +1,216 @@
+@page
+@model ApplicationModel
+@{
+    ViewData["Title"] = string.IsNullOrWhiteSpace(Model.Process) ? "Application" : Model.Detail?.DisplayName ?? Model.Process;
+    var d = Model.Detail;
+    var shortLabel = Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d";
+}
+
+<p class="hd-meta-line mb-2">
+    <a asp-page="/Apps" asp-route-range="@Model.Range">← Applications</a>
+    @if (d is not null)
+    {
+        <span> · </span>
+        <a asp-page="/Stats" asp-route-ScopeKind="All" asp-route-Days="@Model.RangeDays" asp-route-View="apps-time">Open in Stats</a>
+    }
+</p>
+
+@if (Model.MissingProcess)
+{
+    <div class="hd-panel">
+        <p class="text-secondary mb-0">No process name specified. Pick an app from the <a asp-page="/Apps">Applications</a> list.</p>
+    </div>
+}
+else if (d is not null)
+{
+    <h1 class="hd-title">@d.DisplayName</h1>
+    <p class="hd-sub">
+        @Model.RangeLabel usage
+        @if (!string.Equals(d.DisplayName, d.ProcessName, StringComparison.OrdinalIgnoreCase))
+        {
+            <span>· process <code>@d.ProcessName</code></span>
+        }
+    </p>
+
+    <div class="hd-grid mb-3">
+        <div class="hd-stat">
+            <div class="label">Total time open</div>
+            <div class="value">@ApplicationModel.FormatDuration(d.TotalOpenSeconds)</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Runs</div>
+            <div class="value">@d.RunCount</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Avg run time</div>
+            <div class="value">@ApplicationModel.FormatDuration(d.AvgRunSeconds)</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Last used</div>
+            <div class="value" style="font-size:1rem;margin-top:0.35rem">
+                @(d.LastUsedUtc?.ToLocalTime().ToString("g") ?? "—")
+            </div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Users</div>
+            <div class="value">@d.UniqueUsers</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Machines</div>
+            <div class="value">@d.UniqueMachines</div>
+        </div>
+    </div>
+
+    <form method="get" class="hd-panel mb-3">
+        <input type="hidden" name="process" value="@d.ProcessName" />
+        <div class="row g-3 align-items-end">
+            <div class="col-md-4 col-lg-3">
+                <label class="form-label" for="util-range">Period</label>
+                <select class="form-select" name="range" id="util-range">
+                    @foreach (var opt in IndexModel.RangeOptions)
+                    {
+                        if (Model.Range == opt.Key)
+                        {
+                            <option value="@opt.Key" selected>@opt.Label</option>
+                        }
+                        else
+                        {
+                            <option value="@opt.Key">@opt.Label</option>
+                        }
+                    }
+                </select>
+            </div>
+            @if (d.MachineFilterOptions.Count > 0)
+            {
+                <div class="col-md-4 col-lg-3">
+                    <label class="form-label" for="host-filter">Machine</label>
+                    <select class="form-select" name="hostname" id="host-filter">
+                        <option value="">All machines</option>
+                        @foreach (var h in d.MachineFilterOptions)
+                        {
+                            if (string.Equals(Model.Hostname, h, StringComparison.OrdinalIgnoreCase))
+                            {
+                                <option value="@h" selected>@h</option>
+                            }
+                            else
+                            {
+                                <option value="@h">@h</option>
+                            }
+                        }
+                    </select>
+                </div>
+            }
+            <div class="col-md-3 col-lg-2">
+                <button type="submit" class="btn btn-hd w-100">Apply</button>
+            </div>
+        </div>
+    </form>
+
+    @if (d.RunCount == 0)
+    {
+        <div class="hd-panel mb-3">
+            <p class="text-secondary mb-0">
+                No process runs for this app in the selected period
+                @(string.IsNullOrWhiteSpace(Model.Hostname) ? "" : $" on {Model.Hostname}").
+                Stats come from allowlisted <code>ProcessRun</code> records.
+            </p>
+        </div>
+    }
+    else
+    {
+        <div class="hd-panel mb-3">
+            <h2 class="hd-section-title">By machine</h2>
+            <table class="hd-table hd-sortable" id="app-machines-table">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Machine</th>
+                        <th data-sort="num" data-default-desc>Time open</th>
+                        <th data-sort="num">Runs</th>
+                        <th data-sort="num">Avg run</th>
+                        <th data-sort="text">Last used</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var m in d.Machines)
+                {
+                    <tr>
+                        <td>
+                            <a asp-page="/Machine" asp-route-hostname="@m.Hostname" asp-route-range="@Model.Range">
+                                <strong>@m.Hostname</strong>
+                            </a>
+                        </td>
+                        <td data-sort-value="@m.TotalOpenSeconds">@ApplicationModel.FormatDuration(m.TotalOpenSeconds)</td>
+                        <td data-sort-value="@m.RunCount">@m.RunCount</td>
+                        <td data-sort-value="@m.AvgRunSeconds">@ApplicationModel.FormatDuration(m.AvgRunSeconds)</td>
+                        <td data-sort-value="@m.LastUsedUtc.ToUnixTimeSeconds()">@m.LastUsedUtc.ToLocalTime().ToString("g")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="hd-panel">
+            <h2 class="hd-section-title">By user</h2>
+            <table class="hd-table hd-sortable" id="app-users-table">
+                <thead>
+                    <tr>
+                        <th data-sort="text">User</th>
+                        <th data-sort="num" data-default-desc>Time open</th>
+                        <th data-sort="num">Runs</th>
+                        <th data-sort="num">Avg run</th>
+                        <th data-sort="text">Last used</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var u in d.Users)
+                {
+                    <tr>
+                        <td><strong>@u.Username</strong></td>
+                        <td data-sort-value="@u.TotalOpenSeconds">@ApplicationModel.FormatDuration(u.TotalOpenSeconds)</td>
+                        <td data-sort-value="@u.RunCount">@u.RunCount</td>
+                        <td data-sort-value="@u.AvgRunSeconds">@ApplicationModel.FormatDuration(u.AvgRunSeconds)</td>
+                        <td data-sort-value="@u.LastUsedUtc.ToUnixTimeSeconds()">@u.LastUsedUtc.ToLocalTime().ToString("g")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@section Scripts {
+<script>
+(() => {
+  document.querySelectorAll('table.hd-sortable').forEach(table => {
+    const headers = [...table.querySelectorAll('thead th[data-sort]')];
+    headers.forEach((th, colIdx) => {
+      th.style.cursor = 'pointer';
+      th.addEventListener('click', () => {
+        const type = th.dataset.sort;
+        const tbody = table.tBodies[0];
+        const rows = [...tbody.querySelectorAll('tr')].filter(r => r.children.length > 1);
+        const asc = th.dataset.dir !== 'asc';
+        headers.forEach(h => { h.dataset.dir = ''; h.classList.remove('sorted-asc', 'sorted-desc'); });
+        th.dataset.dir = asc ? 'asc' : 'desc';
+        th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
+        rows.sort((a, b) => {
+          const ca = a.children[colIdx], cb = b.children[colIdx];
+          let va = ca?.dataset.sortValue ?? ca?.textContent ?? '';
+          let vb = cb?.dataset.sortValue ?? cb?.textContent ?? '';
+          if (type === 'num') {
+            va = parseFloat(va); vb = parseFloat(vb);
+            if (Number.isNaN(va)) va = -Infinity;
+            if (Number.isNaN(vb)) vb = -Infinity;
+            return asc ? va - vb : vb - va;
+          }
+          va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
+          return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+        });
+        rows.forEach(r => tbody.appendChild(r));
+      });
+      if (th.dataset.defaultDesc !== undefined) th.click();
+    });
+  });
+})();
+</script>
+}

@@ -1,0 +1,233 @@
+@page
+@model MachineModel
+@{
+    ViewData["Title"] = string.IsNullOrWhiteSpace(Model.Hostname) ? "Machine" : Model.Hostname;
+    var d = Model.Detail;
+    var shortLabel = Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d";
+    var appTotal = d?.Apps.Sum(a => a.TotalOpenSeconds) ?? 0;
+}
+
+<p class="hd-meta-line mb-2">
+    <a asp-page="/Index" asp-route-range="@Model.Range">← Machines</a>
+    @if (d is not null)
+    {
+        <span> · </span>
+        <a asp-page="/Stats" asp-route-ScopeKind="Machine" asp-route-ScopeValue="@d.Hostname" asp-route-Days="@Model.RangeDays">Open in Stats</a>
+        <span> · </span>
+        <a asp-page="/Socratize" asp-route-Host="@d.Hostname">Socratize</a>
+    }
+</p>
+
+@if (string.IsNullOrWhiteSpace(Model.Hostname))
+{
+    <div class="hd-panel">
+        <p class="text-secondary mb-0">No hostname specified. Pick a machine from the <a asp-page="/Index">Machines</a> list.</p>
+    </div>
+}
+else if (Model.HostNotFound)
+{
+    <div class="hd-panel">
+        <p class="mb-0" style="color:#f0a0a0;">No machine named <strong>@Model.Hostname</strong> in the database yet.</p>
+    </div>
+}
+else if (d is not null)
+{
+    <h1 class="hd-title">@d.Hostname</h1>
+    <p class="hd-sub">@Model.RangeLabel utilisation · apps used on this machine</p>
+
+    <div class="hd-grid mb-3">
+        <div class="hd-stat">
+            <div class="label">Group</div>
+            <div class="value" style="font-size:1.1rem;">@(d.Group ?? "—")</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Status</div>
+            <div class="value" style="font-size:1.1rem;">
+                @if (d.IsInUse)
+                {
+                    <span class="badge-pill badge-active">In use</span>
+                }
+                else if (d.IsOnline)
+                {
+                    <span class="badge-pill badge-ended">Idle</span>
+                }
+                else
+                {
+                    <span class="badge-pill badge-ended">Offline</span>
+                }
+            </div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Last check-in</div>
+            <div class="value" style="font-size:1rem;margin-top:0.35rem">
+                @d.LastSeenUtc.ToLocalTime().ToString("g")
+                <br /><span class="text-secondary small">@IndexModel.FormatRelativeUtc(d.LastSeenUtc)</span>
+            </div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Last user</div>
+            <div class="value" style="font-size:1.1rem;">@(d.LastUser ?? "—")</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">@shortLabel utilisation</div>
+            <div class="value">@d.UtilisationPct.ToString("0")%</div>
+        </div>
+    </div>
+
+    <div class="hd-grid mb-3">
+        <div class="hd-stat">
+            <div class="label">Sessions (@shortLabel)</div>
+            <div class="value">@d.Sessions.TotalCount</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Local</div>
+            <div class="value">@d.Sessions.LocalCount</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Inbound RDP</div>
+            <div class="value">@d.Sessions.RdpCount</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Open now</div>
+            <div class="value">@d.Sessions.OpenCount</div>
+        </div>
+    </div>
+
+    <form method="get" class="hd-panel mb-3">
+        <input type="hidden" name="hostname" value="@d.Hostname" />
+        <div class="row g-3 align-items-end">
+            <div class="col-md-4 col-lg-3">
+                <label class="form-label" for="util-range">Period</label>
+                <select class="form-select" name="range" id="util-range">
+                    @foreach (var opt in IndexModel.RangeOptions)
+                    {
+                        if (Model.Range == opt.Key)
+                        {
+                            <option value="@opt.Key" selected>@opt.Label</option>
+                        }
+                        else
+                        {
+                            <option value="@opt.Key">@opt.Label</option>
+                        }
+                    }
+                </select>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <button type="submit" class="btn btn-hd w-100">Apply</button>
+            </div>
+        </div>
+
+        @if (d.AppOptions.Count > 0)
+        {
+            <div class="mt-3">
+                <label class="form-label">Apps to show</label>
+                <div class="d-flex flex-wrap gap-2">
+                    @foreach (var opt in d.AppOptions)
+                    {
+                        var checkedAttr = Model.Apps.Count == 0 || Model.Apps.Contains(opt.ProcessName, StringComparer.OrdinalIgnoreCase);
+                        <label class="badge-pill @(opt.IsTracked ? "badge-local" : "badge-ended")" style="cursor:pointer;">
+                            <input type="checkbox" name="apps" value="@opt.ProcessName" class="form-check-input me-1" @(checkedAttr ? "checked" : null) />
+                            @opt.DisplayName
+                            @if (!opt.HasData)
+                            {
+                                <span class="text-secondary">(no data)</span>
+                            }
+                        </label>
+                    }
+                </div>
+                <p class="text-secondary small mb-0 mt-2">
+                    Tracked apps from config plus any process seen on this machine in the period.
+                    Uncheck apps to hide them; leave all checked to show everything with data.
+                </p>
+            </div>
+        }
+    </form>
+
+    <div class="hd-panel">
+        <h2 class="hd-section-title">Applications</h2>
+        @if (d.Apps.Count == 0)
+        {
+            <p class="text-secondary mb-0">
+                No process runs for the selected apps in this period.
+                Time-open stats come from <code>ProcessRun</code> durations (allowlisted apps only).
+            </p>
+        }
+        else
+        {
+            <table class="hd-table hd-sortable" id="machine-apps-table">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Application</th>
+                        <th data-sort="num" data-default-desc>Time open</th>
+                        <th data-sort="num">Runs</th>
+                        <th data-sort="num">Users</th>
+                        <th data-sort="num">Share</th>
+                        <th data-sort="num">Peak CPU</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var a in d.Apps)
+                {
+                    var share = appTotal <= 0 ? 0 : a.TotalOpenSeconds * 100.0 / appTotal;
+                    var display = d.AppOptions.FirstOrDefault(o =>
+                        string.Equals(o.ProcessName, a.ProcessName, StringComparison.OrdinalIgnoreCase))?.DisplayName
+                        ?? a.ProcessName;
+                    <tr>
+                        <td>
+                            <a asp-page="/Application" asp-route-process="@a.ProcessName" asp-route-range="@Model.Range" asp-route-hostname="@d.Hostname">
+                                <strong>@display</strong>
+                            </a>
+                            @if (!string.Equals(display, a.ProcessName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                <span class="text-secondary small">(@a.ProcessName)</span>
+                            }
+                        </td>
+                        <td data-sort-value="@a.TotalOpenSeconds">@MachineModel.FormatDuration(a.TotalOpenSeconds)</td>
+                        <td data-sort-value="@a.RunCount">@a.RunCount</td>
+                        <td data-sort-value="@a.UniqueUsers">@a.UniqueUsers</td>
+                        <td data-sort-value="@share">@share.ToString("0")%</td>
+                        <td data-sort-value="@(a.PeakCpuPercent ?? -1)">@StatsModel.FormatPct(a.PeakCpuPercent)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
+}
+
+@section Scripts {
+<script>
+(() => {
+  document.querySelectorAll('table.hd-sortable').forEach(table => {
+    const headers = [...table.querySelectorAll('thead th[data-sort]')];
+    headers.forEach((th, colIdx) => {
+      th.style.cursor = 'pointer';
+      th.addEventListener('click', () => {
+        const type = th.dataset.sort;
+        const tbody = table.tBodies[0];
+        const rows = [...tbody.querySelectorAll('tr')].filter(r => r.children.length > 1);
+        const asc = th.dataset.dir !== 'asc';
+        headers.forEach(h => { h.dataset.dir = ''; h.classList.remove('sorted-asc', 'sorted-desc'); });
+        th.dataset.dir = asc ? 'asc' : 'desc';
+        th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
+        rows.sort((a, b) => {
+          const ca = a.children[colIdx], cb = b.children[colIdx];
+          let va = ca?.dataset.sortValue ?? ca?.textContent ?? '';
+          let vb = cb?.dataset.sortValue ?? cb?.textContent ?? '';
+          if (type === 'num') {
+            va = parseFloat(va); vb = parseFloat(vb);
+            if (Number.isNaN(va)) va = -Infinity;
+            if (Number.isNaN(vb)) vb = -Infinity;
+            return asc ? va - vb : vb - va;
+          }
+          va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
+          return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+        });
+        rows.forEach(r => tbody.appendChild(r));
+      });
+      if (th.dataset.defaultDesc !== undefined) th.click();
+    });
+  });
+})();
+</script>
+}

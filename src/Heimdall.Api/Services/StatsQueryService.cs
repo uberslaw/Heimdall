@@ -14,7 +14,7 @@ public enum StatsScopeKind
     Machine
 }
 
-public sealed class StatsQueryService(HeimdallDbContext db)
+public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config)
 {
     public async Task<StatsSnapshot> QueryAsync(
         StatsScopeKind scopeKind,
@@ -73,6 +73,181 @@ public sealed class StatsQueryService(HeimdallDbContext db)
             HasAnyGpuData: hasGpu,
             HasAnyDiskData: hasDisk
         );
+    }
+
+    public async Task<MachineDetailSnapshot?> QueryMachineDetailAsync(
+        string hostname,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc,
+        IReadOnlyList<string>? selectedApps = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(hostname))
+            return null;
+
+        var host = hostname.Trim();
+        var machines = await db.Machines.AsNoTracking().ToListAsync(ct);
+        var machine = machines.FirstOrDefault(m =>
+            string.Equals(m.Hostname, host, StringComparison.OrdinalIgnoreCase));
+        if (machine is null)
+            return null;
+
+        var snapshot = await QueryAsync(StatsScopeKind.Machine, host, fromUtc, toUtc, ct: ct);
+        var agentConfig = await config.ResolveForHostAsync(host, ct);
+        var trackedSet = agentConfig.IncludeProcesses.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var displayNames = await BuildDisplayNameMapAsync(ct);
+
+        var seenApps = snapshot.AppFilterOptions.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var optionNames = trackedSet
+            .Union(seenApps, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var appOptions = optionNames
+            .Select(n => new AppFilterOption(
+                n,
+                displayNames.GetValueOrDefault(n, n),
+                trackedSet.Contains(n),
+                seenApps.Contains(n)))
+            .ToList();
+
+        var filterSet = selectedApps is { Count: > 0 }
+            ? selectedApps.ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
+
+        var filteredApps = filterSet is null
+            ? snapshot.AppStats
+            : snapshot.AppStats.Where(a => filterSet.Contains(a.ProcessName)).ToList();
+
+        var sessions = (await db.Sessions.AsNoTracking().ToListAsync(ct))
+            .Where(s => s.MachineId == machine.Id
+                        && s.StartedAtUtc < toUtc
+                        && (s.EndedAtUtc ?? s.LastObservedUtc) >= fromUtc)
+            .ToList();
+
+        var now = DateTimeOffset.UtcNow;
+        var windowSeconds = Math.Max(1, (toUtc - fromUtc).TotalSeconds);
+        var occupied = sessions.Sum(s => SessionOverlapSeconds(s, fromUtc, toUtc, now));
+        var utilPct = Math.Clamp(occupied / windowSeconds * 100.0, 0, 100);
+
+        var lastSession = sessions.OrderByDescending(s => s.LastObservedUtc).FirstOrDefault();
+        var onlineCutoff = now.AddMinutes(-5);
+
+        return new MachineDetailSnapshot(
+            Hostname: machine.Hostname,
+            Group: machine.MachineGroup,
+            IsOnline: machine.LastSeenUtc >= onlineCutoff,
+            IsInUse: machine.IsInUse,
+            LastSeenUtc: machine.LastSeenUtc,
+            LastUser: lastSession is null
+                ? null
+                : NormalizeUser(lastSession.Username, lastSession.Domain),
+            LastSessionType: lastSession?.SessionType,
+            UtilisationPct: utilPct,
+            Sessions: new MachineSessionSummary(
+                sessions.Count,
+                sessions.Count(s => s.SessionType == SessionType.Local),
+                sessions.Count(s => s.SessionType == SessionType.Rdp),
+                sessions.Count(s => s.State != SessionState.Ended)),
+            AppOptions: appOptions,
+            Apps: filteredApps,
+            FromUtc: fromUtc,
+            ToUtc: toUtc);
+    }
+
+    public async Task<ApplicationDetailSnapshot> QueryApplicationDetailAsync(
+        string processName,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc,
+        string? hostnameFilter = null,
+        CancellationToken ct = default)
+    {
+        var process = processName.Trim();
+        var machines = await db.Machines.AsNoTracking().ToListAsync(ct);
+        var machineById = machines.ToDictionary(m => m.Id);
+        var displayNames = await BuildDisplayNameMapAsync(ct);
+
+        var allRuns = FilterRunsInWindow(
+                await db.ProcessRuns.AsNoTracking().ToListAsync(ct),
+                fromUtc,
+                toUtc)
+            .Where(r => string.Equals(r.ProcessName, process, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var machineFilterOptions = allRuns
+            .Select(r => machineById.GetValueOrDefault(r.MachineId)?.Hostname)
+            .Where(h => !string.IsNullOrWhiteSpace(h))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(h => h, StringComparer.OrdinalIgnoreCase)
+            .Cast<string>()
+            .ToList();
+
+        var runs = allRuns;
+        if (!string.IsNullOrWhiteSpace(hostnameFilter))
+        {
+            var host = hostnameFilter.Trim();
+            var machineId = machines
+                .FirstOrDefault(m => string.Equals(m.Hostname, host, StringComparison.OrdinalIgnoreCase))
+                ?.Id;
+            runs = machineId is null
+                ? []
+                : allRuns.Where(r => r.MachineId == machineId.Value).ToList();
+        }
+
+        var runCount = runs.Count;
+        var totalSeconds = runs.Sum(RunDurationSeconds);
+        var avgRunSeconds = runCount == 0 ? 0 : totalSeconds / runCount;
+        var lastUsed = runs.Count == 0
+            ? (DateTimeOffset?)null
+            : runs.Max(r => r.LastSeenAtUtc);
+
+        var machineRows = runs
+            .GroupBy(r => r.MachineId)
+            .Select(g =>
+            {
+                var hostname = machineById.GetValueOrDefault(g.Key)?.Hostname ?? $"#{g.Key}";
+                var seconds = g.Sum(RunDurationSeconds);
+                var count = g.Count();
+                return new AppMachineUsageRow(
+                    hostname,
+                    count,
+                    seconds,
+                    count == 0 ? 0 : seconds / count,
+                    g.Max(r => r.LastSeenAtUtc));
+            })
+            .OrderByDescending(r => r.TotalOpenSeconds)
+            .ToList();
+
+        var userRows = runs
+            .GroupBy(r => NormalizeUser(r.Username, null), StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var seconds = g.Sum(RunDurationSeconds);
+                var count = g.Count();
+                return new AppUserUsageRow(
+                    g.Key,
+                    count,
+                    seconds,
+                    count == 0 ? 0 : seconds / count,
+                    g.Max(r => r.LastSeenAtUtc));
+            })
+            .OrderByDescending(r => r.TotalOpenSeconds)
+            .ToList();
+
+        return new ApplicationDetailSnapshot(
+            ProcessName: process,
+            DisplayName: displayNames.GetValueOrDefault(process, process),
+            RunCount: runCount,
+            TotalOpenSeconds: totalSeconds,
+            UniqueUsers: userRows.Count,
+            UniqueMachines: machineRows.Count,
+            AvgRunSeconds: avgRunSeconds,
+            LastUsedUtc: lastUsed,
+            Machines: machineRows,
+            Users: userRows,
+            MachineFilterOptions: machineFilterOptions,
+            FromUtc: fromUtc,
+            ToUtc: toUtc);
     }
 
     public async Task<StatsScopeOptions> GetScopeOptionsAsync(CancellationToken ct = default)
@@ -270,6 +445,29 @@ public sealed class StatsQueryService(HeimdallDbContext db)
         return Math.Max(0, (end - r.StartedAtUtc).TotalSeconds);
     }
 
+    private static double SessionOverlapSeconds(
+        UserSession s, DateTimeOffset fromUtc, DateTimeOffset toUtc, DateTimeOffset now)
+    {
+        var start = s.StartedAtUtc < fromUtc ? fromUtc : s.StartedAtUtc;
+        var end = s.EndedAtUtc ?? now;
+        if (end > toUtc) end = toUtc;
+        if (end < fromUtc) return 0;
+        return Math.Max(0, (end - start).TotalSeconds);
+    }
+
+    private static List<ProcessRun> FilterRunsInWindow(
+        List<ProcessRun> runs, DateTimeOffset fromUtc, DateTimeOffset toUtc) =>
+        runs.Where(r => r.StartedAtUtc < toUtc && (r.EndedAtUtc ?? r.LastSeenAtUtc) >= fromUtc).ToList();
+
+    private async Task<Dictionary<string, string>> BuildDisplayNameMapAsync(CancellationToken ct)
+    {
+        var known = await db.KnownApps.AsNoTracking().ToListAsync(ct);
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var app in known)
+            map[app.ProcessName] = app.DisplayName;
+        return map;
+    }
+
     private static string NormalizeUser(string username, string? domain)
     {
         if (string.IsNullOrWhiteSpace(username))
@@ -330,3 +528,59 @@ public sealed record UsagePatternRow(
     double ActiveMinutes,
     int SessionCount,
     string Source);
+
+public sealed record MachineDetailSnapshot(
+    string Hostname,
+    string? Group,
+    bool IsOnline,
+    bool IsInUse,
+    DateTimeOffset LastSeenUtc,
+    string? LastUser,
+    SessionType? LastSessionType,
+    double UtilisationPct,
+    MachineSessionSummary Sessions,
+    IReadOnlyList<AppFilterOption> AppOptions,
+    IReadOnlyList<AppStatRow> Apps,
+    DateTimeOffset FromUtc,
+    DateTimeOffset ToUtc);
+
+public sealed record MachineSessionSummary(
+    int TotalCount,
+    int LocalCount,
+    int RdpCount,
+    int OpenCount);
+
+public sealed record AppFilterOption(
+    string ProcessName,
+    string DisplayName,
+    bool IsTracked,
+    bool HasData);
+
+public sealed record ApplicationDetailSnapshot(
+    string ProcessName,
+    string DisplayName,
+    int RunCount,
+    double TotalOpenSeconds,
+    int UniqueUsers,
+    int UniqueMachines,
+    double AvgRunSeconds,
+    DateTimeOffset? LastUsedUtc,
+    IReadOnlyList<AppMachineUsageRow> Machines,
+    IReadOnlyList<AppUserUsageRow> Users,
+    IReadOnlyList<string> MachineFilterOptions,
+    DateTimeOffset FromUtc,
+    DateTimeOffset ToUtc);
+
+public sealed record AppMachineUsageRow(
+    string Hostname,
+    int RunCount,
+    double TotalOpenSeconds,
+    double AvgRunSeconds,
+    DateTimeOffset LastUsedUtc);
+
+public sealed record AppUserUsageRow(
+    string Username,
+    int RunCount,
+    double TotalOpenSeconds,
+    double AvgRunSeconds,
+    DateTimeOffset LastUsedUtc);

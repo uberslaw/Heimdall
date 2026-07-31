@@ -7,7 +7,7 @@
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
     <div>
         <h1 class="hd-title mb-1">Applications</h1>
-        <p class="hd-sub mb-0">Tracked non-Windows processes · last 30 days</p>
+        <p class="hd-sub mb-0">Tracked non-Windows processes · @Model.RangeLabel</p>
     </div>
     <div class="d-flex gap-2">
         <a class="btn btn-hd" asp-page="/TrackSoftware">Track Software</a>
@@ -19,6 +19,30 @@
 {
     <div class="alert alert-success">@msg</div>
 }
+
+<form method="get" class="hd-panel mb-3">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-4 col-lg-3">
+            <label class="form-label" for="util-range">Period</label>
+            <select class="form-select" name="range" id="util-range">
+                @foreach (var opt in IndexModel.RangeOptions)
+                {
+                    if (Model.Range == opt.Key)
+                    {
+                        <option value="@opt.Key" selected>@opt.Label</option>
+                    }
+                    else
+                    {
+                        <option value="@opt.Key">@opt.Label</option>
+                    }
+                }
+            </select>
+        </div>
+        <div class="col-md-3 col-lg-2">
+            <button type="submit" class="btn btn-hd w-100">Apply</button>
+        </div>
+    </div>
+</form>
 
 <div class="hd-panel">
     <table class="hd-table">
@@ -38,8 +62,16 @@
         }
         @foreach (var a in Model.Apps)
         {
-            <tr>
-                <td><strong>@a.ProcessName</strong></td>
+            <tr style="cursor:pointer" onclick="window.location='@Url.Page("/Application", new { process = a.ProcessName, range = Model.Range })'">
+                <td>
+                    <a asp-page="/Application" asp-route-process="@a.ProcessName" asp-route-range="@Model.Range" onclick="event.stopPropagation()">
+                        <strong>@a.DisplayName</strong>
+                    </a>
+                    @if (!string.Equals(a.DisplayName, a.ProcessName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        <span class="text-secondary small">(@a.ProcessName)</span>
+                    }
+                </td>
                 <td>@a.UniqueUsers</td>
                 <td>@a.RunCount</td>
                 <td>@a.TotalDuration.ToString(@"d\.hh\:mm\:ss")</td>

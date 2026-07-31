@@ -97,7 +97,7 @@
         {
             <tr>
                 <td>
-                    <strong>@m.Hostname</strong>
+                    <a asp-page="/Machine" asp-route-hostname="@m.Hostname" asp-route-range="@Model.Range"><strong>@m.Hostname</strong></a>
                     @if (m.LastReimagedUtc is DateTimeOffset re)
                     {
                         <span class="badge-pill badge-rdp ms-1" title="MachineGuid changed for this hostname">Reimaged @re.ToLocalTime().ToString("d")</span>
