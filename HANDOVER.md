@@ -17,7 +17,7 @@
 
 ### What shipped on this branch
 
-- `scripts/Heimdall-Setup.lnk` (+ `.cmd`) — **primary** guided Setup UI (API / create client pack / install agent)
+- `scripts/Heimdall-Setup.lnk` (+ `.cmd`) — **primary** guided Setup UI (API / create client pack / **push to PC via C$** / install agent)
 - `scripts/Heimdall-LaunchControl.*` — compat wrappers → same Setup UI
 - `scripts/Pack-WorkstationCollector.cmd` — publishes self-contained `win-x64` agent into `dist/Heimdall-Client/`
 - `scripts/Install.lnk` / `Install.cmd` — **only** entry clients need (inside the pack)

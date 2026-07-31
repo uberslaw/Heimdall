@@ -36,6 +36,8 @@ scripts\Pack-WorkstationCollector.cmd
 
 Pack again only when the **agent** changes (or if `dist\Heimdall-Client` is missing). Reuse the same folder on every PC until then.
 
+**Push from Setup:** **Push client pack to PC…** asks for a hostname, copies the pack to `\\HOST\C$\Temp\Heimdall-Client`, and opens that share in Explorer. On the target, run `Install.lnk` (admin). Needs your account to reach C$ on that PC.
+
 ## What is in the pack
 
 | Item | Role |

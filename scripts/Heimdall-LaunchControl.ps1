@@ -14,7 +14,7 @@
   (agent install + verify + logs only when payload\ is present).
 #>
 param(
-    [ValidateSet("Menu", "InstallApi", "PackCollector", "InstallCollector", "ClientCheck", "OpenLogs", "OpenRemoteLogs", "BackupApiDatabase", "RemoveSeedDemos", "Diagnostics")]
+    [ValidateSet("Menu", "InstallApi", "PackCollector", "InstallCollector", "PushClientPack", "ClientCheck", "OpenLogs", "OpenRemoteLogs", "BackupApiDatabase", "RemoveSeedDemos", "Diagnostics")]
     [string]$Mode = "Menu"
 )
 
@@ -1064,6 +1064,232 @@ function Open-RemoteLogsFolder {
     }
 }
 
+function Get-LocalClientPackFolderForPush {
+    if ($script:IsPackedLayout) {
+        $exe = Join-Path $script:ScriptDir "payload\Heimdall.Agent.exe"
+        if (Test-Path -LiteralPath $exe) { return $script:ScriptDir }
+    }
+    $pack = Get-ClientPackFolder
+    if ($pack) {
+        $exe = Join-Path $pack "payload\Heimdall.Agent.exe"
+        if (Test-Path -LiteralPath $exe) { return $pack }
+    }
+    return $null
+}
+
+function Push-ClientPackToMachine {
+    Write-HeimdallLog "Push client pack to remote PC" -Level STEP
+    Set-UiSteps @(
+        "[ ] 1. Choose target hostname",
+        "[ ] 2. Reach \\HOST\C$",
+        "[ ] 3. Copy Heimdall-Client (if pack ready)",
+        "[ ] 4. Open drop folder in Explorer"
+    )
+    Set-UiStatus "Push client pack..."
+
+    $localPack = Get-LocalClientPackFolderForPush
+    if (-not $localPack) {
+        if (-not $script:IsPackedLayout -and $script:RepoRoot) {
+            $r = [System.Windows.Forms.MessageBox]::Show(
+                "No local client pack found (dist\Heimdall-Client\payload).`r`n`r`nCreate the client pack now before pushing?",
+                "Client pack required",
+                [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+                [System.Windows.Forms.MessageBoxIcon]::Question)
+            if ($r -eq [System.Windows.Forms.DialogResult]::Cancel) {
+                Write-HeimdallLog "Push cancelled (no pack)." -Level WARN
+                return
+            }
+            if ($r -eq [System.Windows.Forms.DialogResult]::Yes) {
+                $packed = Start-GuidedPack -OfferInstallAfter:$false
+                if (-not $packed) { return }
+                $localPack = Get-LocalClientPackFolderForPush
+            }
+        }
+        if (-not $localPack) {
+            Write-HeimdallLog "Push will open C$ only (no local pack to copy)." -Level WARN
+        }
+    }
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Push client pack to PC"
+    $form.StartPosition = "CenterParent"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.Width = 560
+    $form.Height = 240
+    $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text = "Target machine name or IP (admin share C$ required):"
+    $lbl.Left = 16
+    $lbl.Top = 16
+    $lbl.Width = 520
+    $lbl.Height = 20
+    $form.Controls.Add($lbl)
+
+    $combo = New-Object System.Windows.Forms.ComboBox
+    $combo.Left = 16
+    $combo.Top = 42
+    $combo.Width = 520
+    $combo.DropDownStyle = "DropDown"
+    $combo.AutoCompleteMode = "SuggestAppend"
+    $combo.AutoCompleteSource = "ListItems"
+    foreach ($t in (Get-RemoteLogTargets)) {
+        [void]$combo.Items.Add($t.host)
+    }
+    if ($combo.Items.Count -gt 0) { $combo.SelectedIndex = 0 }
+    $form.Controls.Add($combo)
+
+    $hint = New-Object System.Windows.Forms.Label
+    if ($localPack) {
+        $hint.Text = "Copies the pack to \\HOST\C$\Temp\Heimdall-Client, then opens that folder. On the remote PC run Install.lnk."
+    }
+    else {
+        $hint.Text = "No local pack found yet — will open \\HOST\C$\Temp so you can paste Heimdall-Client manually."
+    }
+    $hint.Left = 16
+    $hint.Top = 72
+    $hint.Width = 520
+    $hint.Height = 40
+    $form.Controls.Add($hint)
+
+    $openBtn = New-Object System.Windows.Forms.Button
+    $openBtn.Text = if ($localPack) { "Push" } else { "Open C$" }
+    $openBtn.Left = 350
+    $openBtn.Top = 130
+    $openBtn.Width = 90
+    $openBtn.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.AcceptButton = $openBtn
+    $form.Controls.Add($openBtn)
+
+    $cancelBtn = New-Object System.Windows.Forms.Button
+    $cancelBtn.Text = "Cancel"
+    $cancelBtn.Left = 450
+    $cancelBtn.Top = 130
+    $cancelBtn.Width = 90
+    $cancelBtn.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.CancelButton = $cancelBtn
+    $form.Controls.Add($cancelBtn)
+
+    $result = $form.ShowDialog()
+    if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
+        Write-HeimdallLog "Push client pack cancelled." -Level WARN
+        return
+    }
+
+    $hostInput = $combo.Text.Trim().TrimEnd('\')
+    if ([string]::IsNullOrWhiteSpace($hostInput)) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "Enter a machine name or IP address.",
+            "Missing input",
+            "OK",
+            "Warning") | Out-Null
+        return
+    }
+    if ($hostInput -match '^\\\\') {
+        $hostInput = $hostInput -replace '^\\\\([^\\]+).*$', '$1'
+    }
+
+    Update-UiStep 0 "[OK] 1. Target=$hostInput"
+    $adminRoot = "\\$hostInput\C$"
+    $dropRoot = "\\$hostInput\C$\Temp"
+    $dropFolder = "\\$hostInput\C$\Temp\Heimdall-Client"
+
+    Write-HeimdallLog "Push target: $hostInput adminRoot=$adminRoot" -Level INFO
+    if (-not (Test-Path -LiteralPath $adminRoot)) {
+        Update-UiStep 1 "[X] 2. Cannot reach $adminRoot"
+        Write-HeimdallLog "Admin share unreachable: $adminRoot" -Level ERROR
+        [System.Windows.Forms.MessageBox]::Show(
+            "Cannot reach:`r`n$adminRoot`r`n`r`nCheck:`r`n- Hostname/IP is correct`r`n- You have admin rights on that PC`r`n- SMB / File and Printer Sharing (port 445) allowed`r`n- Firewall allows admin shares (C$)",
+            "C$ unreachable",
+            "OK",
+            "Error") | Out-Null
+        return
+    }
+    Update-UiStep 1 "[OK] 2. Reached $adminRoot"
+
+    $openPath = $adminRoot
+    if ($localPack) {
+        try {
+            if (-not (Test-Path -LiteralPath $dropRoot)) {
+                New-Item -ItemType Directory -Path $dropRoot -Force | Out-Null
+            }
+            if (-not (Test-Path -LiteralPath $dropFolder)) {
+                New-Item -ItemType Directory -Path $dropFolder -Force | Out-Null
+            }
+            Write-HeimdallLog "Copying pack from $localPack to $dropFolder" -Level STEP
+            Update-UiStep 2 "[...] 3. Copying pack..."
+            Set-UiStatus "Copying Heimdall-Client to $hostInput ..."
+            $robolog = Join-Path $env:TEMP ("heimdall-push-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".log")
+            $p = Start-Process -FilePath "robocopy.exe" -ArgumentList @(
+                $localPack,
+                $dropFolder,
+                "/E", "/R:1", "/W:2", "/NFL", "/NDL", "/NJH", "/NJS", "/NP",
+                "/LOG:$robolog"
+            ) -Wait -PassThru -NoNewWindow
+            # robocopy: exit codes 0-7 are success / with differences
+            if ($p.ExitCode -ge 8) {
+                throw "robocopy exit $($p.ExitCode). Log: $robolog"
+            }
+            $remoteExe = Join-Path $dropFolder "payload\Heimdall.Agent.exe"
+            if (-not (Test-Path -LiteralPath $remoteExe)) {
+                throw "Copy finished but payload\Heimdall.Agent.exe missing at $remoteExe"
+            }
+            Update-UiStep 2 "[OK] 3. Copied to $dropFolder"
+            Write-HeimdallLog "Push copy OK (robocopy exit $($p.ExitCode)). Log: $robolog" -Level OK
+            $openPath = $dropFolder
+        }
+        catch {
+            Update-UiStep 2 "[X] 3. Copy failed"
+            Write-HeimdallLog "Push copy failed: $($_.Exception.Message)" -Level ERROR
+            $openFallback = if (Test-Path -LiteralPath $dropRoot) { $dropRoot } else { $adminRoot }
+            [System.Windows.Forms.MessageBox]::Show(
+                "Could not copy the pack:`r`n$($_.Exception.Message)`r`n`r`nOpening $openFallback so you can paste manually.",
+                "Push copy failed",
+                "OK",
+                "Warning") | Out-Null
+            $openPath = $openFallback
+        }
+    }
+    else {
+        try {
+            if (-not (Test-Path -LiteralPath $dropRoot)) {
+                New-Item -ItemType Directory -Path $dropRoot -Force | Out-Null
+            }
+            $openPath = $dropRoot
+            Update-UiStep 2 "[!] 3. No local pack — open Temp only"
+        }
+        catch {
+            $openPath = $adminRoot
+            Update-UiStep 2 "[!] 3. Open C$ root"
+        }
+    }
+
+    try {
+        Start-Process explorer.exe $openPath
+        Add-RemoteLogTarget -TargetHost $hostInput -UncPath ("\\$hostInput\C$\ProgramData\Heimdall\logs")
+        Update-UiStep 3 "[OK] 4. Opened $openPath"
+        Set-UiStatus "Opened: $openPath"
+        Write-HeimdallLog "Opened Explorer: $openPath" -Level OK
+        $msg = if ($localPack -and (Test-Path -LiteralPath (Join-Path $dropFolder "Install.lnk"))) {
+            "Client pack pushed.`r`n`r`n$dropFolder`r`n`r`nOn $hostInput (as admin), double-click Install.lnk.`r`n`r`nExplorer is open on the drop folder."
+        }
+        else {
+            "Opened:`r`n$openPath`r`n`r`nPaste or finish copying Heimdall-Client there, then on $hostInput run Install.lnk."
+        }
+        [System.Windows.Forms.MessageBox]::Show($msg, "Push client pack", "OK", "Information") | Out-Null
+    }
+    catch {
+        Write-HeimdallLog "Failed to open Explorer for $openPath : $($_.Exception.Message)" -Level ERROR
+        [System.Windows.Forms.MessageBox]::Show(
+            "Explorer failed to open:`r`n$openPath`r`n`r`n$($_.Exception.Message)",
+            "Push error",
+            "OK",
+            "Error") | Out-Null
+    }
+}
+
 function Get-DefaultRemoteApiHost {
     $last = Get-LastInstallSettings
     if ($last -and $last.apiUrl) {
@@ -2053,15 +2279,15 @@ function Show-LaunchControl {
         return $b
     }
 
-    $repoActions = -not $script:IsPackedLayout
     if ($script:IsPackedLayout) {
         $btnAgent = New-ActionButton "1. Install agent on this PC" 0 $true
-        $btnClientCheck = New-ActionButton "2. Client health check" 48 $true
-        $btnLogs = New-ActionButton "3. Open logs folder" 96 $true
-        $btnRemoteLogs = New-ActionButton "4. Open remote logs folder..." 144 $true
-        $btnBackupDb = New-ActionButton "5. Backup API database..." 192 $true
-        $btnDash = New-ActionButton "6. Open dashboard..." 240 $true
-        $btnPre = New-ActionButton "Check prerequisites" 288 $true
+        $btnPush = New-ActionButton "2. Push client pack to PC..." 48 $true
+        $btnClientCheck = New-ActionButton "3. Client health check" 96 $true
+        $btnLogs = New-ActionButton "4. Open logs folder" 144 $true
+        $btnRemoteLogs = New-ActionButton "5. Open remote logs folder..." 192 $true
+        $btnBackupDb = New-ActionButton "6. Backup API database..." 240 $true
+        $btnDash = New-ActionButton "7. Open dashboard..." 288 $true
+        $btnPre = New-ActionButton "Check prerequisites" 336 $true
         $btnApi = $null
         $btnPack = $null
         $btnRemoveDemos = $null
@@ -2070,18 +2296,22 @@ function Show-LaunchControl {
     else {
         $btnApi = New-ActionButton "1. Install API on this PC" 0 $true
         $btnPack = New-ActionButton "2. Create client pack" 48 $true
-        $btnAgent = New-ActionButton "3. Install agent on this PC" 96 $true
-        $btnClientCheck = New-ActionButton "4. Client health check" 144 $true
-        $btnLogs = New-ActionButton "5. Open logs folder" 192 $true
-        $btnRemoteLogs = New-ActionButton "6. Open remote logs folder..." 240 $true
-        $btnBackupDb = New-ActionButton "7. Backup API database..." 288 $true
-        $btnRemoveDemos = New-ActionButton "8. Remove seed/demo machines..." 336 $true
-        $btnDiag = New-ActionButton "9. Collect diagnostics" 384 $true
-        $btnDash = New-ActionButton "10. Open dashboard..." 432 $true
-        $btnPre = New-ActionButton "Check prerequisites" 480 $true
+        $btnPush = New-ActionButton "3. Push client pack to PC..." 96 $true
+        $btnAgent = New-ActionButton "4. Install agent on this PC" 144 $true
+        $btnClientCheck = New-ActionButton "5. Client health check" 192 $true
+        $btnLogs = New-ActionButton "6. Open logs folder" 240 $true
+        $btnRemoteLogs = New-ActionButton "7. Open remote logs folder..." 288 $true
+        $btnBackupDb = New-ActionButton "8. Backup API database..." 336 $true
+        $btnRemoveDemos = New-ActionButton "9. Remove seed/demo machines..." 384 $true
+        $btnDiag = New-ActionButton "10. Collect diagnostics" 432 $true
+        $btnDash = New-ActionButton "11. Open dashboard..." 480 $true
+        $btnPre = New-ActionButton "Check prerequisites" 528 $true
+        $btnPanel.Height = 580
+        $form.Height = 680
+        $form.MinimumSize = New-Object System.Drawing.Size(860, 580)
     }
 
-    foreach ($btn in @($btnApi, $btnPack, $btnAgent, $btnClientCheck, $btnLogs, $btnRemoteLogs, $btnBackupDb, $btnRemoveDemos, $btnDiag, $btnDash, $btnPre)) {
+    foreach ($btn in @($btnApi, $btnPack, $btnPush, $btnAgent, $btnClientCheck, $btnLogs, $btnRemoteLogs, $btnBackupDb, $btnRemoveDemos, $btnDiag, $btnDash, $btnPre)) {
         if ($btn) { Register-LaunchControlActionButton -Button $btn }
     }
 
@@ -2163,13 +2393,14 @@ function Show-LaunchControl {
             "Typical order:",
             "1) Install API on this PC (server)",
             "2) Create client pack (once)",
-            "3) Copy dist\Heimdall-Client to PCs",
-            "4) On each PC: Install.lnk"
+            "3) Push client pack to PC (C$)",
+            "4) On that PC: Install.lnk"
         )
     }
 
     if ($btnApi) { $btnApi.Add_Click({ Invoke-LaunchControlAction { Start-GuidedApiInstall } }) }
     if ($btnPack) { $btnPack.Add_Click({ Invoke-LaunchControlAction { Start-GuidedPack -OfferInstallAfter } }) }
+    $btnPush.Add_Click({ Invoke-LaunchControlAction { Push-ClientPackToMachine } })
     $btnAgent.Add_Click({ Invoke-LaunchControlAction { Start-GuidedCollectorInstall } })
     $btnClientCheck.Add_Click({ Invoke-LaunchControlAction { Start-ClientHealthCheck } })
     $btnLogs.Add_Click({ Open-LogsFolder })
@@ -2204,6 +2435,7 @@ function Show-LaunchControl {
         "InstallApi"       { $form.Add_Shown({ Start-GuidedApiInstall }) }
         "PackCollector"    { $form.Add_Shown({ Start-GuidedPack -OfferInstallAfter }) }
         "InstallCollector" { $form.Add_Shown({ Start-GuidedCollectorInstall }) }
+        "PushClientPack"   { $form.Add_Shown({ Push-ClientPackToMachine }) }
         "ClientCheck"      { $form.Add_Shown({ Start-ClientHealthCheck }) }
         "OpenLogs"         { $form.Add_Shown({ Open-LogsFolder }) }
         "OpenRemoteLogs"   { $form.Add_Shown({ Open-RemoteLogsFolder }) }

@@ -24,10 +24,13 @@ Self-explanatory options with prompts:
 
 1. **Install API on this PC** — server / dashboard  
 2. **Create client pack** — builds one `dist\Heimdall-Client\` folder for other PCs  
-3. **Install agent on this PC** — guided install (offers to create the pack first if missing)  
-4+ tools — health check, logs, backup, diagnostics, dashboard  
+3. **Push client pack to PC…** — asks for hostname, copies pack to `\\HOST\C$\Temp\Heimdall-Client`, opens that folder in Explorer  
+4. **Install agent on this PC** — guided install (offers to create the pack first if missing)  
+5+ tools — health check, logs, backup, diagnostics, dashboard  
 
-On client PCs you only need the packed folder’s **`Install.lnk`** (same wizard). Logs: `%ProgramData%\Heimdall\logs\`.
+On client PCs you only need **`Install.lnk`** (from the pushed/copied pack). Logs: `%ProgramData%\Heimdall\logs\`.
+
+**Push requirements:** your account needs admin rights on the target (C$ / SMB). After push, on the target PC run `C:\Temp\Heimdall-Client\Install.lnk` elevated.
 
 ---
 
