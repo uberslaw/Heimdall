@@ -309,7 +309,9 @@ git status
 dotnet nuget list source
 dotnet nuget add source https://api.nuget.org/v3/index.json -n nuget.org
 curl.exe -I https://api.nuget.org/v3/index.json
-.\scripts\Pack-WorkstationCollector.cmd
+.\scripts\New-HeimdallShortcuts.cmd
+.\scripts\Heimdall-Setup.lnk
+# or: .\scripts\Pack-WorkstationCollector.cmd
 
 # Dev API
 cd src\Heimdall.Api
@@ -325,12 +327,13 @@ dotnet run
 .\scripts\Collect-Diagnostics.cmd
 .\scripts\Inspect-SoeInstalledPrograms.cmd
 
-# On a packed folder copied to another PC (elevated):
-.\Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
+# On a packed / pushed folder on another PC:
+.\Install.lnk
+# or silent: .\Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
 
 # Mojibake repair
 .\scripts\Repair-SessionMojibake.ps1
 ```
 
 **GitHub (branch file until merge):** https://github.com/uberslaw/Heimdall/blob/cursor/heimdall-setup-c57e/HANDOVER.md  
-**PR:** https://github.com/uberslaw/Heimdall/pull/1
+**PR:** https://github.com/uberslaw/Heimdall/pull/4
