@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Pages;
 
-public class AppListsModel(HeimdallDbContext db, AppListService appLists) : PageModel
+public class AppListsModel(HeimdallDbContext db, AppListService appLists, ProcessGroupService processGroups) : PageModel
 {
     public List<AppListRow> Lists { get; private set; } = [];
     public List<Team> Teams { get; private set; } = [];
@@ -20,6 +20,8 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists) : Page
     public IReadOnlyList<AppListService.TeamAppListOption> TeamOptions { get; private set; } = [];
     public List<AppListService.ProposedApp> PendingProposals { get; private set; } = [];
     public IReadOnlyList<AppListService.ClassifiedProcessRow> MachineInventory { get; private set; } = [];
+    public bool HasAutoDiscoveredList { get; private set; }
+    public int AutoDiscoveredEntryCount { get; private set; }
     public string? FocusHostname { get; private set; }
     public AppAnalysisStatus? FocusStatus { get; private set; }
 
@@ -38,6 +40,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists) : Page
     [BindProperty] public string? LookupHostname { get; set; }
     [BindProperty] public string? AnalyzeHostname { get; set; }
     [BindProperty] public List<string> SelectedProcesses { get; set; } = [];
+    [BindProperty] public List<string> SelectedGroupProcesses { get; set; } = [];
     [BindProperty] public int? ApplyTeamListId { get; set; }
     [BindProperty] public int? DefaultUploadTeamId { get; set; }
     [BindProperty] public IFormFile? UploadFile { get; set; }
@@ -209,6 +212,51 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists) : Page
         return RedirectToPage(new { host });
     }
 
+    public async Task<IActionResult> OnPostMoveToCoreWindowsAsync()
+        => await MoveSelectedGroupsAsync(AppGroup.CoreWindows);
+
+    public async Task<IActionResult> OnPostMoveToSoeAsync()
+        => await MoveSelectedGroupsAsync(AppGroup.Soe);
+
+    public async Task<IActionResult> OnPostMoveToSpecializationAsync()
+        => await MoveSelectedGroupsAsync(AppGroup.Specialization);
+
+    public async Task<IActionResult> OnPostCleanupDiscoveredAsync()
+    {
+        var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            TempData["Error"] = "Pick a machine first.";
+            return RedirectToPage();
+        }
+
+        var (removed, remaining) = await processGroups.CleanupDiscoveredListAsync(host, HttpContext.RequestAborted);
+        if (removed == 0)
+            TempData["Message"] = remaining == 0
+                ? $"No auto-discovered list found for {host}."
+                : $"No Core Windows or SOE entries to remove from “Discovered on {host}” ({remaining} specialization app(s) remain).";
+        else
+            TempData["Message"] = $"Removed {removed} Core Windows / SOE entr(y/ies) from “Discovered on {host}”. {remaining} specialization app(s) remain tracked.";
+
+        return RedirectToPage(new { host });
+    }
+
+    private async Task<IActionResult> MoveSelectedGroupsAsync(AppGroup targetGroup)
+    {
+        if (SelectedGroupProcesses.Count == 0)
+        {
+            TempData["Error"] = "Select at least one process in the inventory table.";
+            return RedirectToPage(new { host = FocusHostname ?? LookupHostname });
+        }
+
+        var count = await processGroups.AssignGroupsAsync(SelectedGroupProcesses, targetGroup, HttpContext.RequestAborted);
+        var label = ProcessClassification.GroupLabel(targetGroup);
+        TempData["Message"] = $"Moved {count} process(es) to {label}. Re-run Analyze to refresh pending proposals.";
+
+        var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
+        return RedirectToPage(string.IsNullOrWhiteSpace(host) ? null : new { host });
+    }
+
     public async Task<IActionResult> OnGetEditAsync(int id)
     {
         await LoadAsync();
@@ -237,6 +285,12 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists) : Page
         MachineInventory = await appLists.GetMachineInventoryAsync(hostname, HttpContext.RequestAborted);
         FocusStatus = Lookup.AnalysisStatus;
         AnalyzeHostname = hostname;
+
+        var discoveredList = await db.AppLists.AsNoTracking()
+            .Include(a => a.Entries)
+            .FirstOrDefaultAsync(a => a.Name == $"Discovered on {hostname}" && a.IsAutoDiscovered, HttpContext.RequestAborted);
+        HasAutoDiscoveredList = discoveredList is not null;
+        AutoDiscoveredEntryCount = discoveredList?.Entries.Count ?? 0;
     }
 
     private async Task LoadAsync()

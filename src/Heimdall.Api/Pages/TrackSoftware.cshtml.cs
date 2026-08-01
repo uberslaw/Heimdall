@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Pages;
 
-public class TrackSoftwareModel(HeimdallDbContext db, ConfigService config) : PageModel
+public class TrackSoftwareModel(HeimdallDbContext db, ConfigService config, ProcessGroupService processGroups) : PageModel
 {
     public IReadOnlyList<MachineHierarchy.RegionNode> Tree { get; private set; } = [];
     public List<KnownApp> KnownApps { get; private set; } = [];
@@ -161,8 +161,7 @@ public class TrackSoftwareModel(HeimdallDbContext db, ConfigService config) : Pa
         KnownApps = await db.KnownApps.AsNoTracking().OrderBy(a => a.DisplayName).ToListAsync();
 
         var knownNames = new HashSet<string>(KnownApps.Select(a => a.ProcessName), StringComparer.OrdinalIgnoreCase);
-        var soe = await db.SoeApps.AsNoTracking().Select(s => s.ProcessName).ToListAsync(HttpContext.RequestAborted);
-        var soeSet = soe.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var ctx = await processGroups.BuildContextAsync(HttpContext.RequestAborted);
         var runs = await db.ProcessRuns.AsNoTracking()
             .Select(r => new { r.ProcessName, r.ExecutablePath })
             .ToListAsync();
@@ -179,7 +178,7 @@ public class TrackSoftwareModel(HeimdallDbContext db, ConfigService config) : Pa
                 );
             })
             .Where(d => !knownNames.Contains(d.ProcessName))
-            .Where(d => ProcessClassification.IsProposableForTracking(d.ProcessName, soeSet))
+            .Where(d => ProcessClassification.IsProposableForTracking(d.ProcessName, ctx))
             .OrderBy(d => d.ProcessName, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }

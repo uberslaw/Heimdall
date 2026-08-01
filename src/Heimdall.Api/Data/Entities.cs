@@ -197,6 +197,16 @@ public class SoeApp
     public string? Vendor { get; set; }
 }
 
+/// <summary>User override for process group membership (wins over static catalogs and SoeApps).</summary>
+public class ProcessGroupAssignment
+{
+    public int Id { get; set; }
+    public required string ProcessName { get; set; }
+    public AppGroup Group { get; set; }
+    public string? DisplayName { get; set; }
+    public DateTimeOffset UpdatedUtc { get; set; }
+}
+
 /// <summary>Performance metric threshold policy scoped to All / Region / Office / Group / Machine.</summary>
 public class MetricPolicy
 {

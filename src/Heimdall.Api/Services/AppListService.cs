@@ -6,7 +6,7 @@ using Heimdall.Shared.Contracts;
 using Microsoft.EntityFrameworkCore;
 namespace Heimdall.Api.Services;
 
-public sealed class AppListService(HeimdallDbContext db)
+public sealed class AppListService(HeimdallDbContext db, ProcessGroupService processGroups)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -395,8 +395,7 @@ public sealed class AppListService(HeimdallDbContext db)
 
         MachineHierarchy.EnsureDefaults(machine);
 
-        var soe = (await db.SoeApps.AsNoTracking().Select(s => s.ProcessName).ToListAsync(ct))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var ctx = await processGroups.BuildContextAsync(ct);
 
         var fromRuns = await db.ProcessRuns.AsNoTracking()
             .Where(r => r.MachineId == machine.Id)
@@ -423,8 +422,8 @@ public sealed class AppListService(HeimdallDbContext db)
         }
 
         var proposals = candidates.Values
-            .Select(c => ToProposedApp(c, soe))
-            .Where(p => ProcessClassification.IsProposableForTracking(p.ProcessName, soe))
+            .Select(c => ToProposedApp(c, ctx))
+            .Where(p => ProcessClassification.IsProposableForTracking(p.ProcessName, ctx))
             .OrderBy(p => p.ProcessName, StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (proposals.Count == 0 && requestAgentInventoryIfEmpty)
@@ -598,8 +597,7 @@ public sealed class AppListService(HeimdallDbContext db)
         if (machine is null)
             return [];
 
-        var soe = (await db.SoeApps.AsNoTracking().Select(s => s.ProcessName).ToListAsync(ct))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var ctx = await processGroups.BuildContextAsync(ct);
 
         var tracked = (await ResolveProcessNamesForHostAsync(hostname, ct))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -626,7 +624,7 @@ public sealed class AppListService(HeimdallDbContext db)
         return map.Values
             .Select(c =>
             {
-                var row = ToProposedApp(c, soe);
+                var row = ToProposedApp(c, ctx);
                 var status = ResolveInventoryStatus(row, tracked, proposals);
                 return new ClassifiedProcessRow(
                     row.ProcessName,
@@ -674,9 +672,9 @@ public sealed class AppListService(HeimdallDbContext db)
         };
     }
 
-    private static ProposedApp ToProposedApp(MutableCandidate candidate, IReadOnlySet<string> soe)
+    private static ProposedApp ToProposedApp(MutableCandidate candidate, ProcessClassificationContext ctx)
     {
-        var classification = ProcessClassification.Classify(candidate.ProcessName, soe);
+        var classification = ProcessClassification.Classify(candidate.ProcessName, ctx);
         return new ProposedApp(
             candidate.ProcessName,
             candidate.DisplayName,

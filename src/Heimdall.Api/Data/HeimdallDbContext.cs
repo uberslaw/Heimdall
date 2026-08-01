@@ -11,6 +11,7 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<ProcessPause> ProcessPauses => Set<ProcessPause>();
     public DbSet<KnownApp> KnownApps => Set<KnownApp>();
     public DbSet<SoeApp> SoeApps => Set<SoeApp>();
+    public DbSet<ProcessGroupAssignment> ProcessGroupAssignments => Set<ProcessGroupAssignment>();
     public DbSet<MetricPolicy> MetricPolicies => Set<MetricPolicy>();
     public DbSet<Team> Teams => Set<Team>();
     public DbSet<PersonTeam> PersonTeams => Set<PersonTeam>();
@@ -63,6 +64,12 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
         {
             e.HasIndex(x => x.ProcessName).IsUnique();
             e.HasIndex(x => x.Category);
+        });
+
+        modelBuilder.Entity<ProcessGroupAssignment>(e =>
+        {
+            e.HasIndex(x => x.ProcessName).IsUnique();
+            e.HasIndex(x => x.Group);
         });
 
         modelBuilder.Entity<ProcessPause>(e =>

@@ -241,8 +241,11 @@
                     <h3 class="h6">Discovered inventory</h3>
                     <p class="small text-secondary mb-2">
                         Processes seen on this machine from agent runs. Grouped as Core Windows, SOE, or Specialization.
-                        Default view hides Core Windows and SOE; toggle to inspect system inventory.
+                        Select rows and move groups in bulk; user overrides persist in the database and win over static catalogs.
                     </p>
+                    <form method="post" id="group-edit-form">
+                        <input type="hidden" name="AnalyzeHostname" value="@Model.FocusHostname" />
+                        <input type="hidden" name="LookupHostname" value="@Model.FocusHostname" />
                     <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
                         <input type="search" class="form-control hd-table-filter" placeholder="Filter name or path…" data-filter-for="inventory-table" style="max-width:240px" />
                         <select class="form-select" id="inventory-group-filter" style="max-width:180px">
@@ -260,10 +263,16 @@
                             <label class="form-check-label small" for="show-soe">Show SOE</label>
                         </div>
                     </div>
+                    <div class="d-flex flex-wrap gap-2 mb-2">
+                        <button type="submit" formaction="?handler=MoveToCoreWindows" class="btn btn-ghost btn-sm">Move to Core Windows</button>
+                        <button type="submit" formaction="?handler=MoveToSoe" class="btn btn-ghost btn-sm">Move to SOE</button>
+                        <button type="submit" formaction="?handler=MoveToSpecialization" class="btn btn-ghost btn-sm">Move to Specialization</button>
+                    </div>
                     <div class="table-responsive" style="max-height:22rem;overflow:auto">
                         <table class="hd-table hd-sortable mb-0" id="inventory-table">
                             <thead>
                                 <tr>
+                                    <th style="width:2rem"><input class="form-check-input" type="checkbox" id="inventory-select-all" title="Select all visible" /></th>
                                     <th data-sort="text">Process</th>
                                     <th data-sort="text">Path</th>
                                     <th data-sort="text">Group</th>
@@ -277,6 +286,9 @@
                                 var groupLabel = AppListsModel.GroupLabel(row.Group);
                                 var statusLabel = AppListsModel.StatusLabel(row.Status);
                                 <tr data-group="@row.Group" class="@(row.Status == AppListService.InventoryStatus.Proposed ? "hd-row-highlight" : null)">
+                                    <td>
+                                        <input class="form-check-input inventory-row-check" type="checkbox" name="SelectedGroupProcesses" value="@row.ProcessName" />
+                                    </td>
                                     <td data-sort-value="@row.ProcessName">
                                         <code>@row.ProcessName</code>
                                         @if (!string.Equals(row.DisplayName, row.ProcessName, StringComparison.OrdinalIgnoreCase))
@@ -297,6 +309,20 @@
                             </tbody>
                         </table>
                     </div>
+                    </form>
+                }
+
+                @if (Model.HasAutoDiscoveredList && Model.FocusHostname is not null)
+                {
+                    <form method="post" asp-page-handler="CleanupDiscovered" class="mt-2">
+                        <input type="hidden" name="AnalyzeHostname" value="@Model.FocusHostname" />
+                        <input type="hidden" name="LookupHostname" value="@Model.FocusHostname" />
+                        <button type="submit" class="btn btn-ghost btn-sm"
+                                onclick="return confirm('Remove Core Windows and SOE apps from “Discovered on @Model.FocusHostname” (@Model.AutoDiscoveredEntryCount entries)? Specialization apps stay tracked.');">
+                            Remove Core Windows &amp; SOE from discovered list (@Model.AutoDiscoveredEntryCount entries)
+                        </button>
+                        <span class="text-secondary small ms-2">Cleans approved auto-discovered lists without re-approval.</span>
+                    </form>
                 }
 
                 @if (status == AppAnalysisStatus.PendingApproval && Model.PendingProposals.Count > 0)
@@ -467,6 +493,17 @@
   document.getElementById('inventory-group-filter')?.addEventListener('change', applyInventoryVisibility);
   document.querySelector('[data-filter-for="inventory-table"]')?.addEventListener('input', applyInventoryVisibility);
   applyInventoryVisibility();
+
+  const selectAll = document.getElementById('inventory-select-all');
+  if (selectAll) {
+    selectAll.addEventListener('change', () => {
+      document.querySelectorAll('#inventory-table tbody tr').forEach(tr => {
+        if (tr.style.display === 'none') return;
+        const cb = tr.querySelector('.inventory-row-check');
+        if (cb) cb.checked = selectAll.checked;
+      });
+    });
+  }
 
   if (window.HeimdallTable) {
     HeimdallTable.initSort(document);

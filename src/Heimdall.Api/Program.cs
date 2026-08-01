@@ -20,6 +20,7 @@ builder.Services.AddDbContext<HeimdallDbContext>(options =>
 });
 builder.Services.AddScoped<IngestService>();
 builder.Services.AddScoped<ConfigService>();
+builder.Services.AddScoped<ProcessGroupService>();
 builder.Services.AddScoped<AppListService>();
 builder.Services.AddScoped<StatsQueryService>();
 builder.Services.AddScoped<SocratizeQueryService>();

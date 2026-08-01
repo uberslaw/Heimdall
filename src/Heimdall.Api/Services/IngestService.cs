@@ -1044,6 +1044,16 @@ public static class SeedData
                 Actor TEXT NULL
             )
             """);
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS ProcessGroupAssignments (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ProcessName TEXT NOT NULL,
+                Group INTEGER NOT NULL,
+                DisplayName TEXT NULL,
+                UpdatedUtc TEXT NOT NULL
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_ProcessGroupAssignments_ProcessName ON ProcessGroupAssignments(ProcessName)");
 
         // Cost / hardware inventory on Machines
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN PurchaseCost TEXT NULL");
