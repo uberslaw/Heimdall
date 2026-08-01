@@ -161,6 +161,8 @@ public class TrackSoftwareModel(HeimdallDbContext db, ConfigService config) : Pa
         KnownApps = await db.KnownApps.AsNoTracking().OrderBy(a => a.DisplayName).ToListAsync();
 
         var knownNames = new HashSet<string>(KnownApps.Select(a => a.ProcessName), StringComparer.OrdinalIgnoreCase);
+        var soe = await db.SoeApps.AsNoTracking().Select(s => s.ProcessName).ToListAsync(HttpContext.RequestAborted);
+        var soeSet = soe.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var runs = await db.ProcessRuns.AsNoTracking()
             .Select(r => new { r.ProcessName, r.ExecutablePath })
             .ToListAsync();
@@ -177,6 +179,7 @@ public class TrackSoftwareModel(HeimdallDbContext db, ConfigService config) : Pa
                 );
             })
             .Where(d => !knownNames.Contains(d.ProcessName))
+            .Where(d => ProcessClassification.IsProposableForTracking(d.ProcessName, soeSet))
             .OrderBy(d => d.ProcessName, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }

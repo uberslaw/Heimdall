@@ -71,6 +71,13 @@ public static class SoeCatalog
         ("Azure Connected Machine Agent", "azcmagent", "Microsoft")
     ];
 
+    private static readonly HashSet<string> ProcessNameSet = new(
+        Entries.Select(e => e.ProcessName),
+        StringComparer.OrdinalIgnoreCase);
+
+    public static bool Contains(string? processName) =>
+        !string.IsNullOrWhiteSpace(processName) && ProcessNameSet.Contains(processName.Trim());
+
     public static IEnumerable<SoeApp> CreateSeedEntities() =>
         Entries
             .GroupBy(e => e.ProcessName, StringComparer.OrdinalIgnoreCase)

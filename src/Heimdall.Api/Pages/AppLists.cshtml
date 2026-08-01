@@ -1,6 +1,8 @@
 @page
 @model AppListsModel
 @using Heimdall.Api.Data
+@using Heimdall.Api.Services
+@using Heimdall.Shared.Contracts
 @{
     ViewData["Title"] = "App lists";
 }
@@ -29,6 +31,8 @@
     <p class="mb-2 small text-secondary">
         <strong>Pre-approval:</strong> agents still track existing Config includes, known apps enabled by default, and any already-assigned app lists.
         Analysis proposals are <em>not</em> tracked until you Approve all, Approve selected, or Apply team app list.
+        <strong>Core Windows</strong> and <strong>SOE</strong> processes are classified but excluded from proposals by default; only <strong>Specialization</strong> apps are offered for approval.
+        Presence exceptions (winlogon, mstsc, RDP client) remain in Core Windows but are not proposed as trackable apps.
         <strong>Team path</strong> replaces machine auto-discovered lists with that team schema only.
     </p>
     <p class="mb-0 small text-secondary">
@@ -182,7 +186,7 @@
                 <input type="hidden" name="AnalyzeHostname" value="@(Model.FocusHostname ?? Model.LookupHostname)" />
                 <input type="hidden" name="LookupHostname" value="@(Model.FocusHostname ?? Model.LookupHostname)" />
                 <button type="submit" class="btn btn-hd" @(string.IsNullOrEmpty(Model.FocusHostname ?? Model.LookupHostname) ? "disabled" : null)>Analyze apps</button>
-                <span class="text-secondary small ms-2">Discovers non-SOE apps → Pending approval (does not auto-track)</span>
+                <span class="text-secondary small ms-2">Discovers specialization apps → Pending approval (Core Windows &amp; SOE excluded)</span>
             </form>
 
             @if (Model.Lookup is not null && Model.FocusHostname is not null)
@@ -231,34 +235,106 @@
                 <h3 class="h6">Merged processes currently tracked (from lists)</h3>
                 <p class="small font-monospace">@(Model.Lookup.MergedProcesses.Count == 0 ? "—" : string.Join(", ", Model.Lookup.MergedProcesses))</p>
 
+                @if (Model.MachineInventory.Count > 0)
+                {
+                    <hr />
+                    <h3 class="h6">Discovered inventory</h3>
+                    <p class="small text-secondary mb-2">
+                        Processes seen on this machine from agent runs. Grouped as Core Windows, SOE, or Specialization.
+                        Default view hides Core Windows and SOE; toggle to inspect system inventory.
+                    </p>
+                    <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+                        <input type="search" class="form-control hd-table-filter" placeholder="Filter name or path…" data-filter-for="inventory-table" style="max-width:240px" />
+                        <select class="form-select" id="inventory-group-filter" style="max-width:180px">
+                            <option value="">All groups</option>
+                            <option value="Specialization">Specialization</option>
+                            <option value="Soe">SOE</option>
+                            <option value="CoreWindows">Core Windows</option>
+                        </select>
+                        <div class="form-check form-check-inline mb-0">
+                            <input class="form-check-input hd-group-toggle" type="checkbox" id="show-core-windows" data-group="CoreWindows" />
+                            <label class="form-check-label small" for="show-core-windows">Show Core Windows</label>
+                        </div>
+                        <div class="form-check form-check-inline mb-0">
+                            <input class="form-check-input hd-group-toggle" type="checkbox" id="show-soe" data-group="Soe" />
+                            <label class="form-check-label small" for="show-soe">Show SOE</label>
+                        </div>
+                    </div>
+                    <div class="table-responsive" style="max-height:22rem;overflow:auto">
+                        <table class="hd-table hd-sortable mb-0" id="inventory-table">
+                            <thead>
+                                <tr>
+                                    <th data-sort="text">Process</th>
+                                    <th data-sort="text">Path</th>
+                                    <th data-sort="text">Group</th>
+                                    <th data-sort="text">Status</th>
+                                    <th data-sort="text">Source</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (var row in Model.MachineInventory)
+                            {
+                                var groupLabel = AppListsModel.GroupLabel(row.Group);
+                                var statusLabel = AppListsModel.StatusLabel(row.Status);
+                                <tr data-group="@row.Group" class="@(row.Status == AppListService.InventoryStatus.Proposed ? "hd-row-highlight" : null)">
+                                    <td data-sort-value="@row.ProcessName">
+                                        <code>@row.ProcessName</code>
+                                        @if (!string.Equals(row.DisplayName, row.ProcessName, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            <span class="text-secondary small">@row.DisplayName</span>
+                                        }
+                                        @if (row.AllowForPresence)
+                                        {
+                                            <span class="badge-pill badge-rdp ms-1" title="Presence signal only — not proposed for app tracking">signal</span>
+                                        }
+                                    </td>
+                                    <td data-sort-value="@(row.ExecutablePath ?? "")" class="small font-monospace text-secondary">@(string.IsNullOrWhiteSpace(row.ExecutablePath) ? "—" : row.ExecutablePath)</td>
+                                    <td data-sort-value="@groupLabel"><span class="badge-pill badge-group-@row.Group.ToString().ToLowerInvariant()">@groupLabel</span></td>
+                                    <td data-sort-value="@statusLabel">@statusLabel</td>
+                                    <td data-sort-value="@row.Source" class="small">@row.Source</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+
                 @if (status == AppAnalysisStatus.PendingApproval && Model.PendingProposals.Count > 0)
                 {
                     <hr />
-                    <h3 class="h6">Pending approval — proposed non-SOE apps</h3>
-                    <p class="small text-secondary">Choose how to proceed. Nothing below is tracked until you confirm.</p>
+                    <h3 class="h6">Pending approval — proposed specialization apps</h3>
+                    <p class="small text-secondary">Choose how to proceed. Nothing below is tracked until you confirm. Core Windows and SOE are omitted.</p>
 
                     <form method="post" id="approval-form">
                         <input type="hidden" name="AnalyzeHostname" value="@Model.FocusHostname" />
                         <input type="hidden" name="LookupHostname" value="@Model.FocusHostname" />
-                        <table class="hd-table mb-3">
+                        <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+                            <input type="search" class="form-control hd-table-filter" placeholder="Filter proposals…" data-filter-for="proposals-table" style="max-width:220px" />
+                        </div>
+                        <table class="hd-table hd-sortable mb-3" id="proposals-table">
                             <thead>
                                 <tr>
                                     <th style="width:2rem"></th>
-                                    <th>App</th>
-                                    <th>Process</th>
-                                    <th>Source</th>
+                                    <th data-sort="text">App</th>
+                                    <th data-sort="text">Process</th>
+                                    <th data-sort="text">Path</th>
+                                    <th data-sort="text">Group</th>
+                                    <th data-sort="text">Source</th>
                                 </tr>
                             </thead>
                             <tbody>
                             @foreach (var p in Model.PendingProposals)
                             {
-                                <tr>
+                                var groupLabel = AppListsModel.GroupLabel(p.Group);
+                                <tr data-group="@p.Group">
                                     <td>
                                         <input class="form-check-input" type="checkbox" name="SelectedProcesses" value="@p.ProcessName" checked />
                                     </td>
-                                    <td>@p.DisplayName</td>
-                                    <td><code>@p.ProcessName</code></td>
-                                    <td>@p.Source</td>
+                                    <td data-sort-value="@p.DisplayName">@p.DisplayName</td>
+                                    <td data-sort-value="@p.ProcessName"><code>@p.ProcessName</code></td>
+                                    <td data-sort-value="@(p.ExecutablePath ?? "")" class="small font-monospace text-secondary">@(string.IsNullOrWhiteSpace(p.ExecutablePath) ? "—" : p.ExecutablePath)</td>
+                                    <td data-sort-value="@groupLabel"><span class="badge-pill badge-group-specialization">@groupLabel</span></td>
+                                    <td data-sort-value="@p.Source">@p.Source</td>
                                 </tr>
                             }
                             </tbody>
@@ -363,10 +439,39 @@
 
 @section Scripts {
 <script src="~/js/machine-tree.js" asp-append-version="true"></script>
+<script src="~/js/hd-table.js" asp-append-version="true"></script>
 <script>
 (() => {
   const tree = document.getElementById('app-list-tree');
   if (tree && window.HeimdallTree) HeimdallTree.init(tree);
+
+  function applyInventoryVisibility() {
+    const table = document.getElementById('inventory-table');
+    if (!table) return;
+    const showCore = document.getElementById('show-core-windows')?.checked;
+    const showSoe = document.getElementById('show-soe')?.checked;
+    const groupFilter = document.getElementById('inventory-group-filter')?.value || '';
+    const textFilter = document.querySelector('[data-filter-for="inventory-table"]')?.value?.trim().toLowerCase() || '';
+    table.querySelectorAll('tbody tr').forEach(tr => {
+      const group = tr.dataset.group || '';
+      let visible = true;
+      if (group === 'CoreWindows' && !showCore) visible = false;
+      if (group === 'Soe' && !showSoe) visible = false;
+      if (groupFilter && group !== groupFilter) visible = false;
+      if (textFilter && !tr.textContent.toLowerCase().includes(textFilter)) visible = false;
+      tr.style.display = visible ? '' : 'none';
+    });
+  }
+
+  document.querySelectorAll('.hd-group-toggle').forEach(cb => cb.addEventListener('change', applyInventoryVisibility));
+  document.getElementById('inventory-group-filter')?.addEventListener('change', applyInventoryVisibility);
+  document.querySelector('[data-filter-for="inventory-table"]')?.addEventListener('input', applyInventoryVisibility);
+  applyInventoryVisibility();
+
+  if (window.HeimdallTable) {
+    HeimdallTable.initSort(document);
+    HeimdallTable.initTextFilter(document);
+  }
 })();
 </script>
 }

@@ -4,7 +4,6 @@ using System.Text.Json;
 using Heimdall.Api.Data;
 using Heimdall.Shared.Contracts;
 using Microsoft.EntityFrameworkCore;
-
 namespace Heimdall.Api.Services;
 
 public sealed class AppListService(HeimdallDbContext db)
@@ -13,17 +12,6 @@ public sealed class AppListService(HeimdallDbContext db)
     {
         PropertyNameCaseInsensitive = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
-
-    private static readonly HashSet<string> WindowsNoise = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Idle", "System", "Registry", "Memory Compression", "Secure System",
-        "svchost", "csrss", "smss", "wininit", "services", "lsass", "fontdrvhost",
-        "RuntimeBroker", "SearchHost", "ShellExperienceHost", "dwm", "conhost",
-        "explorer", "taskhostw", "sihost", "ctfmon", "dllhost", "WmiPrvSE",
-        "spoolsv", "SearchIndexer", "StartMenuExperienceHost", "TextInputHost",
-        "ApplicationFrameHost", "SystemSettings", "LockApp", "SecurityHealthSystray",
-        "Heimdall.Agent", "dotnet"
     };
 
     public async Task AuditAsync(
@@ -415,12 +403,12 @@ public sealed class AppListService(HeimdallDbContext db)
             .Select(r => new { r.ProcessName, r.ExecutablePath })
             .ToListAsync(ct);
 
-        var candidates = new Dictionary<string, ProposedApp>(StringComparer.OrdinalIgnoreCase);
+        var candidates = new Dictionary<string, MutableCandidate>(StringComparer.OrdinalIgnoreCase);
         foreach (var r in fromRuns)
         {
             var name = ConfigService.NormalizeProcessName(r.ProcessName);
             if (name.Length == 0) continue;
-            candidates[name] = new ProposedApp(name, name, "ProcessRuns");
+            MergeCandidate(candidates, name, name, r.ExecutablePath, "ProcessRuns");
         }
 
         if (inventory is not null)
@@ -429,18 +417,16 @@ public sealed class AppListService(HeimdallDbContext db)
             {
                 var name = ConfigService.NormalizeProcessName(d.ProcessName);
                 if (name.Length == 0) continue;
-                candidates[name] = new ProposedApp(
-                    name,
-                    string.IsNullOrWhiteSpace(d.DisplayName) ? name : d.DisplayName.Trim(),
-                    "AgentInventory");
+                var display = string.IsNullOrWhiteSpace(d.DisplayName) ? name : d.DisplayName.Trim();
+                MergeCandidate(candidates, name, display, d.ExecutablePath, "AgentInventory");
             }
         }
 
         var proposals = candidates.Values
-            .Where(p => !soe.Contains(p.ProcessName) && !WindowsNoise.Contains(p.ProcessName))
+            .Select(c => ToProposedApp(c, soe))
+            .Where(p => ProcessClassification.IsProposableForTracking(p.ProcessName, soe))
             .OrderBy(p => p.ProcessName, StringComparer.OrdinalIgnoreCase)
             .ToList();
-
         if (proposals.Count == 0 && requestAgentInventoryIfEmpty)
         {
             machine.PendingAppAnalysis = true;
@@ -458,9 +444,8 @@ public sealed class AppListService(HeimdallDbContext db)
         await db.SaveChangesAsync(ct);
 
         await AuditAsync("analyzed",
-            $"Analysis for {hostname}: {proposals.Count} non-SOE app(s) pending approval. Pre-approval tracking = existing config includes + known defaults + already-assigned app lists only.",
+            $"Analysis for {hostname}: {proposals.Count} specialization app(s) pending approval (Core Windows and SOE excluded by default). Pre-approval tracking = existing config includes + known defaults + already-assigned app lists only.",
             hostname: hostname, ct: ct);
-
         return new AnalysisResult(hostname, proposals, AppAnalysisStatus.PendingApproval, queuedForAgent: false);
     }
 
@@ -607,6 +592,123 @@ public sealed class AppListService(HeimdallDbContext db)
             hostname: hostname, ct: ct);
     }
 
+    public async Task<IReadOnlyList<ClassifiedProcessRow>> GetMachineInventoryAsync(string hostname, CancellationToken ct)
+    {
+        var machine = await db.Machines.AsNoTracking().FirstOrDefaultAsync(m => m.Hostname == hostname, ct);
+        if (machine is null)
+            return [];
+
+        var soe = (await db.SoeApps.AsNoTracking().Select(s => s.ProcessName).ToListAsync(ct))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var tracked = (await ResolveProcessNamesForHostAsync(hostname, ct))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var proposals = DeserializeProposals(machine.AppAnalysisProposalJson)
+            .ToDictionary(p => p.ProcessName, StringComparer.OrdinalIgnoreCase);
+
+        var fromRuns = await db.ProcessRuns.AsNoTracking()
+            .Where(r => r.MachineId == machine.Id)
+            .Select(r => new { r.ProcessName, r.ExecutablePath })
+            .ToListAsync(ct);
+
+        var map = new Dictionary<string, MutableCandidate>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in fromRuns)
+        {
+            var name = ConfigService.NormalizeProcessName(r.ProcessName);
+            if (name.Length == 0) continue;
+            MergeCandidate(map, name, name, r.ExecutablePath, "ProcessRuns");
+        }
+
+        foreach (var p in proposals.Values)
+            MergeCandidate(map, p.ProcessName, p.DisplayName, p.ExecutablePath, p.Source);
+
+        return map.Values
+            .Select(c =>
+            {
+                var row = ToProposedApp(c, soe);
+                var status = ResolveInventoryStatus(row, tracked, proposals);
+                return new ClassifiedProcessRow(
+                    row.ProcessName,
+                    row.DisplayName,
+                    row.ExecutablePath,
+                    row.Source,
+                    row.Group,
+                    row.AllowForPresence,
+                    row.ExcludedFromDefaultTracking,
+                    status);
+            })
+            .OrderBy(r => ProcessClassification.GroupSortOrder(r.Group))
+            .ThenBy(r => r.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static void MergeCandidate(
+        Dictionary<string, MutableCandidate> map,
+        string processName,
+        string displayName,
+        string? executablePath,
+        string source)
+    {
+        if (map.TryGetValue(processName, out var existing))
+        {
+            if (string.IsNullOrWhiteSpace(existing.ExecutablePath) && !string.IsNullOrWhiteSpace(executablePath))
+                existing.ExecutablePath = executablePath.Trim();
+            if (!string.Equals(existing.DisplayName, displayName, StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(displayName)
+                && displayName != processName)
+            {
+                existing.DisplayName = displayName;
+            }
+            if (string.Equals(source, "AgentInventory", StringComparison.OrdinalIgnoreCase))
+                existing.Source = source;
+            return;
+        }
+
+        map[processName] = new MutableCandidate
+        {
+            ProcessName = processName,
+            DisplayName = displayName,
+            ExecutablePath = string.IsNullOrWhiteSpace(executablePath) ? null : executablePath.Trim(),
+            Source = source
+        };
+    }
+
+    private static ProposedApp ToProposedApp(MutableCandidate candidate, IReadOnlySet<string> soe)
+    {
+        var classification = ProcessClassification.Classify(candidate.ProcessName, soe);
+        return new ProposedApp(
+            candidate.ProcessName,
+            candidate.DisplayName,
+            candidate.Source,
+            candidate.ExecutablePath,
+            classification.Group,
+            classification.AllowForPresence,
+            classification.ExcludedFromDefaultTracking);
+    }
+
+    private static InventoryStatus ResolveInventoryStatus(
+        ProposedApp row,
+        IReadOnlySet<string> tracked,
+        IReadOnlyDictionary<string, ProposedApp> proposals)
+    {
+        if (tracked.Contains(row.ProcessName))
+            return InventoryStatus.Tracked;
+        if (proposals.ContainsKey(row.ProcessName))
+            return InventoryStatus.Proposed;
+        if (row.ExcludedFromDefaultTracking)
+            return InventoryStatus.Excluded;
+        return InventoryStatus.Available;
+    }
+
+    private sealed class MutableCandidate
+    {
+        public required string ProcessName { get; init; }
+        public string DisplayName { get; set; } = "";
+        public string? ExecutablePath { get; set; }
+        public string Source { get; set; } = "ProcessRuns";
+    }
+
     public async Task QueueFirstSeenAnalysisAsync(Machine machine, CancellationToken ct)
     {
         if (machine.AppsAnalyzedAt is not null || machine.AppAnalysisStatus != AppAnalysisStatus.None)
@@ -706,9 +808,34 @@ public sealed class AppListService(HeimdallDbContext db)
 
     private record UploadRow(string ListName, string ProcessName, string? DisplayName, string? TeamHint);
 
-    public record ProposedApp(string ProcessName, string DisplayName, string Source);
-    public record AnalysisResult(string Hostname, IReadOnlyList<ProposedApp> Proposals, AppAnalysisStatus Status, bool queuedForAgent);
-    public record ActiveAppListInfo(int AppListId, string Name, string? TeamName, ConfigScope Scope, string? ScopeValue, bool IsAutoDiscovered, int EntryCount);
+    public record ProposedApp(
+        string ProcessName,
+        string DisplayName,
+        string Source,
+        string? ExecutablePath = null,
+        AppGroup Group = AppGroup.Specialization,
+        bool AllowForPresence = false,
+        bool ExcludedFromDefaultTracking = false);
+
+    public enum InventoryStatus
+    {
+        Excluded,
+        Available,
+        Proposed,
+        Tracked
+    }
+
+    public record ClassifiedProcessRow(
+        string ProcessName,
+        string DisplayName,
+        string? ExecutablePath,
+        string Source,
+        AppGroup Group,
+        bool AllowForPresence,
+        bool ExcludedFromDefaultTracking,
+        InventoryStatus Status);
+
+    public record AnalysisResult(string Hostname, IReadOnlyList<ProposedApp> Proposals, AppAnalysisStatus Status, bool queuedForAgent);    public record ActiveAppListInfo(int AppListId, string Name, string? TeamName, ConfigScope Scope, string? ScopeValue, bool IsAutoDiscovered, int EntryCount);
     public record MachineAppListsView(string Hostname, IReadOnlyList<ActiveAppListInfo> ActiveLists, IReadOnlyList<string> MergedProcesses, AppAnalysisStatus AnalysisStatus, IReadOnlyList<ProposedApp> PendingProposals);
     public record TeamAppListOption(int AppListId, string ListName, string? TeamName, int EntryCount, bool MatchesMachineUsers, IReadOnlyList<string> ProcessNames);
 }

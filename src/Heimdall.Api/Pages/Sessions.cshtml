@@ -1,71 +1,282 @@
 @page
+@using Heimdall.Shared.Contracts
 @model SessionsModel
 @{
     ViewData["Title"] = "Sessions";
-    string Fmt(long seconds) => TimeSpan.FromSeconds(seconds).ToString(@"d\.hh\:mm\:ss");
+    var snap = Model.Snapshot;
+    var shortLabel = Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d";
 }
 
 <h1 class="hd-title">Sessions</h1>
-<p class="hd-sub">Local and inbound RDP logons · active vs disconnected time</p>
+<p class="hd-sub">Local and inbound RDP logons · usage by machine · disconnected app activity</p>
 
-<div class="hd-panel">
-    <table class="hd-table">
-        <thead>
-            <tr>
-                <th>Machine</th>
-                <th>User</th>
-                <th>Team</th>
-                <th>Type</th>
-                <th>State</th>
-                <th>Started</th>
-                <th>Ended</th>
-                <th>Active</th>
-                <th>Disconnected</th>
-                <th>Client</th>
-            </tr>
-        </thead>
-        <tbody>
-        @if (Model.Rows.Count == 0)
-        {
-            <tr><td colspan="10">No sessions recorded yet.</td></tr>
-        }
-        @foreach (var s in Model.Rows)
-        {
-            <tr>
-                <td>@s.Hostname</td>
-                <td>@(string.IsNullOrEmpty(s.Domain) ? s.Username : $"{s.Domain}\\{s.Username}")</td>
-                <td>@(s.TeamName ?? "—")</td>
-                <td>
-                    @if (s.SessionType == Heimdall.Shared.Contracts.SessionType.Rdp)
+<form method="get" class="hd-panel mb-3">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-4 col-lg-3">
+            <label class="form-label" for="util-range">Period</label>
+            <select class="form-select" name="range" id="util-range">
+                @foreach (var opt in IndexModel.RangeOptions)
+                {
+                    if (Model.Range == opt.Key)
                     {
-                        <span class="badge-pill badge-rdp">Inbound RDP</span>
+                        <option value="@opt.Key" selected>@opt.Label</option>
                     }
                     else
                     {
-                        <span class="badge-pill badge-local">Local</span>
+                        <option value="@opt.Key">@opt.Label</option>
                     }
-                </td>
-                <td>
-                    @switch (s.State)
-                    {
-                        case Heimdall.Shared.Contracts.SessionState.Active:
-                            <span class="badge-pill badge-active">Active</span>
-                            break;
-                        case Heimdall.Shared.Contracts.SessionState.Disconnected:
-                            <span class="badge-pill badge-disc">Disconnected</span>
-                            break;
-                        default:
-                            <span class="badge-pill badge-ended">Ended</span>
-                            break;
-                    }
-                </td>
-                <td>@s.StartedAtUtc.ToLocalTime().ToString("g")</td>
-                <td>@(s.EndedAtUtc?.ToLocalTime().ToString("g") ?? "—")</td>
-                <td>@Fmt(s.ActiveSeconds)</td>
-                <td>@Fmt(s.DisconnectedSeconds)</td>
-                <td>@(s.ClientName ?? s.ClientAddress ?? "—")</td>
-            </tr>
+                }
+            </select>
+        </div>
+        <div class="col-md-4 col-lg-5">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="hideSystem" value="true" id="hide-system" @(Model.HideSystem ? "checked" : null) />
+                <label class="form-check-label" for="hide-system">Hide system processes (SOE / Windows noise)</label>
+            </div>
+            <div class="form-check mt-1">
+                <input class="form-check-input" type="checkbox" name="onlyDisconnectedApps" value="true" id="only-disc-apps" @(Model.OnlyDisconnectedApps ? "checked" : null) />
+                <label class="form-check-label" for="only-disc-apps">Only sessions with app activity while disconnected</label>
+            </div>
+        </div>
+        <div class="col-md-3 col-lg-2">
+            <button type="submit" class="btn btn-hd w-100">Apply</button>
+        </div>
+    </div>
+</form>
+
+@if (snap is null)
+{
+    <div class="hd-panel"><p class="mb-0 text-secondary">Loading…</p></div>
+}
+else
+{
+    <div class="hd-grid mb-3">
+        <div class="hd-stat">
+            <div class="label">Sessions (@shortLabel)</div>
+            <div class="value">@snap.Totals.SessionCount</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Active time</div>
+            <div class="value" style="font-size:1.1rem;">@SessionsModel.FormatDuration(snap.Totals.ActiveSeconds)</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Disconnected time</div>
+            <div class="value" style="font-size:1.1rem;">@SessionsModel.FormatDuration(snap.Totals.DisconnectedSeconds)</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Local / RDP</div>
+            <div class="value" style="font-size:1.1rem;">@snap.Totals.LocalCount / @snap.Totals.RdpCount</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Disc. + apps</div>
+            <div class="value">@snap.Totals.DisconnectedWithAppCount</div>
+        </div>
+    </div>
+
+    <div class="hd-panel mb-3">
+        <h2 class="hd-section-title">By machine</h2>
+        <p class="text-secondary small">
+            Select one or more machines, then Apply, to show the full session list below.
+            @if (!snap.ShowSessionDetails)
+            {
+                <span>Or <a href="@Url.Page("/Sessions", new { range = Model.Range, hideSystem = Model.HideSystem, onlyDisconnectedApps = Model.OnlyDisconnectedApps, hosts = snap.MachineSummaries.Select(m => m.Hostname).ToArray() })">view all @snap.MachineSummaries.Count machines</a>.</span>
+            }
+        </p>
+
+        @if (snap.MachineSummaries.Count == 0)
+        {
+            <p class="text-secondary mb-0">No sessions in this period.</p>
         }
-        </tbody>
-    </table>
-</div>
+        else
+        {
+            <form method="get" id="machine-select-form">
+                <input type="hidden" name="range" value="@Model.Range" />
+                @if (Model.HideSystem)
+                {
+                    <input type="hidden" name="hideSystem" value="true" />
+                }
+                @if (Model.OnlyDisconnectedApps)
+                {
+                    <input type="hidden" name="onlyDisconnectedApps" value="true" />
+                }
+                <table class="hd-table hd-sortable" id="sessions-by-machine">
+                    <thead>
+                        <tr>
+                            <th style="width:2.5rem;">
+                                <input type="checkbox" id="select-all-hosts" title="Select all" />
+                            </th>
+                            <th data-sort="text">Machine</th>
+                            <th data-sort="num" data-default-desc>Sessions</th>
+                            <th data-sort="num">Active</th>
+                            <th data-sort="num">Disconnected</th>
+                            <th data-sort="num">Local</th>
+                            <th data-sort="num">RDP</th>
+                            <th data-sort="num">Open</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var m in snap.MachineSummaries)
+                    {
+                        var isChecked = Model.Hosts.Contains(m.Hostname, StringComparer.OrdinalIgnoreCase);
+                        <tr>
+                            <td>
+                                <input type="checkbox" class="host-checkbox" name="hosts" value="@m.Hostname" @(isChecked ? "checked" : null) />
+                            </td>
+                            <td>
+                                <a asp-page="/Machine" asp-route-hostname="@m.Hostname" asp-route-range="@Model.Range">@m.Hostname</a>
+                            </td>
+                            <td>@m.SessionCount</td>
+                            <td>@SessionsModel.FormatDuration(m.ActiveSeconds)</td>
+                            <td>@SessionsModel.FormatDuration(m.DisconnectedSeconds)</td>
+                            <td>@m.LocalCount</td>
+                            <td>@m.RdpCount</td>
+                            <td>@m.OpenCount</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+                <div class="mt-3 d-flex gap-2 flex-wrap">
+                    <button type="submit" class="btn btn-hd">Show selected sessions</button>
+                    <button type="button" class="btn btn-outline-secondary" id="clear-hosts">Clear selection</button>
+                </div>
+            </form>
+        }
+    </div>
+
+    @if (snap.ShowSessionDetails)
+    {
+        <div class="hd-panel">
+            <h2 class="hd-section-title">Session log</h2>
+            @if (Model.SessionRows.Count == 0)
+            {
+                <p class="text-secondary mb-0">No sessions match the current filters.</p>
+            }
+            else
+            {
+                <table class="hd-table hd-sortable" id="sessions-detail">
+                    <thead>
+                        <tr>
+                            <th data-sort="text">Machine</th>
+                            <th data-sort="text">User</th>
+                            <th data-sort="text">Team</th>
+                            <th data-sort="text">Type</th>
+                            <th data-sort="text">State</th>
+                            <th data-sort="date">Started</th>
+                            <th data-sort="date">Ended</th>
+                            <th data-sort="num">Active</th>
+                            <th data-sort="num">Disconnected</th>
+                            <th data-sort="text">Disc. apps</th>
+                            <th data-sort="text">Client</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var s in Model.SessionRows)
+                    {
+                        <tr class="@(s.HadAppActivityWhileDisconnected ? "hd-row-highlight" : null)">
+                            <td>@s.Hostname</td>
+                            <td>@(string.IsNullOrEmpty(s.Domain) ? s.Username : $"{s.Domain}\\{s.Username}")</td>
+                            <td>@(s.TeamName ?? "—")</td>
+                            <td>
+                                @if (s.SessionType == SessionType.Rdp)
+                                {
+                                    <span class="badge-pill badge-rdp">Inbound RDP</span>
+                                }
+                                else
+                                {
+                                    <span class="badge-pill badge-local">Local</span>
+                                }
+                            </td>
+                            <td>
+                                @switch (s.State)
+                                {
+                                    case SessionState.Active:
+                                        <span class="badge-pill badge-active">Active</span>
+                                        break;
+                                    case SessionState.Disconnected:
+                                        <span class="badge-pill badge-disc">Disconnected</span>
+                                        break;
+                                    default:
+                                        <span class="badge-pill badge-ended">Ended</span>
+                                        break;
+                                }
+                            </td>
+                            <td>@s.StartedAtUtc.ToLocalTime().ToString("g")</td>
+                            <td>@(s.EndedAtUtc?.ToLocalTime().ToString("g") ?? "—")</td>
+                            <td>@SessionsModel.FormatDuration(s.ActiveSeconds)</td>
+                            <td>@SessionsModel.FormatDuration(s.DisconnectedSeconds)</td>
+                            <td>
+                                @if (s.HadAppActivityWhileDisconnected)
+                                {
+                                    <span class="badge-pill badge-warn" title="@string.Join(", ", s.AppProcesses)">Yes · @s.AppProcesses.Count</span>
+                                    <span class="text-secondary small d-block">@string.Join(", ", s.AppProcesses.Take(3))@(s.AppProcesses.Count > 3 ? "…" : "")</span>
+                                }
+                                else if (s.DisconnectedSeconds > 0)
+                                {
+                                    <span class="text-secondary">—</span>
+                                }
+                                else
+                                {
+                                    <span class="text-secondary">n/a</span>
+                                }
+                            </td>
+                            <td>@(s.ClientName ?? s.ClientAddress ?? "—")</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        </div>
+    }
+}
+
+@section Scripts {
+<script>
+(function () {
+    var selectAll = document.getElementById('select-all-hosts');
+    var boxes = document.querySelectorAll('.host-checkbox');
+    if (selectAll && boxes.length) {
+        selectAll.addEventListener('change', function () {
+            boxes.forEach(function (cb) { cb.checked = selectAll.checked; });
+        });
+    }
+    var clearBtn = document.getElementById('clear-hosts');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', function () {
+            boxes.forEach(function (cb) { cb.checked = false; });
+            if (selectAll) selectAll.checked = false;
+        });
+    }
+
+    document.querySelectorAll('table.hd-sortable').forEach(function (table) {
+        var headers = [].slice.call(table.querySelectorAll('thead th[data-sort]'));
+        headers.forEach(function (th, colIdx) {
+            th.style.cursor = 'pointer';
+            th.addEventListener('click', function () {
+                var type = th.dataset.sort;
+                var tbody = table.tBodies[0];
+                var rows = [].slice.call(tbody.querySelectorAll('tr')).filter(function (r) { return r.children.length > 1; });
+                var asc = th.dataset.dir !== 'asc';
+                headers.forEach(function (h) { h.dataset.dir = ''; h.classList.remove('sorted-asc', 'sorted-desc'); });
+                th.dataset.dir = asc ? 'asc' : 'desc';
+                th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
+                rows.sort(function (a, b) {
+                    var ca = a.children[colIdx], cb = b.children[colIdx];
+                    var va = (ca && (ca.dataset.sortValue || ca.textContent)) || '';
+                    var vb = (cb && (cb.dataset.sortValue || cb.textContent)) || '';
+                    if (type === 'num') {
+                        va = parseFloat(va); vb = parseFloat(vb);
+                        if (Number.isNaN(va)) va = -Infinity;
+                        if (Number.isNaN(vb)) vb = -Infinity;
+                        return asc ? va - vb : vb - va;
+                    }
+                    va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
+                    return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+                });
+                rows.forEach(function (r) { tbody.appendChild(r); });
+            });
+            if (th.dataset.defaultDesc !== undefined) th.click();
+        });
+    });
+})();
+</script>
+}

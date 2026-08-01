@@ -19,6 +19,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists) : Page
     public AppListService.AnalysisResult? Analysis { get; private set; }
     public IReadOnlyList<AppListService.TeamAppListOption> TeamOptions { get; private set; } = [];
     public List<AppListService.ProposedApp> PendingProposals { get; private set; } = [];
+    public IReadOnlyList<AppListService.ClassifiedProcessRow> MachineInventory { get; private set; } = [];
     public string? FocusHostname { get; private set; }
     public AppAnalysisStatus? FocusStatus { get; private set; }
 
@@ -233,6 +234,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists) : Page
         Lookup = await appLists.GetEffectiveForHostAsync(hostname, HttpContext.RequestAborted);
         TeamOptions = await appLists.GetTeamListsForHostAsync(hostname, HttpContext.RequestAborted);
         PendingProposals = Lookup.PendingProposals.ToList();
+        MachineInventory = await appLists.GetMachineInventoryAsync(hostname, HttpContext.RequestAborted);
         FocusStatus = Lookup.AnalysisStatus;
         AnalyzeHostname = hostname;
     }
@@ -331,4 +333,14 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists) : Page
     }
 
     public record AppListRow(int Id, string Name, string? TeamName, int EntryCount, int AssignmentCount, bool IsAutoDiscovered, DateTimeOffset UpdatedUtc);
+
+    public static string GroupLabel(AppGroup group) => ProcessClassification.GroupLabel(group);
+
+    public static string StatusLabel(AppListService.InventoryStatus status) => status switch
+    {
+        AppListService.InventoryStatus.Tracked => "Tracked",
+        AppListService.InventoryStatus.Proposed => "Proposed",
+        AppListService.InventoryStatus.Available => "Available",
+        _ => "Excluded"
+    };
 }

@@ -155,6 +155,149 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
             ToUtc: toUtc);
     }
 
+    public async Task<SessionsPageSnapshot> QuerySessionsPageAsync(
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc,
+        IReadOnlyList<string>? selectedHostnames = null,
+        bool hideSystemProcesses = true,
+        bool onlyDisconnectedWithApps = false,
+        CancellationToken ct = default)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var machines = await db.Machines.AsNoTracking().ToListAsync(ct);
+        var hostnameById = machines.ToDictionary(m => m.Id, m => m.Hostname);
+
+        var sessions = FilterSessionsInWindow(
+                await db.Sessions.AsNoTracking().ToListAsync(ct),
+                fromUtc,
+                toUtc)
+            .ToList();
+
+        var runs = FilterRunsInWindow(
+                await db.ProcessRuns.AsNoTracking().ToListAsync(ct),
+                fromUtc,
+                toUtc)
+            .ToList();
+
+        HashSet<string>? noise = null;
+        if (hideSystemProcesses)
+        {
+            var soe = await db.SoeApps.AsNoTracking().Select(s => s.ProcessName).ToListAsync(ct);
+            noise = ProcessNoiseFilter.BuildExcludeSet(soeProcessNames: soe);
+            runs = runs.Where(r => !ProcessNoiseFilter.IsExcluded(r.ProcessName, noise)).ToList();
+        }
+
+        var runsByMachine = runs.GroupBy(r => r.MachineId).ToDictionary(g => g.Key, g => g.ToList());
+
+        var hostFilter = selectedHostnames is { Count: > 0 }
+            ? selectedHostnames.ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
+
+        var machineSummaries = sessions
+            .GroupBy(s => s.MachineId)
+            .Select(g =>
+            {
+                var hostname = hostnameById.GetValueOrDefault(g.Key) ?? $"#{g.Key}";
+                long active = 0, disconnected = 0;
+                foreach (var s in g)
+                {
+                    var (a, d) = SessionMetricsInWindow(s, fromUtc, toUtc, now);
+                    active += a;
+                    disconnected += d;
+                }
+
+                return new SessionMachineSummaryRow(
+                    Hostname: hostname,
+                    SessionCount: g.Count(),
+                    ActiveSeconds: active,
+                    DisconnectedSeconds: disconnected,
+                    LocalCount: g.Count(s => s.SessionType == SessionType.Local),
+                    RdpCount: g.Count(s => s.SessionType == SessionType.Rdp),
+                    OpenCount: g.Count(s => s.State != SessionState.Ended));
+            })
+            .OrderBy(m => m.Hostname, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        IEnumerable<UserSession> detailSessions = sessions;
+        if (hostFilter is not null)
+        {
+            detailSessions = sessions.Where(s =>
+            {
+                var host = hostnameById.GetValueOrDefault(s.MachineId);
+                return host is not null && hostFilter.Contains(host);
+            });
+        }
+
+        var detailRows = new List<SessionDetailRow>();
+        foreach (var s in detailSessions.OrderByDescending(s => s.LastObservedUtc))
+        {
+            var hostname = hostnameById.GetValueOrDefault(s.MachineId) ?? $"#{s.MachineId}";
+            var machineRuns = runsByMachine.GetValueOrDefault(s.MachineId) ?? [];
+            var matchingRuns = machineRuns
+                .Where(r => UsersMatch(s, r) && RunOverlapsSession(r, s, now))
+                .ToList();
+
+            var appProcesses = matchingRuns
+                .Select(r => r.ProcessName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var hadAppsWhileDisconnected = s.DisconnectedSeconds > 0 && appProcesses.Count > 0;
+
+            if (onlyDisconnectedWithApps && !hadAppsWhileDisconnected)
+                continue;
+
+            detailRows.Add(new SessionDetailRow(
+                Hostname: hostname,
+                Username: s.Username,
+                Domain: s.Domain,
+                SessionType: s.SessionType,
+                State: s.State,
+                StartedAtUtc: s.StartedAtUtc,
+                EndedAtUtc: s.EndedAtUtc,
+                LastObservedUtc: s.LastObservedUtc,
+                ActiveSeconds: s.ActiveSeconds,
+                DisconnectedSeconds: s.DisconnectedSeconds,
+                ClientName: s.ClientName,
+                ClientAddress: s.ClientAddress,
+                HadAppActivityWhileDisconnected: hadAppsWhileDisconnected,
+                AppProcesses: appProcesses));
+        }
+
+        var scopedForTotals = hostFilter is null
+            ? sessions
+            : sessions.Where(s =>
+            {
+                var host = hostnameById.GetValueOrDefault(s.MachineId);
+                return host is not null && hostFilter.Contains(host);
+            }).ToList();
+
+        long totalActive = 0, totalDisconnected = 0;
+        foreach (var s in scopedForTotals)
+        {
+            var (a, d) = SessionMetricsInWindow(s, fromUtc, toUtc, now);
+            totalActive += a;
+            totalDisconnected += d;
+        }
+
+        var totals = new SessionsTotals(
+            SessionCount: scopedForTotals.Count,
+            ActiveSeconds: totalActive,
+            DisconnectedSeconds: totalDisconnected,
+            LocalCount: scopedForTotals.Count(s => s.SessionType == SessionType.Local),
+            RdpCount: scopedForTotals.Count(s => s.SessionType == SessionType.Rdp),
+            DisconnectedWithAppCount: detailRows.Count(r => r.HadAppActivityWhileDisconnected));
+
+        return new SessionsPageSnapshot(
+            FromUtc: fromUtc,
+            ToUtc: toUtc,
+            Totals: totals,
+            MachineSummaries: machineSummaries,
+            Sessions: detailRows,
+            ShowSessionDetails: hostFilter is not null);
+    }
+
     public async Task<ApplicationDetailSnapshot> QueryApplicationDetailAsync(
         string processName,
         DateTimeOffset fromUtc,
@@ -455,6 +598,55 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
         return Math.Max(0, (end - start).TotalSeconds);
     }
 
+    private static List<UserSession> FilterSessionsInWindow(
+        List<UserSession> sessions, DateTimeOffset fromUtc, DateTimeOffset toUtc) =>
+        sessions.Where(s => s.StartedAtUtc < toUtc && (s.EndedAtUtc ?? s.LastObservedUtc) >= fromUtc).ToList();
+
+    private static (long Active, long Disconnected) SessionMetricsInWindow(
+        UserSession s, DateTimeOffset fromUtc, DateTimeOffset toUtc, DateTimeOffset now)
+    {
+        var overlap = SessionOverlapSeconds(s, fromUtc, toUtc, now);
+        if (overlap <= 0)
+            return (0, 0);
+
+        var total = s.ActiveSeconds + s.DisconnectedSeconds;
+        if (total <= 0)
+            return ((long)overlap, 0);
+
+        var ratio = overlap / total;
+        return ((long)(s.ActiveSeconds * ratio), (long)(s.DisconnectedSeconds * ratio));
+    }
+
+    private static bool RunOverlapsSession(ProcessRun run, UserSession session, DateTimeOffset now)
+    {
+        var sessionEnd = session.EndedAtUtc ?? session.LastObservedUtc;
+        if (sessionEnd < now)
+            sessionEnd = session.LastObservedUtc;
+
+        var runEnd = run.EndedAtUtc ?? run.LastSeenAtUtc;
+        return run.StartedAtUtc < sessionEnd && runEnd > session.StartedAtUtc;
+    }
+
+    private static bool UsersMatch(UserSession session, ProcessRun run)
+    {
+        var sessionKeys = UserMatchKeys(session.Username, session.Domain).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return UserMatchKeys(run.Username, null).Any(sessionKeys.Contains);
+    }
+
+    private static IEnumerable<string> UserMatchKeys(string username, string? domain)
+    {
+        var normalized = NormalizeUser(username, domain);
+        if (string.IsNullOrWhiteSpace(normalized))
+            yield break;
+
+        yield return normalized;
+        var slash = normalized.IndexOf('\\');
+        if (slash >= 0 && slash < normalized.Length - 1)
+            yield return normalized[(slash + 1)..];
+        else
+            yield return normalized;
+    }
+
     private static List<ProcessRun> FilterRunsInWindow(
         List<ProcessRun> runs, DateTimeOffset fromUtc, DateTimeOffset toUtc) =>
         runs.Where(r => r.StartedAtUtc < toUtc && (r.EndedAtUtc ?? r.LastSeenAtUtc) >= fromUtc).ToList();
@@ -584,3 +776,44 @@ public sealed record AppUserUsageRow(
     double TotalOpenSeconds,
     double AvgRunSeconds,
     DateTimeOffset LastUsedUtc);
+
+public sealed record SessionsPageSnapshot(
+    DateTimeOffset FromUtc,
+    DateTimeOffset ToUtc,
+    SessionsTotals Totals,
+    IReadOnlyList<SessionMachineSummaryRow> MachineSummaries,
+    IReadOnlyList<SessionDetailRow> Sessions,
+    bool ShowSessionDetails);
+
+public sealed record SessionsTotals(
+    int SessionCount,
+    long ActiveSeconds,
+    long DisconnectedSeconds,
+    int LocalCount,
+    int RdpCount,
+    int DisconnectedWithAppCount);
+
+public sealed record SessionMachineSummaryRow(
+    string Hostname,
+    int SessionCount,
+    long ActiveSeconds,
+    long DisconnectedSeconds,
+    int LocalCount,
+    int RdpCount,
+    int OpenCount);
+
+public sealed record SessionDetailRow(
+    string Hostname,
+    string Username,
+    string? Domain,
+    SessionType SessionType,
+    SessionState State,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset? EndedAtUtc,
+    DateTimeOffset LastObservedUtc,
+    long ActiveSeconds,
+    long DisconnectedSeconds,
+    string? ClientName,
+    string? ClientAddress,
+    bool HadAppActivityWhileDisconnected,
+    IReadOnlyList<string> AppProcesses);
