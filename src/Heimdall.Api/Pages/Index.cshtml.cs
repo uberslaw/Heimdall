@@ -1,4 +1,5 @@
 using Heimdall.Api.Data;
+using Heimdall.Api.Services;
 using Heimdall.Shared.Contracts;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -9,6 +10,7 @@ namespace Heimdall.Api.Pages;
 public class IndexModel(HeimdallDbContext db) : PageModel
 {
     public IReadOnlyList<MachineRow> Machines { get; private set; } = [];
+    public IReadOnlyList<MachineHierarchy.CountryNode> LocationTree { get; private set; } = [];
     public int OnlineCount { get; private set; }
     public int InUseCount { get; private set; }
     public double AvgUtilisationPct { get; private set; }
@@ -18,6 +20,12 @@ public class IndexModel(HeimdallDbContext db) : PageModel
     /// <summary>Utilisation window query key, e.g. 1d, 7d, 2w, 4w, quarter, 6m, year.</summary>
     [BindProperty(SupportsGet = true)]
     public string Range { get; set; } = "7d";
+
+    [BindProperty(SupportsGet = true)]
+    public List<string> SelectedCountries { get; set; } = [];
+
+    [BindProperty(SupportsGet = true)]
+    public List<string> SelectedCities { get; set; } = [];
 
     public static IReadOnlyList<(string Key, string Label, int Days)> RangeOptions { get; } =
     [
@@ -43,6 +51,20 @@ public class IndexModel(HeimdallDbContext db) : PageModel
         var onlineCutoff = now.AddMinutes(-5);
 
         var machines = await db.Machines.AsNoTracking().OrderBy(m => m.Hostname).ToListAsync();
+        foreach (var m in machines)
+            MachineHierarchy.EnsureDefaults(m);
+
+        LocationTree = MachineHierarchy.BuildCountryTree(machines);
+
+        var countryFilter = SelectedCountries.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList();
+        var cityFilter = SelectedCities.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList();
+        if (countryFilter.Count > 0 || cityFilter.Count > 0)
+        {
+            machines = machines
+                .Where(m => MachineHierarchy.MatchesLocationFilter(m, countryFilter, cityFilter))
+                .ToList();
+        }
+
         // SQLite EF cannot translate nullable DateTimeOffset comparisons; filter in memory for POC.
         var sessions = (await db.Sessions.AsNoTracking().ToListAsync())
             .Where(s => s.StartedAtUtc >= since || s.EndedAtUtc is null || s.EndedAtUtc >= since)

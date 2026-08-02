@@ -35,7 +35,7 @@ else if (d is not null)
     <div class="hd-grid mb-3">
         <div class="hd-stat">
             <div class="label">Total time open</div>
-            <div class="value">@ApplicationModel.FormatDuration(d.TotalOpenSeconds)</div>
+            <div class="value">@DurationDisplay.Render(d.TotalOpenSeconds)</div>
         </div>
         <div class="hd-stat">
             <div class="label">Runs</div>
@@ -43,7 +43,7 @@ else if (d is not null)
         </div>
         <div class="hd-stat">
             <div class="label">Avg run time</div>
-            <div class="value">@ApplicationModel.FormatDuration(d.AvgRunSeconds)</div>
+            <div class="value">@DurationDisplay.Render(d.AvgRunSeconds)</div>
         </div>
         <div class="hd-stat">
             <div class="label">Last used</div>
@@ -139,9 +139,9 @@ else if (d is not null)
                                 <strong>@m.Hostname</strong>
                             </a>
                         </td>
-                        <td data-sort-value="@m.TotalOpenSeconds">@ApplicationModel.FormatDuration(m.TotalOpenSeconds)</td>
+                        <td data-sort-value="@m.TotalOpenSeconds">@DurationDisplay.Render(m.TotalOpenSeconds)</td>
                         <td data-sort-value="@m.RunCount">@m.RunCount</td>
-                        <td data-sort-value="@m.AvgRunSeconds">@ApplicationModel.FormatDuration(m.AvgRunSeconds)</td>
+                        <td data-sort-value="@m.AvgRunSeconds">@DurationDisplay.Render(m.AvgRunSeconds)</td>
                         <td data-sort-value="@m.LastUsedUtc.ToUnixTimeSeconds()">@m.LastUsedUtc.ToLocalTime().ToString("g")</td>
                     </tr>
                 }
@@ -166,9 +166,9 @@ else if (d is not null)
                 {
                     <tr>
                         <td><strong>@u.Username</strong></td>
-                        <td data-sort-value="@u.TotalOpenSeconds">@ApplicationModel.FormatDuration(u.TotalOpenSeconds)</td>
+                        <td data-sort-value="@u.TotalOpenSeconds">@DurationDisplay.Render(u.TotalOpenSeconds)</td>
                         <td data-sort-value="@u.RunCount">@u.RunCount</td>
-                        <td data-sort-value="@u.AvgRunSeconds">@ApplicationModel.FormatDuration(u.AvgRunSeconds)</td>
+                        <td data-sort-value="@u.AvgRunSeconds">@DurationDisplay.Render(u.AvgRunSeconds)</td>
                         <td data-sort-value="@u.LastUsedUtc.ToUnixTimeSeconds()">@u.LastUsedUtc.ToLocalTime().ToString("g")</td>
                     </tr>
                 }

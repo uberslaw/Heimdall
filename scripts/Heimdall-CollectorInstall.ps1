@@ -10,6 +10,21 @@
 
 $script:HeimdallDefaultCollectorApiUrl = "http://BNELT5CG5152D8R:5080"
 
+function Resolve-HeimdallFilesystemPath {
+    param([Parameter(Mandatory)][string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $Path }
+    if ($Path -match '^[^:]+::(.+)$') {
+        return $Matches[1]
+    }
+    try {
+        if (Test-Path -LiteralPath $Path) {
+            return (Resolve-Path -LiteralPath $Path).ProviderPath
+        }
+    }
+    catch { }
+    return $Path
+}
+
 function Import-HeimdallVersionCompare {
     param([Parameter(Mandatory)][string]$ScriptDir)
     if (Get-Command Test-HeimdallProductVersionMatch -ErrorAction SilentlyContinue) {
@@ -130,20 +145,22 @@ function Invoke-HeimdallElevatedCollectorInstall {
         [scriptblock]$Log = $null
     )
 
-    $installer = (Resolve-Path -LiteralPath $InstallerCmdPath).Path
-    $payload = (Resolve-Path -LiteralPath $PayloadPath).Path
-    $packDir = Split-Path -Parent $installer
+    $installer = Resolve-HeimdallFilesystemPath -Path $InstallerCmdPath
+    $payload = Resolve-HeimdallFilesystemPath -Path $PayloadPath
+    $packDir = Resolve-HeimdallFilesystemPath -Path (Split-Path -Parent $InstallerCmdPath)
 
     $tempCmd = Join-Path $env:TEMP ("heimdall-install-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + ([guid]::NewGuid().ToString("N")).Substring(0, 6) + ".cmd")
+    $captureLog = Join-Path $env:TEMP ("heimdall-install-capture-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + ([guid]::NewGuid().ToString("N")).Substring(0, 6) + ".log")
 
     $batchLines = @(
         '@echo off'
-        'setlocal EnableExtensions'
+        'setlocal EnableExtensions EnableDelayedExpansion'
         ('cd /d "{0}"' -f $packDir)
         'set HEIMDALL_SKIP_LAUNCH=1'
         'set HEIMDALL_NOPAUSE=1'
-        ('call "{0}" -ApiUrl "{1}" -ApiKey "{2}" -MachineGroup "{3}" -Payload "{4}"' -f $installer, $ApiUrl, $ApiKey, $MachineGroup, $payload)
-        'exit /b %ERRORLEVEL%'
+        ('call "{0}" -ApiUrl "{1}" -ApiKey "{2}" -MachineGroup "{3}" -Payload "{4}" > "{5}" 2>&1' -f $installer, $ApiUrl, $ApiKey, $MachineGroup, $payload, $captureLog)
+        'set EC=!ERRORLEVEL!'
+        'exit /b !EC!'
     )
     $batchContent = ($batchLines -join "`r`n") + "`r`n"
     [System.IO.File]::WriteAllText($tempCmd, $batchContent, [System.Text.Encoding]::ASCII)
@@ -158,9 +175,13 @@ function Invoke-HeimdallElevatedCollectorInstall {
         if (-not $AlreadyElevated) {
             $startParams['Verb'] = 'RunAs'
         }
+        else {
+            $startParams['WindowStyle'] = 'Hidden'
+        }
         if ($Log) {
-            $elevNote = if ($AlreadyElevated) { "already elevated" } else { "RunAs UAC" }
+            $elevNote = if ($AlreadyElevated) { "already elevated (console captured to log)" } else { "RunAs UAC" }
             & $Log "Starting installer via temp wrapper ($elevNote)" "INFO"
+            & $Log "Service install capture: $captureLog" "INFO"
         }
         $proc = Start-Process @startParams
         while ($proc -and -not $proc.HasExited) {
@@ -175,18 +196,38 @@ function Invoke-HeimdallElevatedCollectorInstall {
             }
             Start-Sleep -Milliseconds 150
         }
+        $exitCode = -1
         if ($proc) {
             $proc.Refresh()
-            return [int]$proc.ExitCode
+            $exitCode = [int]$proc.ExitCode
         }
-        return -1
+        if (Test-Path -LiteralPath $captureLog) {
+            try {
+                $captureLines = @(Get-Content -LiteralPath $captureLog -ErrorAction Stop)
+                if ($Log -and $captureLines.Count -gt 0) {
+                    $capLevel = if ($exitCode -eq 0) { "INFO" } else { "ERROR" }
+                    & $Log "Service install console output:" $capLevel
+                    foreach ($line in $captureLines) {
+                        & $Log "  install> $line" $capLevel
+                    }
+                }
+            }
+            catch {
+                if ($Log) { & $Log "Could not read service install capture: $($_.Exception.Message)" "WARN" }
+            }
+        }
+        elseif ($Log -and $exitCode -ne 0) {
+            & $Log "Service install produced no console capture at $captureLog" "WARN"
+        }
+        return $exitCode
     }
     finally {
         Remove-Item -LiteralPath $tempCmd -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $captureLog -Force -ErrorAction SilentlyContinue
     }
 }
 
-function Get-HeimdallInstallWorkstationCollectorLogTail {
+function Get-HeimdallInstallAgentLogTail {
     param(
         [int]$LineCount = 30,
         [string]$LogRoot = (Join-Path $env:ProgramData "Heimdall\logs")
@@ -194,7 +235,11 @@ function Get-HeimdallInstallWorkstationCollectorLogTail {
     if (-not (Test-Path -LiteralPath $LogRoot)) {
         return $null
     }
-    $latest = Get-ChildItem -LiteralPath $LogRoot -Filter "install-workstation-collector-*.log" -ErrorAction SilentlyContinue |
+    $logFiles = @(
+        Get-ChildItem -LiteralPath $LogRoot -Filter "install-agent-*.log" -ErrorAction SilentlyContinue
+        Get-ChildItem -LiteralPath $LogRoot -Filter "install-workstation-collector-*.log" -ErrorAction SilentlyContinue
+    )
+    $latest = $logFiles |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
     if (-not $latest) {
@@ -221,6 +266,14 @@ function Get-HeimdallInstallWorkstationCollectorLogTail {
             Text  = "Could not read log: $($_.Exception.Message)"
         }
     }
+}
+
+function Get-HeimdallInstallWorkstationCollectorLogTail {
+    param(
+        [int]$LineCount = 30,
+        [string]$LogRoot = (Join-Path $env:ProgramData "Heimdall\logs")
+    )
+    return Get-HeimdallInstallAgentLogTail -LineCount $LineCount -LogRoot $LogRoot
 }
 
 function Test-HeimdallProductVersionAccept {

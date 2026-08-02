@@ -57,11 +57,11 @@ else
         </div>
         <div class="hd-stat">
             <div class="label">Active time</div>
-            <div class="value" style="font-size:1.1rem;">@SessionsModel.FormatDuration(snap.Totals.ActiveSeconds)</div>
+            <div class="value" style="font-size:1.1rem;">@DurationDisplay.Render(snap.Totals.ActiveSeconds)</div>
         </div>
         <div class="hd-stat">
             <div class="label">Disconnected time</div>
-            <div class="value" style="font-size:1.1rem;">@SessionsModel.FormatDuration(snap.Totals.DisconnectedSeconds)</div>
+            <div class="value" style="font-size:1.1rem;">@DurationDisplay.Render(snap.Totals.DisconnectedSeconds)</div>
         </div>
         <div class="hd-stat">
             <div class="label">Local / RDP</div>
@@ -126,11 +126,20 @@ else
                                 <a asp-page="/Machine" asp-route-hostname="@m.Hostname" asp-route-range="@Model.Range">@m.Hostname</a>
                             </td>
                             <td>@m.SessionCount</td>
-                            <td>@SessionsModel.FormatDuration(m.ActiveSeconds)</td>
-                            <td>@SessionsModel.FormatDuration(m.DisconnectedSeconds)</td>
+                            <td data-sort-value="@m.ActiveSeconds">@DurationDisplay.Render(m.ActiveSeconds)</td>
+                            <td data-sort-value="@m.DisconnectedSeconds">@DurationDisplay.Render(m.DisconnectedSeconds)</td>
                             <td>@m.LocalCount</td>
                             <td>@m.RdpCount</td>
-                            <td>@m.OpenCount</td>
+                            <td>
+                                @if (m.OpenCount > 0)
+                                {
+                                    <button type="button" class="hd-open-count-btn js-open-drilldown" data-hostname="@m.Hostname" title="See who has @m.Hostname open right now">@m.OpenCount</button>
+                                }
+                                else
+                                {
+                                    @m.OpenCount
+                                }
+                            </td>
                         </tr>
                     }
                     </tbody>
@@ -202,8 +211,8 @@ else
                             </td>
                             <td>@s.StartedAtUtc.ToLocalTime().ToString("g")</td>
                             <td>@(s.EndedAtUtc?.ToLocalTime().ToString("g") ?? "—")</td>
-                            <td>@SessionsModel.FormatDuration(s.ActiveSeconds)</td>
-                            <td>@SessionsModel.FormatDuration(s.DisconnectedSeconds)</td>
+                            <td data-sort-value="@s.ActiveSeconds">@DurationDisplay.Render(s.ActiveSeconds)</td>
+                            <td data-sort-value="@s.DisconnectedSeconds">@DurationDisplay.Render(s.DisconnectedSeconds)</td>
                             <td>
                                 @if (s.HadAppActivityWhileDisconnected)
                                 {
@@ -228,6 +237,20 @@ else
         </div>
     }
 }
+
+<div class="modal fade" id="session-drilldown-modal" tabindex="-1" aria-labelledby="session-drilldown-title" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="session-drilldown-title">Open sessions</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="session-drilldown-body">
+                <p class="text-secondary mb-0">Loading…</p>
+            </div>
+        </div>
+    </div>
+</div>
 
 @section Scripts {
 <script>
@@ -279,4 +302,5 @@ else
     });
 })();
 </script>
+<script src="~/js/session-drilldown.js" asp-append-version="true"></script>
 }

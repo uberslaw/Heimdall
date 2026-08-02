@@ -104,4 +104,53 @@ public static class MachineHierarchy
 
     public record RegionNode(string Name, IReadOnlyList<OfficeNode> Offices);
     public record OfficeNode(string Name, IReadOnlyList<Machine> Machines);
+
+    public record CountryNode(string Name, IReadOnlyList<CityNode> Cities);
+    public record CityNode(string Name, IReadOnlyList<Machine> Machines);
+
+    /// <summary>Country → city (Office) hierarchy for Machines page location filter.</summary>
+    public static IReadOnlyList<CountryNode> BuildCountryTree(IEnumerable<Machine> machines)
+    {
+        var list = machines.ToList();
+        foreach (var m in list)
+            EnsureDefaults(m);
+
+        return list
+            .GroupBy(m => m.Country!, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => g.Key)
+            .Select(countryGroup => new CountryNode(
+                countryGroup.Key,
+                countryGroup
+                    .GroupBy(m => m.Office!, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(g => g.Key)
+                    .Select(cityGroup => new CityNode(
+                        cityGroup.Key,
+                        cityGroup.OrderBy(m => m.Hostname, StringComparer.OrdinalIgnoreCase).ToList()
+                    ))
+                    .ToList()
+            ))
+            .ToList();
+    }
+
+    public static string CityKey(Machine machine)
+    {
+        EnsureDefaults(machine);
+        return $"{machine.Country}/{machine.Office}";
+    }
+
+    /// <summary>True when no locations selected, or machine matches a selected country or city.</summary>
+    public static bool MatchesLocationFilter(
+        Machine machine,
+        IReadOnlyCollection<string> selectedCountries,
+        IReadOnlyCollection<string> selectedCities)
+    {
+        EnsureDefaults(machine);
+        if (selectedCountries.Count == 0 && selectedCities.Count == 0)
+            return true;
+
+        if (selectedCountries.Contains(machine.Country!, StringComparer.OrdinalIgnoreCase))
+            return true;
+
+        return selectedCities.Contains(CityKey(machine), StringComparer.OrdinalIgnoreCase);
+    }
 }

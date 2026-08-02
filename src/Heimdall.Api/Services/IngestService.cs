@@ -6,16 +6,17 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Services;
 
-public class IngestService(HeimdallDbContext db, AppListService appLists, IConfiguration configuration)
+public class IngestService(HeimdallDbContext db, AppListService appLists, IConfiguration configuration, RemoteMachineService remoteMachines)
 {
     public async Task IngestAsync(IngestBatchDto batch, CancellationToken ct)
     {
         Machine? machine = null;
         var isNewMachine = false;
+        var verifyRestartRdp = false;
 
         if (batch.Heartbeat is not null)
         {
-            (machine, isNewMachine) = await UpsertMachineAsync(batch.Heartbeat, ct);
+            (machine, isNewMachine, verifyRestartRdp) = await UpsertMachineAsync(batch.Heartbeat, ct);
         }
 
         foreach (var session in batch.Sessions)
@@ -46,6 +47,9 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, IConfi
 
         await db.SaveChangesAsync(ct);
 
+        if (verifyRestartRdp && machine is not null)
+            await remoteMachines.VerifyRestartRdpAsync(machine.Hostname, ct);
+
         if (machine is not null && (isNewMachine || machine.AppsAnalyzedAt is null && machine.AppAnalysisStatus == AppAnalysisStatus.None))
         {
             // Reload tracked entity in case SaveChanges detached state
@@ -55,7 +59,7 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, IConfi
         }
     }
 
-    private async Task<(Machine Machine, bool IsNew)> UpsertMachineAsync(HeartbeatDto heartbeat, CancellationToken ct)
+    private async Task<(Machine Machine, bool IsNew, bool VerifyRestartRdp)> UpsertMachineAsync(HeartbeatDto heartbeat, CancellationToken ct)
     {
         var machine = await db.Machines.FirstOrDefaultAsync(m => m.Hostname == heartbeat.Hostname, ct);
         var isNew = machine is null;
@@ -82,8 +86,9 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, IConfi
 
         ApplyIdentityFromHeartbeat(machine, heartbeat, isNew);
         ApplyHardwareFromHeartbeat(machine, heartbeat);
+        var verifyRestartRdp = remoteMachines.ApplyHeartbeat(machine, heartbeat);
 
-        return (machine, isNew);
+        return (machine, isNew, verifyRestartRdp);
     }
 
     /// <summary>
@@ -482,7 +487,8 @@ public class ConfigService(HeimdallDbContext db)
             }).ToList(),
             MetricThresholds = thresholds,
             ProcessPauses = pauseDtos,
-            PendingAppAnalysis = machine?.PendingAppAnalysis == true
+            PendingAppAnalysis = machine?.PendingAppAnalysis == true,
+            PendingCommands = RemoteMachineService.DeserializeCommands(machine?.PendingCommandsJson)
         };
     }
 
@@ -997,6 +1003,7 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingAppAnalysis INTEGER NOT NULL DEFAULT 0");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN AppAnalysisStatus INTEGER NOT NULL DEFAULT 0");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN AppAnalysisProposalJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN DiscoveredInventoryJson TEXT NULL");
         await TryExec(db, "UPDATE Machines SET AppAnalysisProposalJson = '[]' WHERE AppAnalysisProposalJson IS NULL");
         await TryExec(db, """
             CREATE TABLE IF NOT EXISTS AppLists (
@@ -1048,12 +1055,14 @@ public static class SeedData
             CREATE TABLE IF NOT EXISTS ProcessGroupAssignments (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ProcessName TEXT NOT NULL,
-                Group INTEGER NOT NULL,
+                "Group" INTEGER NOT NULL,
                 DisplayName TEXT NULL,
                 UpdatedUtc TEXT NOT NULL
             )
             """);
         await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_ProcessGroupAssignments_ProcessName ON ProcessGroupAssignments(ProcessName)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_ProcessGroupAssignments_Group ON ProcessGroupAssignments(\"Group\")");
+        await TryExec(db, "ALTER TABLE ProcessGroupAssignments ADD COLUMN Description TEXT NULL");
 
         // Cost / hardware inventory on Machines
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN PurchaseCost TEXT NULL");
@@ -1100,6 +1109,101 @@ public static class SeedData
                 Value TEXT NOT NULL
             )
             """);
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN LastIp TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN TermServiceStatus TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN TermServiceCheckedUtc TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN LastRdpProbeResultJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN LastRdpProbeUtc TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN LastPingResultJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN LastPingUtc TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingCommandsJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN RestartRdsProgressJson TEXT NULL");
+
+        // Staff Access / Remote Access Groups
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS RemoteAccessGroups (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT NOT NULL,
+                FavoritesOnly INTEGER NOT NULL DEFAULT 0,
+                CreatedUtc TEXT NOT NULL,
+                UpdatedUtc TEXT NOT NULL
+            )
+            """);
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS RemoteAccessGroupStaff (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                GroupId INTEGER NOT NULL,
+                Email TEXT NOT NULL,
+                FOREIGN KEY (GroupId) REFERENCES RemoteAccessGroups(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_RemoteAccessGroupStaff_Group_Email ON RemoteAccessGroupStaff(GroupId, Email)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_RemoteAccessGroupStaff_Email ON RemoteAccessGroupStaff(Email)");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS RemoteAccessGroupMachines (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                GroupId INTEGER NOT NULL,
+                Hostname TEXT NOT NULL,
+                FOREIGN KEY (GroupId) REFERENCES RemoteAccessGroups(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_RemoteAccessGroupMachines_Group_Host ON RemoteAccessGroupMachines(GroupId, Hostname)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_RemoteAccessGroupMachines_Host ON RemoteAccessGroupMachines(Hostname)");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS RemoteAccessFavoriteProcesses (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                GroupId INTEGER NOT NULL,
+                ProcessName TEXT NOT NULL,
+                FOREIGN KEY (GroupId) REFERENCES RemoteAccessGroups(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_RemoteAccessFavoriteProcesses_Group_Name ON RemoteAccessFavoriteProcesses(GroupId, ProcessName)");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS RemoteAccessViewers (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                GroupId INTEGER NOT NULL,
+                ViewerId TEXT NOT NULL,
+                Email TEXT NULL,
+                LastHeartbeatUtc TEXT NOT NULL
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_RemoteAccessViewers_Group_Viewer ON RemoteAccessViewers(GroupId, ViewerId)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_RemoteAccessViewers_Heartbeat ON RemoteAccessViewers(LastHeartbeatUtc)");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS SessionDrilldownViewers (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Hostname TEXT NOT NULL,
+                ViewerId TEXT NOT NULL,
+                LastHeartbeatUtc TEXT NOT NULL
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_SessionDrilldownViewers_Host_Viewer ON SessionDrilldownViewers(Hostname, ViewerId)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SessionDrilldownViewers_Heartbeat ON SessionDrilldownViewers(LastHeartbeatUtc)");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS MachineResourceMetrics (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MachineId INTEGER NOT NULL,
+                SampledAtUtc TEXT NOT NULL,
+                IsCalibrationAverage INTEGER NOT NULL DEFAULT 0,
+                CpuPercent REAL NULL,
+                GpuPercent REAL NULL,
+                RamPercent REAL NULL,
+                RamUsedGb REAL NULL,
+                RamTotalGb REAL NULL,
+                DiskReadBytesPerSec REAL NULL,
+                DiskWriteBytesPerSec REAL NULL,
+                DiskReadLevel TEXT NOT NULL DEFAULT 'Low',
+                DiskWriteLevel TEXT NOT NULL DEFAULT 'Low',
+                TopCpuProcessesJson TEXT NOT NULL DEFAULT '[]',
+                TopGpuProcessesJson TEXT NOT NULL DEFAULT '[]',
+                TopRamProcessesJson TEXT NOT NULL DEFAULT '[]',
+                TopDiskReadProcessesJson TEXT NOT NULL DEFAULT '[]',
+                TopDiskWriteProcessesJson TEXT NOT NULL DEFAULT '[]',
+                FavoriteProcessesJson TEXT NOT NULL DEFAULT '[]',
+                FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_MachineResourceMetrics_MachineId ON MachineResourceMetrics(MachineId)");
     }
 
     private static async Task<bool> HasSystemFlagAsync(HeimdallDbContext db, string key)

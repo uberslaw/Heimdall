@@ -24,6 +24,7 @@ public sealed class ProcessCollector
         if (include.Count == 0)
             return [];
 
+        var wmiPaths = ProcessPathResolver.QueryWmiPaths();
         var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var updates = new List<ProcessRunDto>();
 
@@ -35,8 +36,7 @@ public sealed class ProcessCollector
                 if (exclude.Contains(name) || !include.Contains(name))
                     continue;
 
-                string? path = null;
-                try { path = process.MainModule?.FileName; } catch { /* access denied is fine */ }
+                string? path = ProcessPathResolver.TryGetPath(process, wmiPaths);
 
                 var sessionInfo = sessionUserLookup(process.SessionId);
                 var user = sessionInfo is null
@@ -107,6 +107,7 @@ public sealed class ProcessCollector
     [SupportedOSPlatform("windows")]
     public static IReadOnlyList<DiscoveredProcessDto> DiscoverInventory()
     {
+        var wmiPaths = ProcessPathResolver.QueryWmiPaths();
         var map = new Dictionary<string, DiscoveredProcessDto>(StringComparer.OrdinalIgnoreCase);
         foreach (var process in Process.GetProcesses())
         {
@@ -114,9 +115,20 @@ public sealed class ProcessCollector
             {
                 var name = process.ProcessName;
                 if (string.IsNullOrWhiteSpace(name)) continue;
-                string? path = null;
-                try { path = process.MainModule?.FileName; } catch { /* access denied */ }
-                if (!map.ContainsKey(name))
+                var path = ProcessPathResolver.TryGetPath(process, wmiPaths);
+                if (map.TryGetValue(name, out var existing))
+                {
+                    if (string.IsNullOrWhiteSpace(existing.ExecutablePath) && !string.IsNullOrWhiteSpace(path))
+                    {
+                        map[name] = new DiscoveredProcessDto
+                        {
+                            ProcessName = existing.ProcessName,
+                            DisplayName = existing.DisplayName,
+                            ExecutablePath = path
+                        };
+                    }
+                }
+                else
                 {
                     map[name] = new DiscoveredProcessDto
                     {

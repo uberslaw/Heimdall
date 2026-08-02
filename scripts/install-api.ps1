@@ -9,13 +9,23 @@
 param(
     [string]$InstallDir = "$env:ProgramFiles\Heimdall\Api",
     [int]$Port = 5080,
-    [string]$ApiKey = "heimdall-poc-key"
+    [string]$ApiKey = "heimdall-poc-key",
+    [switch]$NoPrompt
 )
 
 $ErrorActionPreference = "Stop"
 $script:LastError = $null
 $script:LogPath = $null
 $exitCode = 1
+$script:InstallStartedAt = $null
+$script:InstallTimingEstimate = $null
+
+$timingHelper = Join-Path $PSScriptRoot "Heimdall-InstallApiTiming.ps1"
+if (Test-Path -LiteralPath $timingHelper) {
+    . $timingHelper
+}
+
+$script:InstallProgressTotalSteps = 9
 
 function Write-Log {
     param(
@@ -25,6 +35,17 @@ function Write-Log {
     )
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $line = "[$ts] [$Level] $Message"
+    if (Get-Command Test-InstallApiProgressActive -ErrorAction SilentlyContinue) {
+        if (Test-InstallApiProgressActive) {
+            if ($script:LogPath) {
+                Add-Content -Path $script:LogPath -Value $line -Encoding UTF8
+            }
+            if ($Level -in @("STEP", "OK", "ERROR", "WARN") -and (Get-Command Set-InstallApiProgressStatus -ErrorAction SilentlyContinue)) {
+                Set-InstallApiProgressStatus -StatusLine $Message
+            }
+            return
+        }
+    }
     switch ($Level) {
         "STEP"  { Write-Host $line -ForegroundColor Cyan }
         "OK"    { Write-Host $line -ForegroundColor Green }
@@ -40,6 +61,17 @@ function Write-Log {
 function Write-Banner {
     param([string]$Title, [ConsoleColor]$Color = [ConsoleColor]::White)
     $bar = "=" * 64
+    if (Get-Command Test-InstallApiProgressActive -ErrorAction SilentlyContinue) {
+        if (Test-InstallApiProgressActive) {
+            if ($script:LogPath) {
+                Add-Content -Path $script:LogPath -Value "`n$bar`n  $Title`n$bar`n" -Encoding UTF8
+            }
+            if (Get-Command Set-InstallApiProgressStatus -ErrorAction SilentlyContinue) {
+                Set-InstallApiProgressStatus -StatusLine $Title
+            }
+            return
+        }
+    }
     Write-Host ""
     Write-Host $bar -ForegroundColor $Color
     Write-Host "  $Title" -ForegroundColor $Color
@@ -53,8 +85,14 @@ function Write-Banner {
 function Invoke-Logged {
     param(
         [string]$StepName,
-        [scriptblock]$Action
+        [scriptblock]$Action,
+        [int]$ProgressStep = 0,
+        [string]$ProgressLabel = $null
     )
+    if ($ProgressStep -gt 0 -and (Get-Command Set-InstallApiProgressStep -ErrorAction SilentlyContinue)) {
+        $label = if ($ProgressLabel) { $ProgressLabel } else { $StepName }
+        Set-InstallApiProgressStep -StepIndex $ProgressStep -TotalSteps $script:InstallProgressTotalSteps -StepName $label
+    }
     Write-Log ">>> $StepName" -Level STEP
     try {
         & $Action
@@ -145,6 +183,31 @@ function Ensure-HeimdallApiFirewallRule {
     }
 }
 
+function Wait-ServiceStopped {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [int]$TimeoutSec = 60
+    )
+    Write-Log "Waiting until service '$Name' is Stopped..."
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ($true) {
+        $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+        if (-not $svc -or $svc.Status -eq "Stopped") {
+            Write-Log "Service '$Name' is stopped (or absent)"
+            return
+        }
+        if ((Get-Date) -ge $deadline) {
+            Write-Log "Timed out waiting for '$Name' to stop after ${TimeoutSec}s (Status=$($svc.Status))" -Level WARN
+            return
+        }
+        Start-Sleep -Seconds 1
+        if (Get-Command Update-InstallApiProgressDisplay -ErrorAction SilentlyContinue) {
+            if (Test-InstallApiProgressActive) { Update-InstallApiProgressDisplay }
+        }
+    }
+}
+
 function Wait-ServiceRemoved {
     param(
         [Parameter(Mandatory = $true)]
@@ -172,6 +235,9 @@ function Wait-ServiceRemoved {
             return
         }
         Start-Sleep -Seconds 2
+        if (Get-Command Update-InstallApiProgressDisplay -ErrorAction SilentlyContinue) {
+            if (Test-InstallApiProgressActive) { Update-InstallApiProgressDisplay }
+        }
     }
 }
 
@@ -183,6 +249,17 @@ try {
 
     Write-Banner "Heimdall API installer" Cyan
     Write-Log "Log file: $script:LogPath"
+
+    $script:InstallStartedAt = Get-Date
+    if (Get-Command Get-InstallApiTimingEstimate -ErrorAction SilentlyContinue) {
+        $script:InstallTimingEstimate = Get-InstallApiTimingEstimate -StartedAt $script:InstallStartedAt
+        $estMmSs = Format-InstallApiDurationMmSs -TotalSec $script:InstallTimingEstimate.EstimatedSec
+        $finishText = $script:InstallTimingEstimate.FinishAt.ToString("HH:mm:ss")
+        Write-Log "Estimated install time: ~$estMmSs ($($script:InstallTimingEstimate.EstimatedSec)s incl. $($script:InstallTimingEstimate.BufferPercent)% buffer; baseline $($script:InstallTimingEstimate.BaselineSec)s from $($script:InstallTimingEstimate.Source))"
+        Write-Log "Expected finish (wall clock): $finishText"
+        Start-InstallApiConsoleCountdown -FinishAt $script:InstallTimingEstimate.FinishAt -EstimatedSec $script:InstallTimingEstimate.EstimatedSec -LogPath $script:LogPath -TotalSteps $script:InstallProgressTotalSteps
+    }
+
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     Write-Log "User: $env:USERNAME | Elevated: $isAdmin"
     Write-Log "Machine: $env:COMPUTERNAME | OS: $([System.Environment]::OSVersion.VersionString)"
@@ -193,7 +270,7 @@ try {
     Write-Log "Repo root: $root"
     Write-Log "Project: $project"
 
-    Invoke-Logged "Check .NET SDK and runtimes" {
+    Invoke-Logged "Check .NET SDK and runtimes" -ProgressStep 1 -ProgressLabel "Checking .NET SDK" {
         $dotnet = Get-Command dotnet -ErrorAction Stop
         Write-Log "dotnet: $($dotnet.Source)"
         $sdks = & dotnet --list-sdks 2>&1
@@ -218,7 +295,7 @@ try {
         }
     }
 
-    Invoke-Logged "Ensure project exists" {
+    Invoke-Logged "Ensure project exists" -ProgressStep 2 -ProgressLabel "Preparing directories" {
         if (-not (Test-Path $project)) {
             throw "Project not found: $project - run from a full Heimdall clone (scripts next to src)."
         }
@@ -236,15 +313,62 @@ try {
         Write-Log "InstallDir: $InstallDir"
     }
 
-    Invoke-Logged "dotnet publish (verbose)" {
-        Write-Log "Command: dotnet publish `"$project`" -c Release -o `"$InstallDir`" --self-contained false -v detailed"
-        & dotnet publish $project -c Release -o $InstallDir --self-contained false -v detailed 2>&1 | ForEach-Object {
-            $line = "$_"
-            Write-Host $line
-            Add-Content -Path $script:LogPath -Value $line -Encoding UTF8
+    Invoke-Logged "Stop existing HeimdallApi (unlock publish target)" -ProgressStep 3 -ProgressLabel "Stopping service" {
+        $svc = Get-Service -Name "HeimdallApi" -ErrorAction SilentlyContinue
+        if ($svc) {
+            Write-Log "Existing service Status=$($svc.Status)"
+            if ($svc.Status -ne "Stopped") {
+                Write-Log "Stopping HeimdallApi so binaries can be updated..."
+                Stop-Service HeimdallApi -Force -ErrorAction SilentlyContinue
+                Wait-ServiceStopped -Name "HeimdallApi"
+            }
+            else {
+                Write-Log "Service already Stopped"
+            }
         }
-        if ($LASTEXITCODE -ne 0) {
-            throw "dotnet publish exited with code $LASTEXITCODE"
+        else {
+            Write-Log "No existing HeimdallApi service"
+        }
+    }
+
+    Invoke-Logged "dotnet publish (verbose)" -ProgressStep 4 -ProgressLabel "Publishing API" {
+        $finishAt = if ($script:InstallTimingEstimate) {
+            $script:InstallTimingEstimate.FinishAt
+        }
+        else {
+            $script:InstallStartedAt.AddSeconds(120)
+        }
+        Write-Log "Command: dotnet publish `"$project`" -c Release -o `"$InstallDir`" --self-contained false -v detailed"
+        Write-Log "Full verbose publish log: $script:LogPath"
+        if (Get-Command Invoke-DotNetPublishWithProgress -ErrorAction SilentlyContinue) {
+            $publishExit = Invoke-DotNetPublishWithProgress `
+                -Project $project `
+                -OutputDir $InstallDir `
+                -FinishAt $finishAt `
+                -LogPath $script:LogPath
+            if ($publishExit -ne 0) {
+                throw "dotnet publish exited with code $publishExit"
+            }
+        }
+        elseif (Get-Command Invoke-DotNetPublishWithLiveViewport -ErrorAction SilentlyContinue) {
+            $publishExit = Invoke-DotNetPublishWithLiveViewport `
+                -Project $project `
+                -OutputDir $InstallDir `
+                -FinishAt $finishAt `
+                -LogPath $script:LogPath
+            if ($publishExit -ne 0) {
+                throw "dotnet publish exited with code $publishExit"
+            }
+        }
+        else {
+            & dotnet publish $project -c Release -o $InstallDir --self-contained false -v detailed 2>&1 | ForEach-Object {
+                $line = "$_"
+                Write-Host $line
+                Add-Content -Path $script:LogPath -Value $line -Encoding UTF8
+            }
+            if ($LASTEXITCODE -ne 0) {
+                throw "dotnet publish exited with code $LASTEXITCODE"
+            }
         }
         $exe = Join-Path $InstallDir "Heimdall.Api.exe"
         if (-not (Test-Path $exe)) {
@@ -253,7 +377,7 @@ try {
         Write-Log "Published: $exe"
     }
 
-    Invoke-Logged "Write appsettings.json" {
+    Invoke-Logged "Write appsettings.json" -ProgressStep 5 -ProgressLabel "Writing config" {
         $appsettings = Join-Path $InstallDir "appsettings.json"
         $dbPath = Join-Path $env:ProgramData "Heimdall\heimdall.db"
         $json = @{
@@ -262,6 +386,7 @@ try {
             }
             Heimdall = @{
                 ApiKey = $ApiKey
+                UiTheme = "Cosmic"
             }
             Logging = @{
                 LogLevel = @{
@@ -279,14 +404,14 @@ try {
         Write-Log "ApiKey (last 4): ****$($ApiKey.Substring([Math]::Max(0, $ApiKey.Length - 4)))"
     }
 
-    Invoke-Logged "Stop/remove existing HeimdallApi service" {
+    Invoke-Logged "Stop/remove existing HeimdallApi service" -ProgressStep 6 -ProgressLabel "Recreating Windows service" {
         $svc = Get-Service -Name "HeimdallApi" -ErrorAction SilentlyContinue
         if ($svc) {
             Write-Log "Existing service Status=$($svc.Status)"
-            if ($svc.Status -eq "Running") {
-                Write-Log "Stopping HeimdallApi..."
+            if ($svc.Status -ne "Stopped") {
+                Write-Log "Stopping HeimdallApi before service recreate..."
                 Stop-Service HeimdallApi -Force -ErrorAction SilentlyContinue
-                Start-Sleep -Seconds 2
+                Wait-ServiceStopped -Name "HeimdallApi"
             }
             Write-Log "sc.exe delete HeimdallApi"
             $del = & sc.exe delete HeimdallApi 2>&1
@@ -325,7 +450,7 @@ try {
         $desc | ForEach-Object { Write-Log "  $_" }
     }
 
-    Invoke-Logged "Start HeimdallApi" {
+    Invoke-Logged "Start HeimdallApi" -ProgressStep 7 -ProgressLabel "Starting service" {
         try {
             Start-Service HeimdallApi -ErrorAction Stop
         }
@@ -343,11 +468,14 @@ try {
         }
     }
 
+    if (Get-Command Set-InstallApiProgressStep -ErrorAction SilentlyContinue) {
+        Set-InstallApiProgressStep -StepIndex 8 -TotalSteps $script:InstallProgressTotalSteps -StepName "Firewall"
+    }
     Write-Log ">>> Windows Firewall inbound rule (TCP $Port)" -Level STEP
     Ensure-HeimdallApiFirewallRule -Port $Port
     Write-Log "<<< Windows Firewall inbound rule - step finished" -Level OK
 
-    Invoke-Logged "Probe health endpoint" {
+    Invoke-Logged "Probe health endpoint" -ProgressStep 9 -ProgressLabel "Health check" {
         $url = "http://localhost:$Port/api/health"
         Write-Log "GET $url"
         Start-Sleep -Seconds 1
@@ -365,6 +493,11 @@ try {
     Write-Log "Health:    http://localhost:$Port/api/health"
     Write-Log "Service:   HeimdallApi"
     Write-Log "Log file:  $script:LogPath"
+    if ($script:InstallStartedAt -and (Get-Command Save-InstallApiTimingResult -ErrorAction SilentlyContinue)) {
+        $actualSec = [int][Math]::Max(0, ((Get-Date) - $script:InstallStartedAt).TotalSeconds)
+        Save-InstallApiTimingResult -DurationSec $actualSec -Success $true
+        Write-Log "Install duration: $(Format-InstallApiDurationMmSs -TotalSec $actualSec) ($actualSec s) - saved for next estimate"
+    }
     $exitCode = 0
 }
 catch {
@@ -376,6 +509,13 @@ catch {
     $exitCode = 1
 }
 finally {
+    if (Get-Command Stop-InstallApiConsoleCountdown -ErrorAction SilentlyContinue) {
+        Stop-InstallApiConsoleCountdown -KeepWindowOpen
+    }
+    if ($exitCode -ne 0 -and $script:InstallStartedAt -and (Get-Command Save-InstallApiTimingResult -ErrorAction SilentlyContinue)) {
+        $actualSec = [int][Math]::Max(0, ((Get-Date) - $script:InstallStartedAt).TotalSeconds)
+        Save-InstallApiTimingResult -DurationSec $actualSec -Success $false
+    }
     Write-Host ""
     Write-Host "Full log path (copy this for Cursor / support):" -ForegroundColor Yellow
     Write-Host "  $script:LogPath" -ForegroundColor Yellow
@@ -385,6 +525,8 @@ finally {
         Write-Host "  $($script:LastError.Exception.Message)" -ForegroundColor Red
     }
     Write-Host ""
-    Read-Host "Press Enter to close"
+    if (-not $NoPrompt) {
+        Read-Host "Press Enter to close"
+    }
     exit $exitCode
 }

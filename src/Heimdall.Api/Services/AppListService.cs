@@ -421,6 +421,10 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
             }
         }
 
+        machine.DiscoveredInventoryJson = JsonSerializer.Serialize(
+            candidates.Values.Select(c => new InventorySnapshotRow(c.ProcessName, c.DisplayName, c.ExecutablePath, c.Source)).ToList(),
+            JsonOptions);
+
         var proposals = candidates.Values
             .Select(c => ToProposedApp(c, ctx))
             .Where(p => ProcessClassification.IsProposableForTracking(p.ProcessName, ctx))
@@ -618,6 +622,9 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
             MergeCandidate(map, name, name, r.ExecutablePath, "ProcessRuns");
         }
 
+        foreach (var snap in DeserializeInventorySnapshot(machine.DiscoveredInventoryJson))
+            MergeCandidate(map, snap.ProcessName, snap.DisplayName ?? snap.ProcessName, snap.ExecutablePath, snap.Source ?? "AgentInventory");
+
         foreach (var p in proposals.Values)
             MergeCandidate(map, p.ProcessName, p.DisplayName, p.ExecutablePath, p.Source);
 
@@ -774,6 +781,25 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
             return [];
         }
     }
+
+    private static List<InventorySnapshotRow> DeserializeInventorySnapshot(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            return JsonSerializer.Deserialize<List<InventorySnapshotRow>>(json, JsonOptions) ?? [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private sealed record InventorySnapshotRow(
+        string ProcessName,
+        string? DisplayName,
+        string? ExecutablePath,
+        string? Source);
 
     private static string SummarizeList(AppList list) =>
         $"{list.Entries.Count} process(es) [{string.Join(", ", list.Entries.Select(e => e.ProcessName).Take(12))}{(list.Entries.Count > 12 ? ",…" : "")}]";

@@ -26,6 +26,8 @@ public class Machine
     public AppAnalysisStatus AppAnalysisStatus { get; set; } = AppAnalysisStatus.None;
     /// <summary>JSON array of proposed apps awaiting approval: [{processName,displayName,source}].</summary>
     public string? AppAnalysisProposalJson { get; set; }
+    /// <summary>Last merged process inventory snapshot from agent discovery + ProcessRuns (paths for UI/CSV).</summary>
+    public string? DiscoveredInventoryJson { get; set; }
 
     // --- Cost / hardware inventory (manual + optional agent enrich) ---
     public decimal? PurchaseCost { get; set; }
@@ -67,6 +69,22 @@ public class Machine
     public string? SmbiosUuid { get; set; }
     /// <summary>Most recent reimage detection (MachineGuid change for same hostname).</summary>
     public DateTimeOffset? LastReimagedUtc { get; set; }
+
+    /// <summary>Primary IPv4 from agent heartbeat.</summary>
+    public string? LastIp { get; set; }
+    /// <summary>TermService status from agent: Running, Stopped, Unknown, etc.</summary>
+    public string? TermServiceStatus { get; set; }
+    public DateTimeOffset? TermServiceCheckedUtc { get; set; }
+    /// <summary>JSON from last API-side RDP probe (RdpResponding, Error, etc.).</summary>
+    public string? LastRdpProbeResultJson { get; set; }
+    public DateTimeOffset? LastRdpProbeUtc { get; set; }
+    /// <summary>JSON from last API-side ping (Reachable, Detail, Target).</summary>
+    public string? LastPingResultJson { get; set; }
+    public DateTimeOffset? LastPingUtc { get; set; }
+    /// <summary>JSON array of pending agent commands (RestartTermService, …).</summary>
+    public string? PendingCommandsJson { get; set; }
+    /// <summary>Restart RDS workflow progress (phase, attempts, verification result).</summary>
+    public string? RestartRdsProgressJson { get; set; }
 
     public List<UserSession> Sessions { get; set; } = [];
     public List<ProcessRun> ProcessRuns { get; set; } = [];
@@ -204,6 +222,8 @@ public class ProcessGroupAssignment
     public required string ProcessName { get; set; }
     public AppGroup Group { get; set; }
     public string? DisplayName { get; set; }
+    /// <summary>Free-text narrative (e.g. AI-filled app description). Import/export via App Lists CSV.</summary>
+    public string? Description { get; set; }
     public DateTimeOffset UpdatedUtc { get; set; }
 }
 
@@ -353,4 +373,106 @@ public class AppListAuditLog
     public string? MachineHostname { get; set; }
     public required string Detail { get; set; }
     public string? Actor { get; set; }
+}
+
+/// <summary>
+/// A Staff Access / Remote Access Group: a named set of staff emails and the machines they may view on
+/// their staff page. Access control is enforced by group membership — a machine not assigned to any group
+/// the signed-in email belongs to is never returned to that staff member.
+/// </summary>
+public class RemoteAccessGroup
+{
+    public int Id { get; set; }
+    public required string Name { get; set; }
+    /// <summary>Shared per-group preference: when true, staff page shows only favourited processes (see complete-first-time notes on why per-group, not per-staff).</summary>
+    public bool FavoritesOnly { get; set; }
+    public DateTimeOffset CreatedUtc { get; set; }
+    public DateTimeOffset UpdatedUtc { get; set; }
+
+    public List<RemoteAccessGroupStaff> Staff { get; set; } = [];
+    public List<RemoteAccessGroupMachine> Machines { get; set; } = [];
+    public List<RemoteAccessFavoriteProcess> FavoriteProcesses { get; set; } = [];
+}
+
+public class RemoteAccessGroupStaff
+{
+    public int Id { get; set; }
+    public int GroupId { get; set; }
+    public RemoteAccessGroup Group { get; set; } = null!;
+    public required string Email { get; set; }
+}
+
+public class RemoteAccessGroupMachine
+{
+    public int Id { get; set; }
+    public int GroupId { get; set; }
+    public RemoteAccessGroup Group { get; set; } = null!;
+    public required string Hostname { get; set; }
+}
+
+/// <summary>Favourited process name for a group (persisted per-group — see RemoteAccessGroup.FavoritesOnly).</summary>
+public class RemoteAccessFavoriteProcess
+{
+    public int Id { get; set; }
+    public int GroupId { get; set; }
+    public RemoteAccessGroup Group { get; set; } = null!;
+    public required string ProcessName { get; set; }
+}
+
+/// <summary>
+/// One active browser tab viewing a group's Staff Access page. Heartbeats every ~20s and an explicit
+/// leave (sendBeacon on pagehide/unload) drive ref-counted fan-in: sampling starts on the API's next
+/// resolution once any viewer exists for a host and stops once none remain (see LiveSamplingService).
+/// </summary>
+public class RemoteAccessViewer
+{
+    public int Id { get; set; }
+    public int GroupId { get; set; }
+    public required string ViewerId { get; set; }
+    public string? Email { get; set; }
+    public DateTimeOffset LastHeartbeatUtc { get; set; }
+}
+
+/// <summary>
+/// One active browser tab viewing a single machine's Sessions "Open" drill-down modal — the same
+/// ref-counted heartbeat/leave pattern as RemoteAccessViewer, but keyed directly by hostname instead of a
+/// Remote Access Group, since any machine can appear on the Sessions page (not just staff-assigned ones).
+/// LiveSamplingService.IsHostnameActiveAsync treats a host as active if either source has a live viewer.
+/// </summary>
+public class SessionDrilldownViewer
+{
+    public int Id { get; set; }
+    public required string Hostname { get; set; }
+    public required string ViewerId { get; set; }
+    public DateTimeOffset LastHeartbeatUtc { get; set; }
+}
+
+/// <summary>Latest live resource-metrics snapshot reported by the agent for a machine (one row per machine, upserted).</summary>
+public class MachineResourceMetric
+{
+    public int Id { get; set; }
+    public int MachineId { get; set; }
+    public Machine Machine { get; set; } = null!;
+    public DateTimeOffset SampledAtUtc { get; set; }
+    public bool IsCalibrationAverage { get; set; }
+
+    public double? CpuPercent { get; set; }
+    public double? GpuPercent { get; set; }
+    public double? RamPercent { get; set; }
+    public double? RamUsedGb { get; set; }
+    public double? RamTotalGb { get; set; }
+
+    public double? DiskReadBytesPerSec { get; set; }
+    public double? DiskWriteBytesPerSec { get; set; }
+    public string DiskReadLevel { get; set; } = "Low";
+    public string DiskWriteLevel { get; set; } = "Low";
+
+    /// <summary>JSON array of TopProcessSampleDto.</summary>
+    public string TopCpuProcessesJson { get; set; } = "[]";
+    public string TopGpuProcessesJson { get; set; } = "[]";
+    public string TopRamProcessesJson { get; set; } = "[]";
+    public string TopDiskReadProcessesJson { get; set; } = "[]";
+    public string TopDiskWriteProcessesJson { get; set; } = "[]";
+    /// <summary>JSON array of FavoriteProcessSampleDto.</summary>
+    public string FavoriteProcessesJson { get; set; } = "[]";
 }

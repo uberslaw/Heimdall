@@ -20,6 +20,27 @@
     <div class="alert alert-success">@msg</div>
 }
 
+<form method="get" asp-page="/Socratize" class="hd-panel mb-3">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-5 col-lg-4">
+            <label class="form-label" for="socratize-host">Socratize machine</label>
+            <select class="form-select" name="Host" id="socratize-host" required>
+                <option value="">— select host —</option>
+                @foreach (var host in Model.Hostnames)
+                {
+                    <option value="@host">@host</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3 col-lg-2">
+            <button type="submit" class="btn btn-ghost w-100">Socratize</button>
+        </div>
+        <div class="col-md-4 col-lg-6">
+            <p class="text-secondary mb-0 small">One-click cost-justification brief from collected sessions &amp; apps (last 30 days default).</p>
+        </div>
+    </div>
+</form>
+
 <form method="get" class="hd-panel mb-3">
     <div class="row g-3 align-items-end">
         <div class="col-md-4 col-lg-3">
@@ -74,7 +95,7 @@
                 </td>
                 <td>@a.UniqueUsers</td>
                 <td>@a.RunCount</td>
-                <td>@a.TotalDuration.ToString(@"d\.hh\:mm\:ss")</td>
+                <td>@DurationDisplay.Render(a.TotalDuration)</td>
                 <td>@a.LastSeenUtc.ToLocalTime().ToString("g")</td>
             </tr>
         }

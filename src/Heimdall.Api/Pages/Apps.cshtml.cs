@@ -8,6 +8,7 @@ namespace Heimdall.Api.Pages;
 public class AppsModel(HeimdallDbContext db) : PageModel
 {
     public IReadOnlyList<AppRow> Apps { get; private set; } = [];
+    public IReadOnlyList<string> Hostnames { get; private set; } = [];
     public string RangeLabel { get; private set; } = "7 day";
     public int RangeDays { get; private set; } = 7;
 
@@ -20,6 +21,11 @@ public class AppsModel(HeimdallDbContext db) : PageModel
         Range = key;
         RangeLabel = label;
         RangeDays = days;
+
+        Hostnames = await db.Machines.AsNoTracking()
+            .OrderBy(m => m.Hostname)
+            .Select(m => m.Hostname)
+            .ToListAsync();
 
         var since = DateTimeOffset.UtcNow.AddDays(-days);
         // SQLite EF DateTimeOffset filters are unreliable; filter in memory for POC.

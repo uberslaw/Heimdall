@@ -237,7 +237,7 @@ function Get-PayloadPath {
     )
     foreach ($c in $candidates) {
         $exe = Join-Path $c "Heimdall.Agent.exe"
-        if (Test-Path $exe) { return (Resolve-Path $c).Path }
+        if (Test-Path $exe) { return (Resolve-HeimdallFilesystemPath -Path $c) }
     }
     return $null
 }
@@ -247,7 +247,7 @@ function Get-InstallerCmdPath {
         (Join-Path $script:ScriptDir "Install-WorkstationCollector.cmd")
     )
     foreach ($n in $names) {
-        if (Test-Path $n) { return (Resolve-Path $n).Path }
+        if (Test-Path $n) { return (Resolve-HeimdallFilesystemPath -Path $n) }
     }
     return $null
 }
@@ -553,12 +553,15 @@ function Invoke-StepInstall {
     Write-InstallLog "Installer exit code: $exit" -Level $(if ($exit -eq 0) { "OK" } else { "ERROR" })
 
     if ($exit -ne 0) {
-        $installLog = Get-HeimdallInstallWorkstationCollectorLogTail -LineCount 30 -LogRoot $script:LogRoot
+        $installLog = Get-HeimdallInstallAgentLogTail -LineCount 30 -LogRoot $script:LogRoot
         if ($installLog) {
-            Write-InstallLog "Latest installer log: $($installLog.Path)" -Level INFO
+            Write-InstallLog "Latest service install log: $($installLog.Path)" -Level INFO
             foreach ($line in $installLog.Lines) {
                 Write-InstallLog "  install> $line" -Level INFO
             }
+        }
+        else {
+            Write-InstallLog "No install-agent-*.log yet — see install> lines above from service install console capture" -Level WARN
         }
     }
 
@@ -571,12 +574,12 @@ function Invoke-StepInstall {
     Set-StepMarker -Index 3 -State "FAIL"
     Set-UiStatus "Install failed - see log"
     $installTail = ""
-    $installLog = Get-HeimdallInstallWorkstationCollectorLogTail -LineCount 15 -LogRoot $script:LogRoot
+    $installLog = Get-HeimdallInstallAgentLogTail -LineCount 15 -LogRoot $script:LogRoot
     if ($installLog) {
-        $installTail = "`r`n`r`nInstaller log ($($installLog.Path)):`r`n$($installLog.Text)"
+        $installTail = "`r`n`r`nService install log ($($installLog.Path)):`r`n$($installLog.Text)"
     }
     [System.Windows.Forms.MessageBox]::Show(
-        "Install did not complete successfully (exit $exit).$installTail`r`n`r`nCheck install-workstation-collector-*.log under:`r`n$($script:LogRoot)",
+        "Install did not complete successfully (exit $exit).$installTail`r`n`r`nLogs under:`r`n$($script:LogRoot)`r`n  install-client-*.log (this wizard)`r`n  install-agent-*.log (service install)",
         "Install failed",
         "OK",
         "Error") | Out-Null
@@ -938,7 +941,7 @@ function Show-InstallWizard {
     $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 
     $header = New-Object System.Windows.Forms.Label
-    $header.Text = "Heimdall Workstation Collector Install"
+    $header.Text = "Heimdall Client Install"
     $header.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 14)
     $header.Left = 16
     $header.Top = 12

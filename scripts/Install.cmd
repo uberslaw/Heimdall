@@ -5,7 +5,7 @@ cd /d "%~dp0"
 
 echo.
 echo ================================================================
-echo   Heimdall Workstation Collector - Install
+echo   Heimdall Client - Install
 echo ================================================================
 echo.
 echo Starting guided install wizard...
@@ -32,7 +32,7 @@ set "EC=%ERRORLEVEL%"
 if not "%EC%"=="0" (
   echo.
   echo Install wizard exited with code %EC%.
-  echo Check %ProgramData%\Heimdall\logs\ for details.
+  echo Check %ProgramData%\Heimdall\logs\ for install-client-*.log and install-agent-*.log
   pause
 )
 exit /b %EC%

@@ -1,8 +1,8 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title Heimdall Workstation Collector Installer
+title Heimdall Client Agent Installer
 
-REM Portable installer for the Heimdall Agent (workstation collector).
+REM Portable installer for the Heimdall Agent (Heimdall-Client pack).
 REM Run elevated from a packed folder produced by Pack-WorkstationCollector.cmd.
 REM Prefer this over Install-Agent.cmd when deploying to other PCs without the full repo/SDK.
 REM
@@ -90,7 +90,7 @@ goto parse_args
 
 echo.
 echo ================================================================
-echo   Heimdall Workstation Collector installer
+echo   Heimdall Client agent installer
 echo ================================================================
 echo.
 echo Window stays open until you press a key — do not close it early.
@@ -121,7 +121,22 @@ if errorlevel 1 (
   goto end
 )
 
+if not exist "%LOGROOT%" mkdir "%LOGROOT%" >nul 2>&1
+REM Locale-safe-ish stamp from DATE/TIME (no PowerShell)
+set "STAMP=%DATE:~-4%%DATE:~4,2%%DATE:~7,2%-%TIME:~0,2%%TIME:~3,2%%TIME:~6,2%"
+set "STAMP=!STAMP: =0!"
+set "STAMP=!STAMP:/=!"
+set "STAMP=!STAMP::=!"
+set "STAMP=!STAMP:.=!"
+set "LOGFILE=%LOGROOT%\install-agent-!STAMP!.log"
+
+call :log INFO "Log file: !LOGFILE!"
+call :log INFO "User: %USERNAME%  Machine: %COMPUTERNAME%"
+call :log INFO "ApiUrl=!APIURL! MachineGroup=!MACHINEGROUP! InstallDir=!INSTALLDIR!"
+call :log INFO "Payload=!PAYLOAD!"
+
 if not exist "%PAYLOAD%\Heimdall.Agent.exe" (
+  call :log ERROR "Payload not found: \"%PAYLOAD%\Heimdall.Agent.exe\""
   echo [ERROR] Payload not found: "%PAYLOAD%\Heimdall.Agent.exe"
   echo.
   echo This installer expects the Heimdall-Client pack from Setup / Pack.
@@ -133,20 +148,6 @@ if not exist "%PAYLOAD%\Heimdall.Agent.exe" (
   echo docs\portable-client\ in the repo is documentation only — not installable.
   goto fail
 )
-
-if not exist "%LOGROOT%" mkdir "%LOGROOT%" >nul 2>&1
-REM Locale-safe-ish stamp from DATE/TIME (no PowerShell)
-set "STAMP=%DATE:~-4%%DATE:~4,2%%DATE:~7,2%-%TIME:~0,2%%TIME:~3,2%%TIME:~6,2%"
-set "STAMP=!STAMP: =0!"
-set "STAMP=!STAMP:/=!"
-set "STAMP=!STAMP::=!"
-set "STAMP=!STAMP:.=!"
-set "LOGFILE=%LOGROOT%\install-workstation-collector-!STAMP!.log"
-
-call :log INFO "Log file: !LOGFILE!"
-call :log INFO "User: %USERNAME%  Machine: %COMPUTERNAME%"
-call :log INFO "ApiUrl=!APIURL! MachineGroup=!MACHINEGROUP! InstallDir=!INSTALLDIR!"
-call :log INFO "Payload=!PAYLOAD!"
 
 call :log STEP "Ensure ProgramData\Heimdall"
 if not exist "%ProgramData%\Heimdall" mkdir "%ProgramData%\Heimdall" >nul 2>&1
@@ -257,7 +258,7 @@ if errorlevel 1 (
 
 echo.
 echo ================================================================
-echo   SUCCESS — Workstation collector installed
+echo   SUCCESS — Heimdall client agent installed
 echo ================================================================
 call :log OK "API:     !APIURL!"
 call :log OK "Service: HeimdallAgent"
@@ -287,7 +288,7 @@ goto end
 :fail
 echo.
 echo ================================================================
-echo   FAILURE — Workstation collector install did not complete
+echo   FAILURE — Heimdall client agent install did not complete
 echo ================================================================
 if defined LOGFILE (
   echo Send this log for analysis:
@@ -301,7 +302,16 @@ echo.
 echo Full log path:
 if defined LOGFILE (echo   !LOGFILE!) else (echo   ^(none^))
 echo.
-if /I not "%HEIMDALL_NOPAUSE%"=="1" pause
+if not "!EXITCODE!"=="0" (
+  echo Install failed. Review the messages above and logs under:
+  echo   %LOGROOT%
+  echo     install-agent-*.log      ^(service install^)
+  echo     install-client-*.log     ^(Install.cmd wizard^)
+  echo.
+  pause
+) else if /I not "%HEIMDALL_NOPAUSE%"=="1" (
+  pause
+)
 exit /b !EXITCODE!
 
 :log

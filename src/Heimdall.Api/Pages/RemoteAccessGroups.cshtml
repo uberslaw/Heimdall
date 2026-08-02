@@ -1,0 +1,245 @@
+@page
+@model RemoteAccessGroupsModel
+@{
+    ViewData["Title"] = "Remote Access Groups";
+    var editing = Model.EditingGroup;
+}
+
+<h1 class="hd-title">Remote Access Groups</h1>
+<p class="hd-sub">
+    Staff Access setup · who can see which machines on their Staff page, and which processes they can favourite.
+    Staff sign in at <a asp-page="/StaffAccess">Staff Access</a> — their Windows login must match the email you register here (UPN or <code>user@domain</code>).
+</p>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<div class="row g-4 mb-4">
+    <div class="col-lg-5">
+        <form method="post" asp-page-handler="CreateGroup" class="hd-panel h-100">
+            <h2 class="h5 mb-3">Create group</h2>
+            <div class="mb-3">
+                <label class="form-label">Group name</label>
+                <input class="form-control" asp-for="GroupName" placeholder="e.g. Sydney Structures Support" required />
+            </div>
+            <button type="submit" class="btn btn-hd">Create</button>
+        </form>
+    </div>
+    <div class="col-lg-7">
+        <div class="hd-panel h-100">
+            <h2 class="h5 mb-3">Groups</h2>
+            @if (Model.Groups.Count == 0)
+            {
+                <p class="text-secondary mb-0">No Remote Access Groups yet. Create one to get started.</p>
+            }
+            else
+            {
+                <table class="hd-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Staff</th>
+                            <th>Machines</th>
+                            <th>Staff link</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var g in Model.Groups)
+                    {
+                        <tr class="@(editing?.Id == g.Id ? "hd-row-active" : "")">
+                            <td><strong>@g.Name</strong></td>
+                            <td>@g.Staff.Count</td>
+                            <td>@g.Machines.Count</td>
+                            <td><a href="/Staff/@g.Id" target="_blank">/Staff/@g.Id</a></td>
+                            <td class="text-end text-nowrap">
+                                <a class="btn btn-ghost btn-sm" asp-page="/RemoteAccessGroups" asp-route-edit="@g.Id">Edit</a>
+                                <form method="post" asp-page-handler="DeleteGroup" class="d-inline"
+                                      onsubmit="return confirm('Delete group @g.Name? Staff, machine assignments, favourites and viewer sessions for this group will be removed.');">
+                                    <input type="hidden" name="GroupId" value="@g.Id" />
+                                    <button type="submit" class="btn btn-ghost btn-sm">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+</div>
+
+@if (editing is not null)
+{
+    <div class="hd-panel mb-4">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+            <h2 class="h5 mb-0">Editing “@editing.Name”</h2>
+            <a class="btn btn-ghost btn-sm" asp-page="/RemoteAccessGroups">Close</a>
+        </div>
+
+        <form method="post" asp-page-handler="RenameGroup" class="row g-2 align-items-end mb-4">
+            <input type="hidden" asp-for="GroupId" />
+            <div class="col-auto">
+                <label class="form-label">Group name</label>
+                <input class="form-control" asp-for="GroupName" required />
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-hd btn-sm">Rename</button>
+            </div>
+        </form>
+
+        <div class="row g-4">
+            <div class="col-lg-6">
+                <h3 class="h6 mb-2">Staff emails (@editing.Staff.Count)</h3>
+                <p class="text-secondary small mb-2">
+                    Anyone signing in at <a asp-page="/StaffAccess">Staff Access</a> with one of these emails sees this group's Staff page.
+                    No password — see deliverable notes on the POC identity model.
+                </p>
+                @if (editing.Staff.Count > 0)
+                {
+                    <div class="hd-process-list mb-3">
+                        <div class="hd-process-items">
+                            @foreach (var s in editing.Staff.OrderBy(x => x.Email, StringComparer.OrdinalIgnoreCase))
+                            {
+                                <div class="hd-process-item">
+                                    <span class="hd-process-name flex-grow-1">@s.Email</span>
+                                    <form method="post" asp-page-handler="RemoveStaff" class="d-inline">
+                                        <input type="hidden" name="GroupId" value="@editing.Id" />
+                                        <input type="hidden" name="StaffId" value="@s.Id" />
+                                        <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
+                                    </form>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+                <form method="post" asp-page-handler="AddStaff">
+                    <input type="hidden" asp-for="GroupId" />
+                    <label class="form-label">Add staff emails</label>
+                    <textarea class="form-control mb-2" asp-for="EmailsInput" rows="2"
+                              placeholder="jane.smith@example.com, alex.jones@example.com (comma, semicolon or one per line)"></textarea>
+                    <button type="submit" class="btn btn-hd btn-sm">Add email(s)</button>
+                </form>
+            </div>
+
+            <div class="col-lg-6">
+                <h3 class="h6 mb-2">Machines (@editing.Machines.Count)</h3>
+                @if (editing.Machines.Count > 0)
+                {
+                    <div class="hd-process-list mb-3">
+                        <div class="hd-process-items">
+                            @foreach (var m in editing.Machines.OrderBy(x => x.Hostname, StringComparer.OrdinalIgnoreCase))
+                            {
+                                <div class="hd-process-item">
+                                    <span class="hd-process-name flex-grow-1">@m.Hostname</span>
+                                    <form method="post" asp-page-handler="RemoveMachine" class="d-inline">
+                                        <input type="hidden" name="GroupId" value="@editing.Id" />
+                                        <input type="hidden" name="GroupMachineId" value="@m.Id" />
+                                        <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
+                                    </form>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+                @{
+                    var assigned = editing.Machines.Select(m => m.Hostname).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var available = Model.AllMachineHostnames.Where(h => !assigned.Contains(h)).ToList();
+                }
+                <form method="post" asp-page-handler="AddMachines">
+                    <input type="hidden" asp-for="GroupId" />
+                    <label class="form-label">Add machines</label>
+                    @if (available.Count == 0)
+                    {
+                        <p class="text-secondary small">No more machines to add — every known machine is already in this group.</p>
+                    }
+                    else
+                    {
+                        <div class="hd-machine-picker" data-hd-machine-picker>
+                            <input type="text" class="form-control mb-2 hd-machine-filter" placeholder="Filter by hostname…" data-hd-machine-filter />
+                            <div class="hd-process-list">
+                                <div class="hd-process-items hd-machine-checklist" data-hd-machine-checklist>
+                                    @foreach (var host in available)
+                                    {
+                                        <label class="hd-process-item">
+                                            <input type="checkbox" class="form-check-input" name="SelectedMachines" value="@host" />
+                                            <span class="hd-process-name">@host</span>
+                                        </label>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-hd btn-sm mt-2">Add selected machines</button>
+                    }
+                </form>
+            </div>
+        </div>
+
+        <hr class="my-4" />
+
+        <div class="row g-4">
+            <div class="col-lg-6">
+                <h3 class="h6 mb-2">Favourite processes (@editing.FavoriteProcesses.Count)</h3>
+                <p class="text-secondary small mb-2">
+                    Favourites are shared by the whole group (not per-staff — see deliverable notes). The agent guarantees
+                    favourited processes are reported even when they rank outside the top 3 for a resource.
+                </p>
+                @if (editing.FavoriteProcesses.Count > 0)
+                {
+                    <div class="hd-process-list mb-3">
+                        <div class="hd-process-items">
+                            @foreach (var f in editing.FavoriteProcesses.OrderBy(x => x.ProcessName, StringComparer.OrdinalIgnoreCase))
+                            {
+                                <div class="hd-process-item">
+                                    <span class="hd-process-name flex-grow-1">★ @f.ProcessName</span>
+                                    <form method="post" asp-page-handler="RemoveFavorite" class="d-inline">
+                                        <input type="hidden" name="GroupId" value="@editing.Id" />
+                                        <input type="hidden" name="FavoriteId" value="@f.Id" />
+                                        <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
+                                    </form>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+                <form method="post" asp-page-handler="AddFavorite">
+                    <input type="hidden" asp-for="GroupId" />
+                    <label class="form-label">Add favourite process(es)</label>
+                    <input class="form-control mb-2" asp-for="FavoriteProcessInput" placeholder="Revit, acad" list="known-process-names" />
+                    <datalist id="known-process-names">
+                        @foreach (var p in Model.DiscoveredProcessNames)
+                        {
+                            <option value="@p"></option>
+                        }
+                    </datalist>
+                    <button type="submit" class="btn btn-hd btn-sm">Add</button>
+                </form>
+            </div>
+            <div class="col-lg-6">
+                <h3 class="h6 mb-2">Staff page defaults</h3>
+                <form method="post" asp-page-handler="SetFavoritesOnly">
+                    <input type="hidden" asp-for="GroupId" />
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" asp-for="FavoritesOnly" id="favoritesOnlySwitch"
+                               onchange="this.form.requestSubmit()" />
+                        <label class="form-check-label" for="favoritesOnlySwitch">Track only favourites by default</label>
+                    </div>
+                    <p class="text-secondary small mb-0">
+                        When on, the Staff page shows favourite processes instead of the generic top-3 lists.
+                        Staff can still toggle this themselves on their page — it's a shared group default, not a lock.
+                    </p>
+                </form>
+            </div>
+        </div>
+    </div>
+}
+
+@section Scripts {
+    <script src="~/js/remote-access-groups.js" asp-append-version="true"></script>
+}

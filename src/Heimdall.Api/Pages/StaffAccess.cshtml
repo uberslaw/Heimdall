@@ -1,0 +1,227 @@
+@page
+
+@model StaffAccessModel
+
+@{
+
+    ViewData["Title"] = "Staff Access";
+
+}
+
+
+
+<h1 class="hd-title">Staff Access</h1>
+
+<p class="hd-sub">
+
+    @if (Model.WindowsAuthRequired)
+
+    {
+
+        @:Access is tied to your Windows login on this PC. You'll only see Remote Access Groups registered for your account.
+
+    }
+
+    else if (Model.DevBypassActive)
+
+    {
+
+        @:Development mode — Windows login verification is off. Do not use this setting in production.
+
+    }
+
+    else
+
+    {
+
+        @:Sign in with your registered staff email to see the machines your team can remote into.
+
+    }
+
+</p>
+
+
+
+@if (Model.DevBypassActive)
+
+{
+
+    <div class="alert alert-warning">
+
+        <strong>Dev bypass active.</strong> Staff Access is not verifying Windows identity. Set
+
+        <code>Heimdall:StaffAccess:AllowDevBypass</code> to <code>false</code> before deploying.
+
+    </div>
+
+}
+
+
+
+@if (Model.WindowsAuthRequired && Model.WindowsUser is not null)
+
+{
+
+    <p class="text-secondary small mb-3">Windows login detected: <strong>@Model.WindowsUser</strong></p>
+
+}
+
+
+
+@if (TempData["Message"] is string msg)
+
+{
+
+    <div class="alert alert-success">@msg</div>
+
+}
+
+@if (TempData["Error"] is string err)
+
+{
+
+    <div class="alert alert-danger">@err</div>
+
+}
+
+
+
+@if (Model.SignedInEmail is not null)
+
+{
+
+    <div class="hd-panel mb-4">
+
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+
+            <h2 class="h5 mb-0">Signed in as @Model.SignedInEmail</h2>
+
+            <form method="post" asp-page-handler="SignOut">
+
+                <button type="submit" class="btn btn-ghost btn-sm">Sign out</button>
+
+            </form>
+
+        </div>
+
+
+
+        @if (Model.MyGroups.Count == 0)
+
+        {
+
+            <p class="text-secondary mb-0">
+
+                No Remote Access Groups found for this email anymore — it may have been removed. Ask an admin to re-add it.
+
+            </p>
+
+        }
+
+        else
+
+        {
+
+            <p class="text-secondary mb-2">Your group(s):</p>
+
+            <div class="d-flex flex-wrap gap-2">
+
+                @foreach (var g in Model.MyGroups)
+
+                {
+
+                    <a class="btn btn-hd" asp-page="/Staff" asp-route-id="@g.Id">@g.Name</a>
+
+                }
+
+            </div>
+
+        }
+
+    </div>
+
+}
+
+
+
+@if (Model.SignedInEmail is null)
+
+{
+
+    <div class="hd-panel">
+
+        @if (Model.WindowsAuthRequired)
+
+        {
+
+            <h2 class="h5 mb-3">Confirm your staff email</h2>
+
+            <p class="text-secondary small">
+
+                If we couldn't match your Windows login automatically, enter the email your admin registered for you.
+
+                It must match this Windows account (same mailbox / UPN / username).
+
+            </p>
+
+        }
+
+        else
+
+        {
+
+            <h2 class="h5 mb-3">Sign in</h2>
+
+        }
+
+        <form method="post" asp-page-handler="SignIn" class="row g-2 align-items-end">
+
+            <div class="col-auto" style="min-width: 320px;">
+
+                <label class="form-label">Email</label>
+
+                <input class="form-control" asp-for="Email" type="email" placeholder="you@example.com" required autofocus />
+
+            </div>
+
+            <div class="col-auto">
+
+                <button type="submit" class="btn btn-hd">Continue</button>
+
+            </div>
+
+        </form>
+
+        @if (Model.WindowsAuthRequired)
+
+        {
+
+            <p class="text-secondary small mt-3 mb-0">
+
+                Your browser sends your Windows identity to this site (Negotiate/NTLM on the intranet). You cannot sign in as someone else without their Windows session.
+
+                Admins: add staff emails under Admin → Remote Access Groups using the same address as their AD UPN or <code>user@your-domain</code>.
+
+            </p>
+
+        }
+
+        else
+
+        {
+
+            <p class="text-secondary small mt-3 mb-0">
+
+                Lightweight POC sign-in — knowing a registered email is enough. Enable Windows auth in production via
+
+                <code>Heimdall:StaffAccess:RequireWindowsAuth</code>.
+
+            </p>
+
+        }
+
+    </div>
+
+}
+
+

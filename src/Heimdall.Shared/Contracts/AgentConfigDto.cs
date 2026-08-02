@@ -16,6 +16,9 @@ public sealed class AgentConfigDto
     public List<ProcessPauseDto> ProcessPauses { get; init; } = [];
     /// <summary>When true, agent should upload a one-shot process inventory on next ingest.</summary>
     public bool PendingAppAnalysis { get; init; }
+
+    /// <summary>One-shot commands for the agent (e.g. RestartTermService). Cleared after heartbeat ack.</summary>
+    public List<string> PendingCommands { get; init; } = [];
 }
 
 public sealed class KnownAppDto

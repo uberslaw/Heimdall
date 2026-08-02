@@ -138,7 +138,7 @@ Silent/scripted (advanced):
 Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -MachineGroup SOE
 ```
 
-**Install log:** `%ProgramData%\Heimdall\logs\install-client-*.log` and `install-workstation-collector-*.log`  
+**Install log:** `%ProgramData%\Heimdall\logs\install-client-*.log` (wizard) and `install-agent-*.log` (service install)  
 **Setup log:** `%ProgramData%\Heimdall\logs\launch-control-*.log`
 
 ### Option B — From a full repo clone (same machine / has SDK)
@@ -234,6 +234,39 @@ POC default: `heimdall-poc-key`. Set the same value in:
 - Agent install (`-ApiKey`) / `%ProgramFiles%\Heimdall\Agent\appsettings.json` → `Heimdall:ApiKey`
 
 Restart the affected service after changing keys.
+
+### Staff Access — Windows login verification
+
+Staff Access can tie sign-in to the user's **Windows account** (Negotiate/NTLM/Kerberos) so staff cannot impersonate a colleague by typing their email. Agent ingest still uses **`X-Heimdall-Key`** only — unchanged.
+
+**API config** (`appsettings.json` under the install dir, default `%ProgramFiles%\Heimdall\Api\`):
+
+```json
+"Heimdall": {
+  "StaffAccess": {
+    "RequireWindowsAuth": true,
+    "EmailDomainSuffixes": [ "yourcompany.com" ],
+    "AllowDevBypass": false
+  }
+}
+```
+
+| Setting | Purpose |
+|---------|---------|
+| `RequireWindowsAuth` | When `true`, Staff Access and `/api/staff/*` require a Windows identity that matches the registered email. |
+| `EmailDomainSuffixes` | Derives email from `DOMAIN\user` → `user@yourcompany.com`. Also set staff emails in Remote Access Groups to the same UPN/mailbox. |
+| `AllowDevBypass` | **`true` only for local `dotnet run` dev.** Skips Windows checks; shows a warning. Never on production installs. |
+
+**Admin / browser setup (intranet POC):**
+
+1. Browse the dashboard by **hostname** (e.g. `http://heimdall-server:5080`), not raw IP, so Negotiate works reliably.
+2. Add the site to the **Local intranet** zone (IE settings / Group Policy: *Site to Zone Assignment*), or ensure Edge/Chrome treats it as intranet so Windows credentials are sent automatically.
+3. Register staff in **Settings → Remote Access Groups** using emails that match AD: UPN (`user@domain.com`) or `user@` one of `EmailDomainSuffixes`.
+4. Restart **`HeimdallApi`** after changing `appsettings.json`.
+
+**IIS alternative:** If you reverse-proxy with IIS instead of direct Kestrel, enable **Windows Authentication** on the IIS site and disable Anonymous for `/StaffAccess`, `/Staff`, and `/api/staff/*`; forward `X-Forwarded-*` headers. Kestrel-as-service (default installer) supports Negotiate directly — no IIS required.
+
+**Limitations:** Non–domain-joined PCs, macOS/Linux browsers, Safari, and some VPN clients may not send Windows credentials; staff on those machines cannot use Staff Access until they use a domain-joined Windows PC and intranet browser. This is intentional — it prevents email impersonation without passwords.
 
 ---
 

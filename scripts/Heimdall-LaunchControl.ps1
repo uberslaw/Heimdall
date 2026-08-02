@@ -32,6 +32,10 @@ $collectorHelperPath = Join-Path $script:ScriptDirEarly "Heimdall-CollectorInsta
 if (Test-Path -LiteralPath $collectorHelperPath) {
     . $collectorHelperPath
 }
+$installApiTimingPath = Join-Path $script:ScriptDirEarly "Heimdall-InstallApiTiming.ps1"
+if (Test-Path -LiteralPath $installApiTimingPath) {
+    . $installApiTimingPath
+}
 Import-HeimdallVersionCompare -ScriptDir $script:ScriptDirEarly
 
 $script:ProductVersionExpected = "0.1.0"
@@ -1640,7 +1644,7 @@ function Get-PayloadPath {
     }
     foreach ($c in $candidates) {
         $exe = Join-Path $c "Heimdall.Agent.exe"
-        if (Test-Path $exe) { return (Resolve-Path $c).Path }
+        if (Test-Path $exe) { return (Resolve-HeimdallFilesystemPath -Path $c) }
     }
     return $null
 }
@@ -1655,7 +1659,7 @@ function Get-InstallerCmdPath {
         $names.Add((Join-Path $root "Install-WorkstationCollector.cmd"))
     }
     foreach ($n in $names) {
-        if (Test-Path $n) { return (Resolve-Path $n).Path }
+        if (Test-Path $n) { return (Resolve-HeimdallFilesystemPath -Path $n) }
     }
     return $null
 }
@@ -1802,13 +1806,44 @@ function Start-GuidedApiInstall {
         return
     }
 
-    Write-HeimdallLog "Launching install-api.ps1 (elevated console stays open)..." -Level STEP
+    Write-HeimdallLog "Launching install-api.ps1 (elevated; progress window + auto-close)..." -Level STEP
     Update-UiStep 2 "[...] 3. Install HeimdallApi"
-    $arg = "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$ps1`" -Port $($inputs.Port) -ApiKey `"$($inputs.ApiKey)`""
+    Set-UiStatus "Installing API - accept UAC; watch progress window"
+    $installStartedAt = Get-Date
+    $installEstimate = $null
+    if (Get-Command Get-InstallApiTimingEstimate -ErrorAction SilentlyContinue) {
+        $installEstimate = Get-InstallApiTimingEstimate -StartedAt $installStartedAt
+        $estMmSs = Format-InstallApiDurationMmSs -TotalSec $installEstimate.EstimatedSec
+        Write-HeimdallLog "Estimated API install: ~$estMmSs (done by $($installEstimate.FinishAt.ToString('HH:mm:ss')); baseline $($installEstimate.BaselineSec)s from $($installEstimate.Source))" -Level INFO
+    }
+    $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$ps1`" -Port $($inputs.Port) -ApiKey `"$($inputs.ApiKey)`" -NoPrompt"
     $p = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $arg -PassThru
-    $null = Wait-ProcessWithUiPump -Process $p -StatusText "Installing API (watch elevated console)..."
+    $installExit = -1
+    if ($installEstimate -and (Get-Command Wait-ProcessWithInstallCountdown -ErrorAction SilentlyContinue)) {
+        $installExit = Wait-ProcessWithInstallCountdown -Process $p -FinishAt $installEstimate.FinishAt
+    }
+    else {
+        $installExit = Wait-ProcessWithUiPump -Process $p -StatusText "Installing API (watch elevated console)..."
+        if ($installExit -eq 0) {
+            Set-UiStatus "API install finished successfully"
+        }
+        elseif ($installExit -gt 0) {
+            Set-UiStatus "API install failed (exit $installExit)"
+        }
+    }
 
-    Update-UiStep 2 "[OK] 3. Install finished (check console)"
+    if ($installExit -ne 0) {
+        Update-UiStep 2 "[X] 3. Install failed (exit $installExit)"
+        Write-HeimdallLog "install-api.ps1 exited with code $installExit" -Level ERROR
+        [System.Windows.Forms.MessageBox]::Show(
+            "API install did not complete successfully (exit $installExit).`r`n`r`nCheck the elevated install console and:`r`n$($script:LogPath)",
+            "Install failed",
+            "OK",
+            "Error") | Out-Null
+        return
+    }
+
+    Update-UiStep 2 "[OK] 3. Install finished"
     $health = Test-ApiHealth -ApiUrl "http://localhost:$($inputs.Port)"
     if ($health.Ok) {
         Update-UiStep 3 "[OK] 4. Health OK - productVersion=$($health.Payload.productVersion)"
@@ -2088,15 +2123,15 @@ function Start-GuidedCollectorInstall {
     Write-HeimdallLog "Installer process exit: $exit" -Level $(if ($exit -eq 0) { "OK" } else { "ERROR" })
 
     if ($exit -ne 0) {
-        $installLog = Get-HeimdallInstallWorkstationCollectorLogTail -LineCount 30 -LogRoot $script:LogRoot
+        $installLog = Get-HeimdallInstallAgentLogTail -LineCount 30 -LogRoot $script:LogRoot
         if ($installLog) {
-            Write-HeimdallLog "Latest installer log: $($installLog.Path)" -Level INFO
+            Write-HeimdallLog "Latest service install log: $($installLog.Path)" -Level INFO
             foreach ($line in $installLog.Lines) {
                 Write-HeimdallLog "  install> $line" -Level INFO
             }
         }
         else {
-            Write-HeimdallLog "No install-workstation-collector-*.log found under $($script:LogRoot)" -Level WARN
+            Write-HeimdallLog "No install-agent-*.log found under $($script:LogRoot) (see install> lines above from console capture)" -Level WARN
         }
     }
 
@@ -2161,19 +2196,19 @@ function Start-GuidedCollectorInstall {
         Set-UiStatus "Verify failed - see log"
         $extra = ""
         if ($exit -ne 0) {
-            $installLog = Get-HeimdallInstallWorkstationCollectorLogTail -LineCount 30 -LogRoot $script:LogRoot
+            $installLog = Get-HeimdallInstallAgentLogTail -LineCount 30 -LogRoot $script:LogRoot
             if ($installLog) {
-                $extra = "`r`n`r`nInstaller exited $exit. Last lines from:`r`n$($installLog.Path)`r`n`r`n$($installLog.Text)"
+                $extra = "`r`n`r`nService install exited $exit. Last lines from:`r`n$($installLog.Path)`r`n`r`n$($installLog.Text)"
             }
             else {
-                $extra = "`r`n`r`nInstaller exited $exit. No install-workstation-collector-*.log found yet."
+                $extra = "`r`n`r`nService install exited $exit. Check launch-control log for install> console capture and install-agent-*.log under $($script:LogRoot)."
             }
         }
         if ($settingsOk -and -not $urlMatchOk) {
             $extra += "`r`n`r`nApiBaseUrl on disk does not match what you entered. Fix appsettings.json or re-run install with the correct URL."
         }
         [System.Windows.Forms.MessageBox]::Show(
-            ("Verification failed.`r`n`r`n" + ($verifyBits -join "`r`n") + $extra + "`r`n`r`nOpen the logs folder and send the latest install-*.log + launch-control-*.log.`r`n`r`n$($script:LogPath)"),
+            ("Verification failed.`r`n`r`n" + ($verifyBits -join "`r`n") + $extra + "`r`n`r`nOpen the logs folder and send the latest install-client-*.log, install-agent-*.log, and launch-control-*.log.`r`n`r`n$($script:LogPath)"),
             "Verify failed", "OK", "Error") | Out-Null
         Open-LogsFolder
     }
@@ -2368,6 +2403,7 @@ This Setup window must be opened from the repo (scripts\Heimdall-Setup.lnk), not
 4. Wait for publish + Windows service HeimdallApi to start.
 
 What it does:
+- Stops HeimdallApi if running (no manual stop needed), publishes, then recreates and starts the service
 - Publishes to %ProgramFiles%\Heimdall\Api\
 - SQLite DB: %ProgramData%\Heimdall\heimdall.db
 - Firewall rule for the chosen port (when policy allows)

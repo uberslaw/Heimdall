@@ -167,10 +167,10 @@
 
         <div class="hd-panel mb-4" id="machine-focus">
             <h2 class="h5 mb-3">Machine lookup &amp; analysis</h2>
-            <form method="post" asp-page-handler="Lookup" class="row g-2 align-items-end mb-3">
+            <form method="post" class="row g-2 align-items-end mb-3" id="machine-lookup-form">
                 <div class="col-md-8">
                     <label class="form-label">Machine</label>
-                    <select class="form-select" asp-for="LookupHostname">
+                    <select class="form-select" asp-for="LookupHostname" required>
                         <option value="">— select —</option>
                         @foreach (var m in Model.AllMachines)
                         {
@@ -178,16 +178,12 @@
                         }
                     </select>
                 </div>
-                <div class="col-md-4 d-flex gap-2">
-                    <button type="submit" class="btn btn-ghost flex-grow-1">Lookup</button>
+                <div class="col-md-4 d-flex flex-column gap-2">
+                    <button type="submit" formaction="?handler=Lookup" class="btn btn-ghost">Lookup</button>
+                    <button type="submit" formaction="?handler=Analyze" class="btn btn-hd">Analyze apps</button>
                 </div>
             </form>
-            <form method="post" asp-page-handler="Analyze" class="mb-3">
-                <input type="hidden" name="AnalyzeHostname" value="@(Model.FocusHostname ?? Model.LookupHostname)" />
-                <input type="hidden" name="LookupHostname" value="@(Model.FocusHostname ?? Model.LookupHostname)" />
-                <button type="submit" class="btn btn-hd" @(string.IsNullOrEmpty(Model.FocusHostname ?? Model.LookupHostname) ? "disabled" : null)>Analyze apps</button>
-                <span class="text-secondary small ms-2">Discovers specialization apps → Pending approval (Core Windows &amp; SOE excluded)</span>
-            </form>
+            <p class="text-secondary small mb-0">Pick a machine, then Lookup or Analyze. Analyze discovers specialization apps → Pending approval (Core Windows &amp; SOE excluded).</p>
 
             @if (Model.Lookup is not null && Model.FocusHostname is not null)
             {
@@ -295,12 +291,16 @@
                                         {
                                             <span class="text-secondary small">@row.DisplayName</span>
                                         }
+                                        @if (!string.IsNullOrWhiteSpace(row.ExecutablePath))
+                                        {
+                                            <div class="hd-process-path">@row.ExecutablePath</div>
+                                        }
                                         @if (row.AllowForPresence)
                                         {
                                             <span class="badge-pill badge-rdp ms-1" title="Presence signal only — not proposed for app tracking">signal</span>
                                         }
                                     </td>
-                                    <td data-sort-value="@(row.ExecutablePath ?? "")" class="small font-monospace text-secondary">@(string.IsNullOrWhiteSpace(row.ExecutablePath) ? "—" : row.ExecutablePath)</td>
+                                    <td data-sort-value="@(row.ExecutablePath ?? "")" class="hd-process-path-cell">@(string.IsNullOrWhiteSpace(row.ExecutablePath) ? "—" : row.ExecutablePath)</td>
                                     <td data-sort-value="@groupLabel"><span class="badge-pill badge-group-@row.Group.ToString().ToLowerInvariant()">@groupLabel</span></td>
                                     <td data-sort-value="@statusLabel">@statusLabel</td>
                                     <td data-sort-value="@row.Source" class="small">@row.Source</td>
@@ -357,8 +357,13 @@
                                         <input class="form-check-input" type="checkbox" name="SelectedProcesses" value="@p.ProcessName" checked />
                                     </td>
                                     <td data-sort-value="@p.DisplayName">@p.DisplayName</td>
-                                    <td data-sort-value="@p.ProcessName"><code>@p.ProcessName</code></td>
-                                    <td data-sort-value="@(p.ExecutablePath ?? "")" class="small font-monospace text-secondary">@(string.IsNullOrWhiteSpace(p.ExecutablePath) ? "—" : p.ExecutablePath)</td>
+                                    <td data-sort-value="@p.ProcessName"><code>@p.ProcessName</code>
+                                        @if (!string.IsNullOrWhiteSpace(p.ExecutablePath))
+                                        {
+                                            <div class="hd-process-path">@p.ExecutablePath</div>
+                                        }
+                                    </td>
+                                    <td data-sort-value="@(p.ExecutablePath ?? "")" class="hd-process-path-cell">@(string.IsNullOrWhiteSpace(p.ExecutablePath) ? "—" : p.ExecutablePath)</td>
                                     <td data-sort-value="@groupLabel"><span class="badge-pill badge-group-specialization">@groupLabel</span></td>
                                     <td data-sort-value="@p.Source">@p.Source</td>
                                 </tr>
@@ -413,6 +418,40 @@
                     </form>
                 }
             }
+        </div>
+
+        <div class="hd-panel mb-4" id="csv-classifications">
+            <h2 class="h5 mb-3">CSV classifications (AI-assisted)</h2>
+            <p class="small text-secondary mb-3">
+                Export → fill <code>Description</code> in AI → Import to batch update groups and descriptions.
+                Header row: <code>@ProcessGroupService.CsvHeader</code>
+            </p>
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <a class="btn btn-ghost btn-sm" asp-page-handler="ExportAllCsv">Export all classified processes</a>
+                @if (Model.FocusHostname is not null)
+                {
+                    <a class="btn btn-hd btn-sm" asp-page-handler="ExportMachineCsv" asp-route-host="@Model.FocusHostname">Export CSV for AI (@Model.FocusHostname)</a>
+                }
+            </div>
+            <form method="post" asp-page-handler="ImportClassifications" enctype="multipart/form-data">
+                @if (Model.FocusHostname is not null)
+                {
+                    <input type="hidden" name="LookupHostname" value="@Model.FocusHostname" />
+                    <input type="hidden" name="AnalyzeHostname" value="@Model.FocusHostname" />
+                }
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-8">
+                        <label class="form-label">Import CSV</label>
+                        <input class="form-control" type="file" name="ClassificationCsvFile" accept=".csv,text/csv" required />
+                    </div>
+                    <div class="col-md-4">
+                        <button type="submit" class="btn btn-hd w-100">Import CSV</button>
+                    </div>
+                </div>
+                <p class="small text-secondary mt-2 mb-0">
+                    Updates <code>ProcessGroupAssignment</code> by <code>ProcessName</code>. Group values: CoreWindows, Soe, Specialization (friendly names accepted). SOE rows sync SoeApps membership.
+                </p>
+            </form>
         </div>
 
         <div class="hd-panel">

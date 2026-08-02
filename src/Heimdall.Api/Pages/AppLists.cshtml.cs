@@ -44,6 +44,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     [BindProperty] public int? ApplyTeamListId { get; set; }
     [BindProperty] public int? DefaultUploadTeamId { get; set; }
     [BindProperty] public IFormFile? UploadFile { get; set; }
+    [BindProperty] public IFormFile? ClassificationCsvFile { get; set; }
 
     public async Task OnGetAsync(string? host = null, string? section = null)
     {
@@ -52,7 +53,14 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         {
             FocusHostname = host.Trim();
             LookupHostname = FocusHostname;
-            await LoadFocusAsync(FocusHostname);
+            try
+            {
+                await LoadFocusAsync(FocusHostname);
+            }
+            catch (Exception ex)
+            {
+                TempData["Error"] = $"Lookup failed for {FocusHostname}: {ex.Message}";
+            }
         }
     }
 
@@ -127,7 +135,14 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
             return Page();
         }
         FocusHostname = LookupHostname.Trim();
-        await LoadFocusAsync(FocusHostname);
+        try
+        {
+            await LoadFocusAsync(FocusHostname);
+        }
+        catch (Exception ex)
+        {
+            TempData["Error"] = $"Lookup failed for {FocusHostname}: {ex.Message}";
+        }
         return Page();
     }
 
@@ -141,14 +156,21 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
             return Page();
         }
 
-        Analysis = await appLists.AnalyzeMachineAsync(host, null, requestAgentInventoryIfEmpty: true, HttpContext.RequestAborted);
         FocusHostname = host;
         LookupHostname = host;
-        await LoadFocusAsync(host);
+        try
+        {
+            Analysis = await appLists.AnalyzeMachineAsync(host, null, requestAgentInventoryIfEmpty: true, HttpContext.RequestAborted);
+            await LoadFocusAsync(host);
 
-        TempData["Message"] = Analysis.queuedForAgent
-            ? $"Analysis queued for {host}. Agent will upload process inventory on next cycle; then approve here."
-            : $"Analysis ready for {host}: {Analysis.Proposals.Count} app(s) pending approval — nothing new is tracked until you approve.";
+            TempData["Message"] = Analysis.queuedForAgent
+                ? $"Analysis queued for {host}. Agent will upload process inventory on next cycle; then approve here."
+                : $"Analysis ready for {host}: {Analysis.Proposals.Count} app(s) pending approval — nothing new is tracked until you approve.";
+        }
+        catch (Exception ex)
+        {
+            TempData["Error"] = $"Analyze failed for {host}: {ex.Message}";
+        }
         return Page();
     }
 
@@ -239,6 +261,80 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
             TempData["Message"] = $"Removed {removed} Core Windows / SOE entr(y/ies) from “Discovered on {host}”. {remaining} specialization app(s) remain tracked.";
 
         return RedirectToPage(new { host });
+    }
+
+    public async Task<IActionResult> OnGetExportMachineCsvAsync(string host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            TempData["Error"] = "Pick a machine to export.";
+            return RedirectToPage();
+        }
+
+        host = host.Trim();
+        var rows = await processGroups.BuildMachineExportRowsAsync(host, HttpContext.RequestAborted);
+        if (rows.Count == 0)
+        {
+            TempData["Error"] = $"No process inventory for {host}. Run Analyze or wait for agent data.";
+            return RedirectToPage(new { host });
+        }
+
+        var bytes = ProcessGroupService.RenderCsv(rows);
+        var safeHost = string.Concat(host.Where(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_'));
+        return File(bytes, "text/csv; charset=utf-8", $"heimdall-apps-{safeHost}.csv");
+    }
+
+    public async Task<IActionResult> OnGetExportAllCsvAsync()
+    {
+        var rows = await processGroups.BuildGlobalExportRowsAsync(HttpContext.RequestAborted);
+        var bytes = ProcessGroupService.RenderCsv(rows);
+        return File(bytes, "text/csv; charset=utf-8", "heimdall-classified-processes.csv");
+    }
+
+    public async Task<IActionResult> OnPostImportClassificationsAsync()
+    {
+        await LoadAsync();
+
+        if (ClassificationCsvFile is null || ClassificationCsvFile.Length == 0)
+        {
+            TempData["Error"] = "Choose a classification CSV file.";
+            var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
+            return RedirectToPage(string.IsNullOrWhiteSpace(host) ? null : new { host });
+        }
+
+        const long maxBytes = 10 * 1024 * 1024;
+        if (ClassificationCsvFile.Length > maxBytes)
+        {
+            TempData["Error"] = "CSV file is too large (max 10 MB). Split into smaller files.";
+            var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
+            return RedirectToPage(string.IsNullOrWhiteSpace(host) ? null : new { host });
+        }
+
+        await using var stream = ClassificationCsvFile.OpenReadStream();
+        ProcessGroupService.CsvImportResult result;
+        try
+        {
+            result = await processGroups.ImportCsvAsync(stream, HttpContext.RequestAborted);
+        }
+        catch (Exception ex)
+        {
+            TempData["Error"] = $"Import failed: {ex.Message}";
+            var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
+            return RedirectToPage(string.IsNullOrWhiteSpace(host) ? null : new { host });
+        }
+
+        var summary = $"Import complete: {result.Updated} updated, {result.Skipped} skipped.";
+        if (result.Errors.Count > 0)
+        {
+            var preview = string.Join("; ", result.Errors.Take(5));
+            if (result.Errors.Count > 5)
+                preview += $" … and {result.Errors.Count - 5} more.";
+            summary += $" {result.Errors.Count} issue(s): {preview}";
+        }
+        TempData["Message"] = summary;
+
+        var redirectHost = (AnalyzeHostname ?? LookupHostname)?.Trim();
+        return RedirectToPage(string.IsNullOrWhiteSpace(redirectHost) ? null : new { host = redirectHost });
     }
 
     private async Task<IActionResult> MoveSelectedGroupsAsync(AppGroup targetGroup)

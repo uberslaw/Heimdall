@@ -213,37 +213,37 @@ else
                         }
                         else if (view == "active-time")
                         {
-                            <td data-sort-value="@u.ActiveSeconds">@StatsModel.FormatDuration(u.ActiveSeconds)</td>
+                            <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
                             <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
                         }
                         else if (view == "total-time")
                         {
-                            <td data-sort-value="@u.TotalSeconds">@StatsModel.FormatDuration(u.TotalSeconds)</td>
-                            <td data-sort-value="@u.ActiveSeconds">@StatsModel.FormatDuration(u.ActiveSeconds)</td>
-                            <td data-sort-value="@u.DisconnectedSeconds">@StatsModel.FormatDuration(u.DisconnectedSeconds)</td>
+                            <td data-sort-value="@u.TotalSeconds">@DurationDisplay.Render(u.TotalSeconds)</td>
+                            <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
+                            <td data-sort-value="@u.DisconnectedSeconds">@DurationDisplay.Render(u.DisconnectedSeconds)</td>
                         }
                         else if (view == "by-duration")
                         {
-                            <td data-sort-value="@u.ActiveSeconds">@StatsModel.FormatDuration(u.ActiveSeconds)</td>
-                            <td data-sort-value="@u.TotalSeconds">@StatsModel.FormatDuration(u.TotalSeconds)</td>
+                            <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
+                            <td data-sort-value="@u.TotalSeconds">@DurationDisplay.Render(u.TotalSeconds)</td>
                             <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
                         }
                         else if (view == "avg-session")
                         {
-                            <td data-sort-value="@u.AvgSessionActiveSeconds">@StatsModel.FormatDuration(u.AvgSessionActiveSeconds)</td>
+                            <td data-sort-value="@u.AvgSessionActiveSeconds">@DurationDisplay.Render(u.AvgSessionActiveSeconds)</td>
                             <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
-                            <td data-sort-value="@u.ActiveSeconds">@StatsModel.FormatDuration(u.ActiveSeconds)</td>
+                            <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
                         }
                         else if (view == "avg-per-day")
                         {
-                            <td data-sort-value="@u.AvgActivePerDaySeconds">@StatsModel.FormatDuration(u.AvgActivePerDaySeconds)</td>
+                            <td data-sort-value="@u.AvgActivePerDaySeconds">@DurationDisplay.Render(u.AvgActivePerDaySeconds)</td>
                             <td data-sort-value="@u.DistinctDays">@u.DistinctDays</td>
-                            <td data-sort-value="@u.ActiveSeconds">@StatsModel.FormatDuration(u.ActiveSeconds)</td>
+                            <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
                         }
                         else
                         {
-                            <td data-sort-value="@u.RdpDisconnectedSeconds">@StatsModel.FormatDuration(u.RdpDisconnectedSeconds)</td>
-                            <td data-sort-value="@u.DisconnectedSeconds">@StatsModel.FormatDuration(u.DisconnectedSeconds)</td>
+                            <td data-sort-value="@u.RdpDisconnectedSeconds">@DurationDisplay.Render(u.RdpDisconnectedSeconds)</td>
+                            <td data-sort-value="@u.DisconnectedSeconds">@DurationDisplay.Render(u.DisconnectedSeconds)</td>
                             <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
                         }
                     </tr>
@@ -314,23 +314,23 @@ else
                         <td data-sort-value="@a.RunCount">@a.RunCount</td>
                         @if (view == "apps-time")
                         {
-                            <td data-sort-value="@a.TotalOpenSeconds">@StatsModel.FormatDuration(a.TotalOpenSeconds)</td>
+                            <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
                         }
                         else if (view == "apps-cpu")
                         {
                             <td data-sort-value="@(a.PeakCpuPercent ?? -1)">@StatsModel.FormatPct(a.PeakCpuPercent)</td>
-                            <td data-sort-value="@a.TotalOpenSeconds">@StatsModel.FormatDuration(a.TotalOpenSeconds)</td>
+                            <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
                         }
                         else if (view == "apps-gpu")
                         {
                             <td data-sort-value="@(a.PeakGpuPercent ?? -1)">@StatsModel.FormatPct(a.PeakGpuPercent)</td>
-                            <td data-sort-value="@a.TotalOpenSeconds">@StatsModel.FormatDuration(a.TotalOpenSeconds)</td>
+                            <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
                         }
                         else
                         {
                             <td data-sort-value="@(a.DiskReadBytes ?? -1)">@StatsModel.FormatBytes(a.DiskReadBytes)</td>
                             <td data-sort-value="@(a.DiskWriteBytes ?? -1)">@StatsModel.FormatBytes(a.DiskWriteBytes)</td>
-                            <td data-sort-value="@a.TotalOpenSeconds">@StatsModel.FormatDuration(a.TotalOpenSeconds)</td>
+                            <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
                         }
                     </tr>
                 }

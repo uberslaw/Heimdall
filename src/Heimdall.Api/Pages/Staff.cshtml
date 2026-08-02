@@ -1,0 +1,238 @@
+@page "{id:int}"
+@model StaffModel
+@{
+    ViewData["Title"] = Model.Group is null ? "Staff Access" : $"Staff · {Model.Group.Name}";
+}
+
+@if (Model.Group is null)
+{
+    <h1 class="hd-title">Staff Access</h1>
+    <div class="alert alert-danger">Group not found.</div>
+    <a class="btn btn-hd" asp-page="/StaffAccess">Back to Staff Access</a>
+    return;
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+    <div>
+        <h1 class="hd-title mb-1">@Model.Group.Name</h1>
+        <p class="hd-sub mb-0">
+            Your machines · live CPU / GPU / RAM / disk activity while this page is open.
+            Signed in as @Model.SignedInEmail · <a asp-page="/StaffAccess">switch group</a>
+        </p>
+    </div>
+</div>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<p class="text-secondary small mb-3">
+    <strong>Sampling:</strong> starts only while this page is open. The agent takes 1 sample/sec for the first 10 seconds
+    (average shown first), then one reading every 10 seconds. If teammates have this page open too, sampling still runs
+    only once per machine — everyone reads the same live data from the API.
+</p>
+
+<div class="hd-panel hd-remote-panel mb-4">
+    <table class="hd-table hd-staff-table">
+        <colgroup>
+            <col class="hd-scol-status" /><col class="hd-scol-machine" /><col class="hd-scol-ip" />
+            <col class="hd-scol-contact" /><col class="hd-scol-rds" /><col class="hd-scol-metric" />
+            <col class="hd-scol-metric" /><col class="hd-scol-metric" /><col class="hd-scol-metric" />
+            <col class="hd-scol-metric" /><col class="hd-scol-sampling" />
+        </colgroup>
+        <thead>
+            <tr>
+                <th>Status</th>
+                <th>Machine</th>
+                <th>IP</th>
+                <th>Last contact</th>
+                <th class="hd-th-stacked"><span>RDS</span><span>Service</span></th>
+                <th>CPU</th>
+                <th>GPU</th>
+                <th>RAM</th>
+                <th class="hd-th-stacked"><span>Disk</span><span>Reads</span></th>
+                <th class="hd-th-stacked"><span>Disk</span><span>Writes</span></th>
+                <th>Sampling</th>
+            </tr>
+        </thead>
+        <tbody>
+        @if (Model.Rows.Count == 0)
+        {
+            <tr><td colspan="11">No machines assigned to this group yet — ask an admin to add some under Admin → Remote Access Groups.</td></tr>
+        }
+        @foreach (var r in Model.Rows)
+        {
+            var m = r.Metric;
+            <tr data-hd-staff-row data-hostname="@r.Hostname">
+                <td>
+                    @if (r.IsOnline)
+                    {
+                        <span class="badge-pill badge-active">Online</span>
+                    }
+                    else
+                    {
+                        <span class="badge-pill badge-ended">Offline</span>
+                    }
+                </td>
+                <td><strong>@r.Hostname</strong></td>
+                <td class="hd-remote-ip">@(r.LastIp ?? "—")</td>
+                <td class="hd-remote-contact">@StaffModel.FormatContact(r.LastSeenUtc)</td>
+                <td>
+                    @if (!string.IsNullOrWhiteSpace(r.TermServiceStatus))
+                    {
+                        <span class="badge-pill @StaffModel.TermServiceBadgeClass(r.TermServiceStatus)">@r.TermServiceStatus</span>
+                    }
+                    else
+                    {
+                        <span class="text-secondary">—</span>
+                    }
+                </td>
+                <td class="hd-metric-cell" data-hd-metric="cpu">
+                    <div class="hd-metric-value">@StaffModel.FormatPercent(m.CpuPercent)</div>
+                    <ul class="hd-metric-top" data-hd-top="cpu">
+                        @foreach (var p in m.TopCpuProcesses)
+                        {
+                            <li>@p.ProcessName <span class="text-secondary">@p.Value.ToString("0.#")%</span></li>
+                        }
+                    </ul>
+                </td>
+                <td class="hd-metric-cell" data-hd-metric="gpu">
+                    <div class="hd-metric-value">@StaffModel.FormatPercent(m.GpuPercent)</div>
+                    <ul class="hd-metric-top" data-hd-top="gpu">
+                        @foreach (var p in m.TopGpuProcesses)
+                        {
+                            <li>@p.ProcessName <span class="text-secondary">@p.Value.ToString("0.#")%</span></li>
+                        }
+                    </ul>
+                    @if (m.GpuPercent is null && m.CpuPercent is not null)
+                    {
+                        <div class="text-secondary small">n/a on this host</div>
+                    }
+                </td>
+                <td class="hd-metric-cell" data-hd-metric="ram">
+                    <div class="hd-metric-value">@StaffModel.FormatRam(m)</div>
+                    <ul class="hd-metric-top" data-hd-top="ram">
+                        @foreach (var p in m.TopRamProcesses)
+                        {
+                            <li>@p.ProcessName <span class="text-secondary">@p.Value.ToString("0.#") MB</span></li>
+                        }
+                    </ul>
+                </td>
+                <td class="hd-metric-cell" data-hd-metric="diskRead">
+                    <span class="badge-pill @StaffModel.DiskLevelBadgeClass(m.DiskReadLevel)" data-hd-level="diskRead">@m.DiskReadLevel</span>
+                    <ul class="hd-metric-top" data-hd-top="diskRead">
+                        @foreach (var p in m.TopDiskReadProcesses)
+                        {
+                            <li>@p.ProcessName <span class="text-secondary">@FormatBytesPerSec(p.Value)</span></li>
+                        }
+                    </ul>
+                </td>
+                <td class="hd-metric-cell" data-hd-metric="diskWrite">
+                    <span class="badge-pill @StaffModel.DiskLevelBadgeClass(m.DiskWriteLevel)" data-hd-level="diskWrite">@m.DiskWriteLevel</span>
+                    <ul class="hd-metric-top" data-hd-top="diskWrite">
+                        @foreach (var p in m.TopDiskWriteProcesses)
+                        {
+                            <li>@p.ProcessName <span class="text-secondary">@FormatBytesPerSec(p.Value)</span></li>
+                        }
+                    </ul>
+                </td>
+                <td data-hd-sampling-status>
+                    <span class="badge-pill @StaffModel.SamplingStatusBadgeClass(m)">@StaffModel.SamplingStatusLabel(m)</span>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="hd-panel h-100">
+            <h2 class="h5 mb-2">Favourite processes</h2>
+            <form method="post" asp-page-handler="ToggleFavoritesOnly" class="mb-3">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" asp-for="FavoritesOnly" id="favOnlySwitch" onchange="this.form.requestSubmit()" />
+                    <label class="form-check-label" for="favOnlySwitch">Track only favourites (hides the generic top-3 lists above once favourites exist)</label>
+                </div>
+            </form>
+
+            @if (Model.Group.FavoriteProcesses.Count == 0)
+            {
+                <p class="text-secondary">No favourites yet — add a process name below (e.g. Revit, acad).</p>
+            }
+            else
+            {
+                <div class="hd-process-list mb-3">
+                    <div class="hd-process-items">
+                        @foreach (var f in Model.Group.FavoriteProcesses.OrderBy(x => x.ProcessName, StringComparer.OrdinalIgnoreCase))
+                        {
+                            <div class="hd-process-item">
+                                <span class="hd-process-name flex-grow-1">★ @f.ProcessName</span>
+                                <form method="post" asp-page-handler="RemoveFavorite" class="d-inline">
+                                    <input type="hidden" name="FavoriteId" value="@f.Id" />
+                                    <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
+                                </form>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            <form method="post" asp-page-handler="AddFavorite" class="d-flex gap-2 flex-wrap">
+                <input class="form-control" style="max-width: 260px;" asp-for="FavoriteProcessInput" placeholder="Process name (e.g. Revit)" />
+                <button type="submit" class="btn btn-hd btn-sm">Add favourite</button>
+            </form>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="hd-panel h-100">
+            <h2 class="h5 mb-2">Favourites — live values</h2>
+            <p class="text-secondary small">
+                Shown for machines where a favourite process is currently running, even if it's not in that machine's top 3.
+            </p>
+            <div data-hd-favorites-panel>
+                @foreach (var r in Model.Rows.Where(r => r.Metric.FavoriteProcesses.Count > 0))
+                {
+                    <div class="mb-2">
+                        <strong>@r.Hostname</strong>
+                        <ul class="hd-metric-top">
+                            @foreach (var f in r.Metric.FavoriteProcesses)
+                            {
+                                <li>
+                                    @f.ProcessName —
+                                    CPU @StaffModel.FormatPercent(f.CpuPercent),
+                                    GPU @StaffModel.FormatPercent(f.GpuPercent),
+                                    RAM @(f.RamMb is double mb ? $"{mb:0.#} MB" : "—")
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+                @if (Model.Rows.All(r => r.Metric.FavoriteProcesses.Count == 0))
+                {
+                    <p class="text-secondary mb-0">No favourite processes currently running on your machines.</p>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@functions {
+    string FormatBytesPerSec(double bytesPerSec)
+    {
+        var mb = bytesPerSec / (1024.0 * 1024.0);
+        return mb >= 1 ? $"{mb:0.#} MB/s" : $"{bytesPerSec / 1024.0:0.#} KB/s";
+    }
+}
+
+@section Scripts {
+    <script>
+        window.HeimdallStaffGroupId = @Model.Id;
+    </script>
+    <script src="~/js/staff-live-metrics.js" asp-append-version="true"></script>
+}

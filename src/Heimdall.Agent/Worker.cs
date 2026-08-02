@@ -23,6 +23,20 @@ public sealed class Worker(
     private readonly Dictionary<string, ProcessRunDto> _processBuffer = new(StringComparer.OrdinalIgnoreCase);
     private OfflineQueue? _queue;
     private bool _sendInventoryNextUpload;
+    private readonly HashSet<string> _executedPendingCommands = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _commandsToAck = [];
+    private readonly List<CommandExecutionReportDto> _commandReports = [];
+
+    // Live resource sampling (Staff Access) — separate fast poll + cadence, independent of config refresh.
+    // Only runs while the API reports an active viewer for this host; see LiveSamplingService.
+    private DateTimeOffset _nextResourceControlPoll = DateTimeOffset.MinValue;
+    private DateTimeOffset _nextResourceSample = DateTimeOffset.MinValue;
+    private bool _resourceSamplingActive;
+    private List<string> _resourceFavoriteNames = [];
+    private readonly List<ResourceMetricsCollector.Sample> _resourceCalibrationBuffer = [];
+    private const int CalibrationSampleCount = 10;
+    private static readonly TimeSpan ResourceControlPollInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ResourceSteadyStateInterval = TimeSpan.FromSeconds(10);
 
     [SupportedOSPlatform("windows")]
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -53,9 +67,11 @@ public sealed class Worker(
                     _config = remote;
                     if (remote.PendingAppAnalysis)
                         _sendInventoryNextUpload = true;
-                    logger.LogInformation("Config refreshed v{Version}; tracking {Count} processes{Inventory}",
+                    ProcessPendingCommands(remote.PendingCommands);
+                    logger.LogInformation("Config refreshed v{Version}; tracking {Count} processes{Inventory}{Commands}",
                         _config.ConfigVersion, _config.IncludeProcesses.Count + _config.KnownApps.Count(a => a.Enabled),
-                        remote.PendingAppAnalysis ? "; inventory requested" : "");
+                        remote.PendingAppAnalysis ? "; inventory requested" : "",
+                        remote.PendingCommands.Count > 0 ? $"; pending commands: {string.Join(", ", remote.PendingCommands)}" : "");
                 }
                 _nextConfigRefresh = now.AddSeconds(Math.Max(60, _config.ConfigRefreshSeconds));
                 // Re-scan hardware on config refresh cadence (not every sample)
@@ -91,6 +107,8 @@ public sealed class Worker(
                 await FlushAsync(hostname, group, stoppingToken);
                 _nextUpload = now.AddSeconds(Math.Max(30, _config.UploadIntervalSeconds));
             }
+
+            await RunResourceSamplingTickAsync(hostname, now, stoppingToken);
 
             await Task.Delay(1000, stoppingToken);
         }
@@ -157,6 +175,17 @@ public sealed class Worker(
         }
 
         var hw = _hardware;
+        List<string> acks;
+        List<CommandExecutionReportDto> reports;
+        lock (_commandsToAck)
+        {
+            acks = _commandsToAck.ToList();
+        }
+        lock (_commandReports)
+        {
+            reports = _commandReports.ToList();
+        }
+
         var batch = new IngestBatchDto
         {
             Heartbeat = new HeartbeatDto
@@ -186,7 +215,11 @@ public sealed class Worker(
                 MachineGuid = hw?.MachineGuid,
                 SmbiosUuid = hw?.SmbiosUuid,
                 OsInstallDateUtc = hw?.OsInstallDateUtc,
-                WindowsFolderCreatedUtc = hw?.WindowsFolderCreatedUtc
+                WindowsFolderCreatedUtc = hw?.WindowsFolderCreatedUtc,
+                PrimaryIpAddress = NetworkInfoHelper.TryGetPrimaryIPv4(),
+                TermServiceStatus = TermServiceHelper.GetStatus(),
+                AcknowledgedCommands = acks,
+                CommandExecutionReports = reports
             },
             Sessions = sessions,
             ProcessRuns = processes,
@@ -201,6 +234,30 @@ public sealed class Worker(
             return;
         }
 
+        if (acks.Count > 0)
+        {
+            lock (_commandsToAck)
+            {
+                foreach (var ack in acks)
+                    _commandsToAck.RemoveAll(c => string.Equals(c, ack, StringComparison.OrdinalIgnoreCase));
+            }
+            foreach (var ack in acks)
+                _executedPendingCommands.Remove(ack);
+        }
+
+        if (reports.Count > 0)
+        {
+            lock (_commandReports)
+            {
+                foreach (var report in reports)
+                {
+                    _commandReports.RemoveAll(r =>
+                        string.Equals(r.Command, report.Command, StringComparison.OrdinalIgnoreCase)
+                        && r.ExecutedUtc == report.ExecutedUtc);
+                }
+            }
+        }
+
         if (_queue is null) return;
 
         var pending = _queue.Peek(20);
@@ -213,6 +270,162 @@ public sealed class Worker(
                 break;
         }
         _queue.Remove(acked);
+    }
+
+    /// <summary>
+    /// Live resource sampling state machine, driven by the same 1s tick as the rest of the worker (no
+    /// extra thread). Control poll every ~10s decides on/off; while on, samples 1/sec for the first 10s
+    /// (calibration average — matches "1 sample/sec for 10s -> average"), then one reading every 10s.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private async Task RunResourceSamplingTickAsync(string hostname, DateTimeOffset now, CancellationToken ct)
+    {
+        if (now >= _nextResourceControlPoll)
+        {
+            _nextResourceControlPoll = now.Add(ResourceControlPollInterval);
+            var status = await api.GetResourceSamplingStatusAsync(hostname, ct);
+            if (status is not null)
+            {
+                _resourceFavoriteNames = status.FavoriteProcessNames;
+
+                if (status.Active && !_resourceSamplingActive)
+                {
+                    _resourceSamplingActive = true;
+                    _resourceCalibrationBuffer.Clear();
+                    _nextResourceSample = DateTimeOffset.MinValue; // sample immediately below
+                    logger.LogInformation("Resource sampling starting for {Host} (staff viewer active)", hostname);
+                }
+                else if (!status.Active && _resourceSamplingActive)
+                {
+                    _resourceSamplingActive = false;
+                    _resourceCalibrationBuffer.Clear();
+                    logger.LogInformation("Resource sampling stopping for {Host} (no staff viewers)", hostname);
+                }
+            }
+            // status is null on transient failure — keep previous state rather than flapping.
+        }
+
+        if (!_resourceSamplingActive || now < _nextResourceSample)
+            return;
+
+        ResourceMetricsCollector.Sample sample;
+        try
+        {
+            sample = ResourceMetricsCollector.Collect();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Resource sampling collect failed for {Host}", hostname);
+            _nextResourceSample = now.AddSeconds(1);
+            return;
+        }
+
+        if (_resourceCalibrationBuffer.Count < CalibrationSampleCount)
+        {
+            _resourceCalibrationBuffer.Add(sample);
+            _nextResourceSample = now.AddSeconds(1);
+
+            if (_resourceCalibrationBuffer.Count == CalibrationSampleCount)
+            {
+                var report = BuildReport(hostname, sample, _resourceCalibrationBuffer, _resourceFavoriteNames, isCalibrationAverage: true);
+                await api.ReportResourceSampleAsync(report, ct);
+                _nextResourceSample = now.AddSeconds(ResourceSteadyStateInterval.TotalSeconds);
+            }
+        }
+        else
+        {
+            var report = BuildReport(hostname, sample, burst: null, _resourceFavoriteNames, isCalibrationAverage: false);
+            await api.ReportResourceSampleAsync(report, ct);
+            _nextResourceSample = now.Add(ResourceSteadyStateInterval);
+        }
+    }
+
+    /// <summary>
+    /// Headline values (CPU/GPU/RAM/disk) are averaged across the burst when provided (calibration), or taken
+    /// from the single steady-state sample. Top-3 lists and favourites always reflect the latest sample only —
+    /// averaging per-process ranks across a 10-sample burst adds complexity for little benefit at this refresh
+    /// rate (documented simplification).
+    /// </summary>
+    private static ResourceSampleReportDto BuildReport(
+        string hostname,
+        ResourceMetricsCollector.Sample latest,
+        IReadOnlyList<ResourceMetricsCollector.Sample>? burst,
+        IReadOnlyList<string> favoriteNames,
+        bool isCalibrationAverage)
+    {
+        double? Avg(Func<ResourceMetricsCollector.Sample, double?> select)
+        {
+            if (burst is null || burst.Count == 0) return select(latest);
+            var values = burst.Select(select).Where(v => v is not null).Select(v => v!.Value).ToList();
+            return values.Count == 0 ? null : Math.Round(values.Average(), 1);
+        }
+
+        var diskRead = Avg(s => s.DiskReadBytesPerSec);
+        var diskWrite = Avg(s => s.DiskWriteBytesPerSec);
+
+        return new ResourceSampleReportDto
+        {
+            Hostname = hostname,
+            SampledAtUtc = DateTimeOffset.UtcNow,
+            IsCalibrationAverage = isCalibrationAverage,
+            CpuPercent = Avg(s => s.CpuPercent),
+            GpuPercent = Avg(s => s.GpuPercent),
+            RamPercent = Avg(s => s.RamPercent),
+            RamUsedGb = Avg(s => s.RamUsedGb),
+            RamTotalGb = Avg(s => s.RamTotalGb),
+            DiskReadBytesPerSec = diskRead,
+            DiskWriteBytesPerSec = diskWrite,
+            DiskReadLevel = DiskActivityLevel.Classify(diskRead),
+            DiskWriteLevel = DiskActivityLevel.Classify(diskWrite),
+            TopCpuProcesses = ResourceMetricsCollector.TopByCpu(latest, 3),
+            TopGpuProcesses = ResourceMetricsCollector.TopByGpu(latest, 3),
+            TopRamProcesses = ResourceMetricsCollector.TopByRam(latest, 3),
+            TopDiskReadProcesses = ResourceMetricsCollector.TopByDiskRead(latest, 3),
+            TopDiskWriteProcesses = ResourceMetricsCollector.TopByDiskWrite(latest, 3),
+            FavoriteProcesses = ResourceMetricsCollector.ResolveFavorites(latest, favoriteNames)
+        };
+    }
+
+    private void ProcessPendingCommands(IReadOnlyList<string> commands)
+    {
+        if (commands.Count == 0)
+            return;
+
+        foreach (var command in commands)
+        {
+            if (_executedPendingCommands.Contains(command))
+                continue;
+
+            if (TermServiceHelper.TryExecuteCommand(command, logger, out var detail))
+            {
+                _executedPendingCommands.Add(command);
+                lock (_commandsToAck)
+                {
+                    if (!_commandsToAck.Contains(command, StringComparer.OrdinalIgnoreCase))
+                        _commandsToAck.Add(command);
+                }
+                RecordCommandReport(command, success: true, detail);
+            }
+            else
+            {
+                logger.LogWarning("Pending command failed: {Command} — {Detail}", command, detail);
+                RecordCommandReport(command, success: false, detail);
+            }
+        }
+    }
+
+    private void RecordCommandReport(string command, bool success, string detail)
+    {
+        lock (_commandReports)
+        {
+            _commandReports.Add(new CommandExecutionReportDto
+            {
+                Command = command,
+                Success = success,
+                Detail = detail,
+                ExecutedUtc = DateTimeOffset.UtcNow
+            });
+        }
     }
 
     private static (string Username, string? Domain)? ResolveSessionUser(int sessionId)

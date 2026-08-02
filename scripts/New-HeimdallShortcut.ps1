@@ -34,9 +34,9 @@ if ($dir -and -not (Test-Path -LiteralPath $dir)) {
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
 }
 
-$target = (Resolve-Path -LiteralPath $TargetPath).Path
-$workDir = (Resolve-Path -LiteralPath $WorkingDirectory).Path
-$icon = (Resolve-Path -LiteralPath $IconPath).Path
+$target = (Resolve-Path -LiteralPath $TargetPath).ProviderPath
+$workDir = (Resolve-Path -LiteralPath $WorkingDirectory).ProviderPath
+$icon = (Resolve-Path -LiteralPath $IconPath).ProviderPath
 
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($ShortcutPath)

@@ -54,4 +54,16 @@ public sealed class HeartbeatDto
 
     /// <summary>Creation time of %SystemRoot% — often closer to original image.</summary>
     public DateTimeOffset? WindowsFolderCreatedUtc { get; init; }
+
+    /// <summary>Primary IPv4 reported by agent (best-effort).</summary>
+    public string? PrimaryIpAddress { get; init; }
+
+    /// <summary>TermService (Remote Desktop Services) status: Running, Stopped, Unknown, etc.</summary>
+    public string? TermServiceStatus { get; init; }
+
+    /// <summary>Commands executed since last ingest; API clears matching PendingCommands.</summary>
+    public List<string> AcknowledgedCommands { get; init; } = [];
+
+    /// <summary>Per-attempt command results (including failures while command remains pending for retry).</summary>
+    public List<CommandExecutionReportDto> CommandExecutionReports { get; init; } = [];
 }

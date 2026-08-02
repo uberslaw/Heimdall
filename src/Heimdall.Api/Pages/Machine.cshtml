@@ -182,7 +182,7 @@ else if (d is not null)
                                 <span class="text-secondary small">(@a.ProcessName)</span>
                             }
                         </td>
-                        <td data-sort-value="@a.TotalOpenSeconds">@MachineModel.FormatDuration(a.TotalOpenSeconds)</td>
+                        <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
                         <td data-sort-value="@a.RunCount">@a.RunCount</td>
                         <td data-sort-value="@a.UniqueUsers">@a.UniqueUsers</td>
                         <td data-sort-value="@share">@share.ToString("0")%</td>

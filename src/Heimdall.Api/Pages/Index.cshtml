@@ -8,11 +8,11 @@
 <h1 class="hd-title">Machines</h1>
 <p class="hd-sub">@Model.RangeLabel utilisation · who is on which box · local vs RDP</p>
 
-<form method="get" class="hd-panel mb-3">
+<form method="get" class="hd-panel mb-3" id="machines-filter-form">
     <div class="row g-3 align-items-end">
         <div class="col-md-4 col-lg-3">
             <label class="form-label" for="util-range">Utilisation period</label>
-            <select class="form-select" name="range" id="util-range" onchange="this.form.submit()">
+            <select class="form-select" name="range" id="util-range" onchange="this.form.requestSubmit()">
                 @foreach (var opt in IndexModel.RangeOptions)
                 {
                     if (Model.Range == opt.Key)
@@ -26,29 +26,13 @@
                 }
             </select>
         </div>
-        <div class="col-md-3 col-lg-2">
-            <button type="submit" class="btn btn-hd w-100">Apply</button>
-        </div>
-    </div>
-</form>
-
-<form method="get" asp-page="/Socratize" class="hd-panel mb-3">
-    <div class="row g-3 align-items-end">
-        <div class="col-md-5 col-lg-4">
-            <label class="form-label" for="socratize-host">Socratize machine</label>
-            <select class="form-select" name="Host" id="socratize-host" required>
-                <option value="">— select host —</option>
-                @foreach (var m in Model.Machines)
-                {
-                    <option value="@m.Hostname">@m.Hostname</option>
-                }
-            </select>
-        </div>
-        <div class="col-md-3 col-lg-2">
-            <button type="submit" class="btn btn-ghost w-100">Socratize</button>
-        </div>
-        <div class="col-md-4 col-lg-6">
-            <p class="text-secondary mb-0 small">One-click cost-justification brief from collected sessions &amp; apps (last 30 days default).</p>
+        <div class="col-md-8 col-lg-9">
+            @{
+                ViewData["SelectedCountries"] = Model.SelectedCountries;
+                ViewData["SelectedCities"] = Model.SelectedCities;
+                ViewData["LocationTreeId"] = "machines-location-tree";
+            }
+            <partial name="_LocationFilter" model="Model.LocationTree" />
         </div>
     </div>
 </form>
@@ -91,7 +75,7 @@
         <tbody>
         @if (Model.Machines.Count == 0)
         {
-            <tr><td colspan="10">No agents reporting yet. Install the Heimdall agent and point it at this API.</td></tr>
+            <tr><td colspan="10">@(Model.SelectedCountries.Count + Model.SelectedCities.Count > 0 ? "No machines match the selected locations." : "No agents reporting yet. Install the Heimdall agent and point it at this API.")</td></tr>
         }
         @foreach (var m in Model.Machines)
         {
@@ -175,3 +159,19 @@
         </tbody>
     </table>
 </div>
+
+@section Scripts {
+<script src="~/js/location-filter.js" asp-append-version="true"></script>
+<script>
+(() => {
+  const tree = document.getElementById('machines-location-tree');
+  if (tree && window.HeimdallLocationFilter) {
+    HeimdallLocationFilter.init(tree);
+    @if (Model.SelectedCountries.Count + Model.SelectedCities.Count > 0)
+    {
+        @:document.getElementById('machines-location-tree-wrap')?.setAttribute('open', '');
+    }
+  }
+})();
+</script>
+}

@@ -22,6 +22,13 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<AppListAssignment> AppListAssignments => Set<AppListAssignment>();
     public DbSet<AppListAuditLog> AppListAuditLogs => Set<AppListAuditLog>();
     public DbSet<MachineIdentityEvent> MachineIdentityEvents => Set<MachineIdentityEvent>();
+    public DbSet<RemoteAccessGroup> RemoteAccessGroups => Set<RemoteAccessGroup>();
+    public DbSet<RemoteAccessGroupStaff> RemoteAccessGroupStaff => Set<RemoteAccessGroupStaff>();
+    public DbSet<RemoteAccessGroupMachine> RemoteAccessGroupMachines => Set<RemoteAccessGroupMachine>();
+    public DbSet<RemoteAccessFavoriteProcess> RemoteAccessFavoriteProcesses => Set<RemoteAccessFavoriteProcess>();
+    public DbSet<RemoteAccessViewer> RemoteAccessViewers => Set<RemoteAccessViewer>();
+    public DbSet<SessionDrilldownViewer> SessionDrilldownViewers => Set<SessionDrilldownViewer>();
+    public DbSet<MachineResourceMetric> MachineResourceMetrics => Set<MachineResourceMetric>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -147,6 +154,61 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
         {
             e.HasIndex(x => x.Utc);
             e.HasIndex(x => x.MachineHostname);
+        });
+
+        modelBuilder.Entity<RemoteAccessGroup>(e =>
+        {
+            e.HasIndex(x => x.Name);
+        });
+
+        modelBuilder.Entity<RemoteAccessGroupStaff>(e =>
+        {
+            e.HasIndex(x => new { x.GroupId, x.Email }).IsUnique();
+            e.HasIndex(x => x.Email);
+            e.HasOne(x => x.Group)
+                .WithMany(x => x.Staff)
+                .HasForeignKey(x => x.GroupId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<RemoteAccessGroupMachine>(e =>
+        {
+            e.HasIndex(x => new { x.GroupId, x.Hostname }).IsUnique();
+            e.HasIndex(x => x.Hostname);
+            e.HasOne(x => x.Group)
+                .WithMany(x => x.Machines)
+                .HasForeignKey(x => x.GroupId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<RemoteAccessFavoriteProcess>(e =>
+        {
+            e.HasIndex(x => new { x.GroupId, x.ProcessName }).IsUnique();
+            e.HasOne(x => x.Group)
+                .WithMany(x => x.FavoriteProcesses)
+                .HasForeignKey(x => x.GroupId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<RemoteAccessViewer>(e =>
+        {
+            e.HasIndex(x => new { x.GroupId, x.ViewerId }).IsUnique();
+            e.HasIndex(x => x.LastHeartbeatUtc);
+        });
+
+        modelBuilder.Entity<SessionDrilldownViewer>(e =>
+        {
+            e.HasIndex(x => new { x.Hostname, x.ViewerId }).IsUnique();
+            e.HasIndex(x => x.LastHeartbeatUtc);
+        });
+
+        modelBuilder.Entity<MachineResourceMetric>(e =>
+        {
+            e.HasIndex(x => x.MachineId).IsUnique();
+            e.HasOne(x => x.Machine)
+                .WithMany()
+                .HasForeignKey(x => x.MachineId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }
