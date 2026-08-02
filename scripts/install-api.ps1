@@ -380,13 +380,25 @@ try {
     Invoke-Logged "Write appsettings.json" -ProgressStep 5 -ProgressLabel "Writing config" {
         $appsettings = Join-Path $InstallDir "appsettings.json"
         $dbPath = Join-Path $env:ProgramData "Heimdall\heimdall.db"
+        $sandboxDbPath = Join-Path $env:ProgramData "Heimdall\heimdall-dev.db"
         $json = @{
             ConnectionStrings = @{
                 Heimdall = "Data Source=$dbPath"
+                HeimdallSandbox = "Data Source=$sandboxDbPath"
             }
             Heimdall = @{
                 ApiKey = $ApiKey
+                DatabaseMode = "live"
+                LiveDashboardUrl = "http://${env:COMPUTERNAME}:$Port"
+                DevDashboardUrl = "http://localhost:5080"
                 UiTheme = "Cosmic"
+                StaffAccess = @{
+                    RequireWindowsAuth = $true
+                    EmailDomainSuffixes = @("arup.com")
+                    AllowDevBypass = $false
+                    AdminEmails = @("christopher.owen@arup.com")
+                    AdminPreviewMinutes = 30
+                }
             }
             Logging = @{
                 LogLevel = @{
@@ -400,6 +412,7 @@ try {
         Set-Content -Path $appsettings -Value $json -Encoding UTF8
         Write-Log "Wrote $appsettings"
         Write-Log "SQLite: $dbPath"
+        Write-Log "Sandbox SQLite: $sandboxDbPath"
         Write-Log "Urls: http://0.0.0.0:$Port"
         Write-Log "ApiKey (last 4): ****$($ApiKey.Substring([Math]::Max(0, $ApiKey.Length - 4)))"
     }

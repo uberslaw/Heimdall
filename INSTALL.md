@@ -217,10 +217,15 @@ Repo-based `Install-Agent` cannot publish `net10.0` with SDK 8. Use the portable
 
 | File | Default path |
 |------|----------------|
-| API DB | `%ProgramData%\Heimdall\heimdall.db` |
+| API DB (live) | `%ProgramData%\Heimdall\heimdall.db` |
+| API DB (sandbox / dev) | `%ProgramData%\Heimdall\heimdall-dev.db` |
 | Agent offline queue | `%ProgramData%\Heimdall\queue.db` |
 
 Ensure `%ProgramData%\Heimdall\` exists and the service account (LocalSystem by default) can write there. Do not commit or overwrite these DBs into the git clone.
+
+**Live vs sandbox dashboard:** The installed API service uses the **live** database (real agents). Use **Admin → Database mode → Switch to Dev sandbox** to browse a separate sandbox DB (`heimdall-dev.db`) with demo machines — agent ingest always stays on live. The nav shows a large **DEV** badge and teal/amber header in sandbox mode. Repo `dotnet run` (Development) defaults to sandbox automatically.
+
+**Do not run two dashboards by accident:** If you `dotnet run` the API on `localhost:5080` while the **HeimdallApi** Windows service is also running, you had two separate processes — not a UI toggle. Prefer one process and use **Admin → Database mode** to switch, or use **Open Dev/Live dashboard (other URL)** when both are intentionally running. Never edit live production data while you think you are in sandbox.
 
 **Demo machines:** A fresh empty API database gets four `DEMO-*` placeholder hosts (`AgentVersion=seed`) once for UX. They are **not** re-added after you delete them (`SystemFlags.DemoMachinesOffered`). Heimdall Setup → **Remove seed/demo machines** (repo layout) or `scripts\Remove-SeedDemoMachines.ps1` — stop `HeimdallApi` first if the DB is locked. Requires `sqlite3` on PATH (`winget install SQLite.SQLite`).
 

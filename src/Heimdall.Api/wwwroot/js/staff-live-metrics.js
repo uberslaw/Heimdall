@@ -140,7 +140,7 @@
             var readBadge = cells.diskRead.querySelector("[data-hd-level]");
             if (readBadge) {
                 readBadge.textContent = m.diskReadLevel || "Low";
-                readBadge.className = "badge-pill " + levelBadgeClass(m.diskReadLevel);
+                readBadge.className = "badge-pill hd-staff-pill " + levelBadgeClass(m.diskReadLevel);
             }
             renderTopList(cells.diskRead.querySelector('[data-hd-top="diskRead"]'), m.topDiskReadProcesses, "bps");
         }
@@ -148,7 +148,7 @@
             var writeBadge = cells.diskWrite.querySelector("[data-hd-level]");
             if (writeBadge) {
                 writeBadge.textContent = m.diskWriteLevel || "Low";
-                writeBadge.className = "badge-pill " + levelBadgeClass(m.diskWriteLevel);
+                writeBadge.className = "badge-pill hd-staff-pill " + levelBadgeClass(m.diskWriteLevel);
             }
             renderTopList(cells.diskWrite.querySelector('[data-hd-top="diskWrite"]'), m.topDiskWriteProcesses, "bps");
         }
@@ -156,8 +156,18 @@
         var samplingCell = row.querySelector("[data-hd-sampling-status]");
         if (samplingCell) {
             var status = samplingStatus(m);
-            samplingCell.innerHTML = '<span class="badge-pill ' + status.cls + '">' + status.label + "</span>";
+            samplingCell.innerHTML = '<span class="badge-pill hd-staff-pill hd-staff-sampling-pill ' + status.cls + '">' + status.label + "</span>";
         }
+    }
+
+    function displayNameForHost(hostname) {
+        var rows = document.querySelectorAll("[data-hd-staff-row]");
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].getAttribute("data-hostname") === hostname) {
+                return rows[i].getAttribute("data-display-name") || hostname;
+            }
+        }
+        return hostname;
     }
 
     function renderFavoritesPanel(metricsByHost) {
@@ -168,7 +178,12 @@
         Object.keys(metricsByHost).forEach(function (hostname) {
             var m = metricsByHost[hostname];
             if (!m.favoriteProcesses || m.favoriteProcesses.length === 0) return;
-            html += '<div class="mb-2"><strong>' + hostname + "</strong><ul class=\"hd-metric-top\">";
+            var label = displayNameForHost(hostname);
+            html += '<div class="mb-2"><strong>' + label + "</strong>";
+            if (label !== hostname) {
+                html += ' <span class="text-secondary small">(' + hostname + ")</span>";
+            }
+            html += '<ul class="hd-metric-top hd-staff-metric-top">';
             m.favoriteProcesses.forEach(function (f) {
                 html += "<li>" + f.processName + " — CPU " + formatPercent(f.cpuPercent) +
                     ", GPU " + formatPercent(f.gpuPercent) +

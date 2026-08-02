@@ -6,7 +6,9 @@ namespace Heimdall.Api.Services;
 /// Maps the Windows identity sent by the browser (Negotiate/NTLM/Kerberos) to staff emails configured in
 /// Remote Access Groups. Matching is case-insensitive.
 /// </summary>
-public sealed class WindowsStaffIdentityService(IOptions<StaffAccessOptions> options)
+public sealed class WindowsStaffIdentityService(
+    IOptions<StaffAccessOptions> options,
+    ActiveDirectoryStaffEmailResolver adResolver)
 {
     /// <summary>Raw Windows principal name, e.g. DOMAIN\user or user@contoso.com (UPN).</summary>
     public string? GetWindowsPrincipalName(HttpContext ctx)
@@ -49,6 +51,12 @@ public sealed class WindowsStaffIdentityService(IOptions<StaffAccessOptions> opt
             var trimmed = suffix.Trim().TrimStart('@');
             if (parsed.SamAccountName is { Length: > 0 })
                 candidates.Add(NormalizeEmail($"{parsed.SamAccountName}@{trimmed}"));
+        }
+
+        if (parsed.SamAccountName is { Length: > 0 })
+        {
+            foreach (var adEmail in adResolver.ResolveEmails(parsed.SamAccountName))
+                candidates.Add(NormalizeEmail(adEmail));
         }
 
         return candidates.Where(c => c.Contains('@')).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -99,4 +107,23 @@ public sealed class WindowsStaffIdentityService(IOptions<StaffAccessOptions> opt
     /// <summary>Human-readable label for UI, e.g. CONTOSO\jsmith.</summary>
     public static string FormatDisplayName(string? windowsPrincipalName) =>
         string.IsNullOrWhiteSpace(windowsPrincipalName) ? "unknown" : windowsPrincipalName;
+
+    /// <summary>sAMAccountName from <c>DOMAIN\user</c>, or the local part of a UPN.</summary>
+    public static string? GetSamAccountName(string? windowsPrincipalName)
+    {
+        if (string.IsNullOrWhiteSpace(windowsPrincipalName))
+            return null;
+
+        var parsed = ParsePrincipal(windowsPrincipalName.Trim());
+        if (parsed.SamAccountName is { Length: > 0 })
+            return parsed.SamAccountName;
+
+        if (parsed.Upn is { Length: > 0 })
+        {
+            var at = parsed.Upn.IndexOf('@');
+            return at > 0 ? parsed.Upn[..at] : parsed.Upn;
+        }
+
+        return null;
+    }
 }

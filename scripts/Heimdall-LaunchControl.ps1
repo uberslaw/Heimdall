@@ -67,6 +67,7 @@ $script:GuideStepsByBranch = $null
 $script:LaunchControlBusy = $false
 $script:LaunchControlActionButtons = @()
 $script:LaunchControlPreviousStatus = $null
+$script:HeimdallServiceStatusRefresh = $null
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -190,7 +191,145 @@ function Set-LaunchControlBusy {
             $script:LaunchControlPreviousStatus = $null
         }
     }
+    if ($script:HeimdallServiceStatusRefresh) {
+        & $script:HeimdallServiceStatusRefresh
+    }
     [System.Windows.Forms.Application]::DoEvents()
+}
+
+function Get-HeimdallServiceInfo {
+    param(
+        [Parameter(Mandatory = $true)][string]$ServiceName
+    )
+    $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if (-not $svc) {
+        return [PSCustomObject]@{
+            Name       = $ServiceName
+            Installed  = $false
+            StatusText = "Missing"
+        }
+    }
+    $statusText = switch ($svc.Status) {
+        ([System.ServiceProcess.ServiceControllerStatus]::Running) { "Running" }
+        ([System.ServiceProcess.ServiceControllerStatus]::Stopped) { "Stopped" }
+        default { $svc.Status.ToString() }
+    }
+    return [PSCustomObject]@{
+        Name       = $ServiceName
+        Installed  = $true
+        Status     = $svc.Status
+        StatusText = $statusText
+    }
+}
+
+function Set-HeimdallServiceStatusLabel {
+    param(
+        [System.Windows.Forms.Label]$Label,
+        [string]$ServiceName
+    )
+    if (-not $Label -or $Label.IsDisposed) { return }
+    $info = Get-HeimdallServiceInfo -ServiceName $ServiceName
+    if (-not $info.Installed) {
+        $Label.Text = "Not installed"
+        $Label.ForeColor = [System.Drawing.Color]::Gray
+        return
+    }
+    $Label.Text = $info.StatusText
+    $Label.ForeColor = switch ($info.StatusText) {
+        "Running" { [System.Drawing.Color]::DarkGreen }
+        "Stopped" { [System.Drawing.Color]::Firebrick }
+        default { [System.Drawing.Color]::DarkGoldenrod }
+    }
+}
+
+function Set-HeimdallServiceControlButtons {
+    param(
+        [System.Windows.Forms.Button[]]$Buttons,
+        [string]$ServiceName
+    )
+    $info = Get-HeimdallServiceInfo -ServiceName $ServiceName
+    foreach ($btn in $Buttons) {
+        if (-not $btn -or $btn.IsDisposed) { continue }
+        if (-not $info.Installed) {
+            $btn.Enabled = $false
+            continue
+        }
+        if ($script:LaunchControlBusy) {
+            $btn.Enabled = $false
+            continue
+        }
+        switch ($btn.Tag) {
+            "Start" { $btn.Enabled = $info.StatusText -ne "Running" }
+            "Stop" { $btn.Enabled = $info.StatusText -eq "Running" }
+            "Restart" { $btn.Enabled = $info.StatusText -eq "Running" }
+            default { $btn.Enabled = $true }
+        }
+    }
+}
+
+function Update-HeimdallServiceStatusUi {
+    if ($script:HeimdallServiceUi) {
+        $ui = $script:HeimdallServiceUi
+        Set-HeimdallServiceStatusLabel -Label $ui.ApiStatus -ServiceName "HeimdallApi"
+        Set-HeimdallServiceStatusLabel -Label $ui.AgentStatus -ServiceName "HeimdallAgent"
+        Set-HeimdallServiceControlButtons -Buttons $ui.ApiButtons -ServiceName "HeimdallApi"
+        Set-HeimdallServiceControlButtons -Buttons $ui.AgentButtons -ServiceName "HeimdallAgent"
+    }
+}
+
+function Invoke-HeimdallServiceControl {
+    param(
+        [Parameter(Mandatory = $true)][string]$ServiceName,
+        [Parameter(Mandatory = $true)][ValidateSet("Start", "Stop", "Restart")][string]$Action
+    )
+    $info = Get-HeimdallServiceInfo -ServiceName $ServiceName
+    if (-not $info.Installed) {
+        throw "$ServiceName is not installed on this PC."
+    }
+    Write-HeimdallLog "Service ${Action}: $ServiceName (was $($info.StatusText))" -Level STEP
+    Set-UiStatus "${Action} ${ServiceName}..."
+    switch ($Action) {
+        "Start" {
+            Start-Service -Name $ServiceName -ErrorAction Stop
+            $deadline = (Get-Date).AddSeconds(30)
+            do {
+                Start-Sleep -Milliseconds 200
+                [System.Windows.Forms.Application]::DoEvents()
+                $info = Get-HeimdallServiceInfo -ServiceName $ServiceName
+            } while ($info.StatusText -ne "Running" -and (Get-Date) -lt $deadline)
+            if ($info.StatusText -ne "Running") {
+                throw "Timed out waiting for $ServiceName to start (status=$($info.StatusText))."
+            }
+        }
+        "Stop" {
+            Stop-Service -Name $ServiceName -Force -ErrorAction Stop
+            $deadline = (Get-Date).AddSeconds(30)
+            do {
+                Start-Sleep -Milliseconds 200
+                [System.Windows.Forms.Application]::DoEvents()
+                $info = Get-HeimdallServiceInfo -ServiceName $ServiceName
+            } while ($info.StatusText -ne "Stopped" -and (Get-Date) -lt $deadline)
+            if ($info.StatusText -ne "Stopped") {
+                throw "Timed out waiting for $ServiceName to stop (status=$($info.StatusText))."
+            }
+        }
+        "Restart" {
+            Restart-Service -Name $ServiceName -Force -ErrorAction Stop
+            $deadline = (Get-Date).AddSeconds(45)
+            do {
+                Start-Sleep -Milliseconds 200
+                [System.Windows.Forms.Application]::DoEvents()
+                $info = Get-HeimdallServiceInfo -ServiceName $ServiceName
+            } while ($info.StatusText -ne "Running" -and (Get-Date) -lt $deadline)
+            if ($info.StatusText -ne "Running") {
+                throw "Timed out waiting for $ServiceName to restart (status=$($info.StatusText))."
+            }
+        }
+    }
+    $final = Get-HeimdallServiceInfo -ServiceName $ServiceName
+    Write-HeimdallLog "$ServiceName is now $($final.StatusText)" -Level OK
+    Set-UiStatus "$ServiceName`: $($final.StatusText)"
+    Update-HeimdallServiceStatusUi
 }
 
 function Wait-ProcessWithUiPump {
@@ -2497,9 +2636,9 @@ function Show-LaunchControl {
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Heimdall Setup"
     $form.Width = 1100
-    $form.Height = 720
+    $form.Height = 860
     $form.StartPosition = "CenterScreen"
-    $form.MinimumSize = New-Object System.Drawing.Size(980, 640)
+    $form.MinimumSize = New-Object System.Drawing.Size(980, 720)
     $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 
     $header = New-Object System.Windows.Forms.Label
@@ -2524,6 +2663,11 @@ function Show-LaunchControl {
     $btnPanel.Top = 72
     $btnPanel.Width = 280
     $btnPanel.Height = 560
+    $btnPanel.AutoScroll = $true
+    $btnPanel.HorizontalScroll.Enabled = $false
+    $btnPanel.HorizontalScroll.Visible = $false
+    $btnPanel.AutoScrollMargin = New-Object System.Drawing.Size(0, 8)
+    $btnPanel.Anchor = "Top, Bottom, Left"
     $form.Controls.Add($btnPanel)
 
     function New-ActionButton($text, $top, $enabled = $true) {
@@ -2531,11 +2675,12 @@ function Show-LaunchControl {
         $b.Text = $text
         $b.Left = 0
         $b.Top = $top
-        $b.Width = 268
+        $b.Width = [Math]::Max(200, $btnPanel.ClientSize.Width - 8)
         $b.Height = 40
         $b.Enabled = $enabled
         $b.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
         $b.Padding = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
+        $b.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $btnPanel.Controls.Add($b)
         return $b
     }
@@ -2567,12 +2712,104 @@ function Show-LaunchControl {
         $btnDiag = New-ActionButton "10. Collect diagnostics" 432 $true
         $btnDash = New-ActionButton "11. Open dashboard..." 480 $true
         $btnPre = New-ActionButton "Check prerequisites" 528 $true
-        $btnPanel.Height = 580
     }
 
     foreach ($btn in @($btnApi, $btnPack, $btnPush, $btnAgent, $btnClientCheck, $btnLogs, $btnRemoteLogs, $btnBackupDb, $btnRemoveDemos, $btnDiag, $btnDash, $btnPre)) {
         if ($btn) { Register-LaunchControlActionButton -Button $btn }
     }
+
+    $servicesGroup = New-Object System.Windows.Forms.GroupBox
+    $servicesGroup.Text = "Windows services"
+    $servicesGroup.Left = 12
+    $servicesGroup.Width = 280
+    $servicesGroup.Height = 148
+    $servicesGroup.Anchor = "Bottom, Left"
+    $form.Controls.Add($servicesGroup)
+
+    function New-ServiceControlButton {
+        param(
+            [System.Windows.Forms.Control]$Parent,
+            [int]$Left,
+            [int]$Top,
+            [string]$Text,
+            [string]$Tag
+        )
+        $b = New-Object System.Windows.Forms.Button
+        $b.Text = $Text
+        $b.Left = $Left
+        $b.Top = $Top
+        $b.Width = 78
+        $b.Height = 24
+        $b.Tag = $Tag
+        $Parent.Controls.Add($b)
+        return $b
+    }
+
+    $lblApiSvc = New-Object System.Windows.Forms.Label
+    $lblApiSvc.Text = "Heimdall API"
+    $lblApiSvc.Left = 10
+    $lblApiSvc.Top = 20
+    $lblApiSvc.Width = 100
+    $lblApiSvc.Height = 18
+    $servicesGroup.Controls.Add($lblApiSvc)
+
+    $lblApiStatus = New-Object System.Windows.Forms.Label
+    $lblApiStatus.Text = "..."
+    $lblApiStatus.Left = 112
+    $lblApiStatus.Top = 20
+    $lblApiStatus.Width = 150
+    $lblApiStatus.Height = 18
+    $lblApiStatus.TextAlign = [System.Drawing.ContentAlignment]::TopRight
+    $servicesGroup.Controls.Add($lblApiStatus)
+
+    $btnApiStart = New-ServiceControlButton -Parent $servicesGroup -Left 10 -Top 42 -Text "Start" -Tag "Start"
+    $btnApiStop = New-ServiceControlButton -Parent $servicesGroup -Left 94 -Top 42 -Text "Stop" -Tag "Stop"
+    $btnApiRestart = New-ServiceControlButton -Parent $servicesGroup -Left 178 -Top 42 -Text "Restart" -Tag "Restart"
+
+    $lblAgentSvc = New-Object System.Windows.Forms.Label
+    $lblAgentSvc.Text = "Heimdall Agent"
+    $lblAgentSvc.Left = 10
+    $lblAgentSvc.Top = 72
+    $lblAgentSvc.Width = 100
+    $lblAgentSvc.Height = 18
+    $servicesGroup.Controls.Add($lblAgentSvc)
+
+    $lblAgentStatus = New-Object System.Windows.Forms.Label
+    $lblAgentStatus.Text = "..."
+    $lblAgentStatus.Left = 112
+    $lblAgentStatus.Top = 72
+    $lblAgentStatus.Width = 150
+    $lblAgentStatus.Height = 18
+    $lblAgentStatus.TextAlign = [System.Drawing.ContentAlignment]::TopRight
+    $servicesGroup.Controls.Add($lblAgentStatus)
+
+    $btnAgentStart = New-ServiceControlButton -Parent $servicesGroup -Left 10 -Top 90 -Text "Start" -Tag "Start"
+    $btnAgentStop = New-ServiceControlButton -Parent $servicesGroup -Left 94 -Top 90 -Text "Stop" -Tag "Stop"
+    $btnAgentRestart = New-ServiceControlButton -Parent $servicesGroup -Left 178 -Top 90 -Text "Restart" -Tag "Restart"
+
+    $btnSvcRefresh = New-Object System.Windows.Forms.Button
+    $btnSvcRefresh.Text = "Refresh status"
+    $btnSvcRefresh.Left = 10
+    $btnSvcRefresh.Top = 118
+    $btnSvcRefresh.Width = 258
+    $btnSvcRefresh.Height = 24
+    $servicesGroup.Controls.Add($btnSvcRefresh)
+
+    $script:HeimdallServiceUi = @{
+        ApiStatus    = $lblApiStatus
+        AgentStatus  = $lblAgentStatus
+        ApiButtons   = @($btnApiStart, $btnApiStop, $btnApiRestart)
+        AgentButtons = @($btnAgentStart, $btnAgentStop, $btnAgentRestart)
+    }
+    $script:HeimdallServiceStatusRefresh = { Update-HeimdallServiceStatusUi }
+
+    $btnApiStart.Add_Click({ Invoke-LaunchControlAction { Invoke-HeimdallServiceControl -ServiceName "HeimdallApi" -Action "Start" } })
+    $btnApiStop.Add_Click({ Invoke-LaunchControlAction { Invoke-HeimdallServiceControl -ServiceName "HeimdallApi" -Action "Stop" } })
+    $btnApiRestart.Add_Click({ Invoke-LaunchControlAction { Invoke-HeimdallServiceControl -ServiceName "HeimdallApi" -Action "Restart" } })
+    $btnAgentStart.Add_Click({ Invoke-LaunchControlAction { Invoke-HeimdallServiceControl -ServiceName "HeimdallAgent" -Action "Start" } })
+    $btnAgentStop.Add_Click({ Invoke-LaunchControlAction { Invoke-HeimdallServiceControl -ServiceName "HeimdallAgent" -Action "Stop" } })
+    $btnAgentRestart.Add_Click({ Invoke-LaunchControlAction { Invoke-HeimdallServiceControl -ServiceName "HeimdallAgent" -Action "Restart" } })
+    $btnSvcRefresh.Add_Click({ Update-HeimdallServiceStatusUi; Set-UiStatus "Service status refreshed." })
 
     $guideBranchLabel = New-Object System.Windows.Forms.Label
     $guideBranchLabel.Text = "Steps branch"
@@ -2697,6 +2934,12 @@ function Show-LaunchControl {
         if ($radioServer.Checked) { Show-GuideBranch -Branch Server }
     })
 
+    function Update-LaunchControlLeftColumnLayout {
+        $servicesTop = $form.ClientSize.Height - 188
+        $servicesGroup.Top = $servicesTop
+        $btnPanel.Height = [Math]::Max(80, $servicesTop - $btnPanel.Top - 8)
+    }
+
     # Layout resize
     $form.Add_Resize({
         $rightWidth = $form.ClientSize.Width - 330
@@ -2708,12 +2951,17 @@ function Show-LaunchControl {
         $steps.Width = $rightWidth
         $logBox.Width = $rightWidth
         $logBox.Height = [Math]::Max(100, $form.ClientSize.Height - 520)
+        Update-LaunchControlLeftColumnLayout
         $status.Top = $form.ClientSize.Height - 36
         $logPathLbl.Top = $form.ClientSize.Height - 48
         $logPathLbl.Width = $rightWidth
     })
 
     Write-HeimdallLog "Setup UI ready. PackedLayout=$($script:IsPackedLayout) Admin=$(Test-IsAdministrator)" -Level OK
+    Update-HeimdallServiceStatusUi
+    $form.Add_Shown({
+        Update-HeimdallServiceStatusUi
+    })
     Show-GuideBranch -Branch Client
     if ($script:IsPackedLayout) {
         Write-HeimdallLog "Client pack mode: use Install agent (opens Install.lnk wizard)." -Level INFO
@@ -2778,6 +3026,8 @@ function Show-LaunchControl {
         "RemoveSeedDemos"  { $form.Add_Shown({ Invoke-RemoveSeedDemoMachines }) }
         "Diagnostics"      { $form.Add_Shown({ Start-Diagnostics }) }
     }
+
+    Update-LaunchControlLeftColumnLayout
 
     [void]$form.ShowDialog()
     Write-HeimdallLog "Setup closed." -Level INFO

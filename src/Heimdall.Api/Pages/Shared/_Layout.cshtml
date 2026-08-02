@@ -1,12 +1,19 @@
 ﻿@inject IConfiguration Configuration
+@inject IWebHostEnvironment Environment
 @{
     var uiTheme = UiTheme.Resolve(Configuration, Context.Request.Cookies);
     var goldVariant = UiGoldVariant.Resolve(Context.Request.Cookies);
     var returnUrl = Context.Request.Path + Context.Request.QueryString;
     var isCosmic = uiTheme == UiTheme.Cosmic;
+    var dbMode = HeimdallDatabaseMode.ResolveEffectiveMode(Configuration, Context.Request.Cookies, Environment);
+    var isDevChrome = HeimdallDatabaseMode.ShowDevChrome(Configuration, Context.Request.Cookies, Environment);
+    var dbPathDisplay = HeimdallDatabaseMode.GetDisplayDatabasePath(Configuration, dbMode);
+    var liveDashboardUrl = Configuration["Heimdall:LiveDashboardUrl"];
+    var devDashboardUrl = Configuration["Heimdall:DevDashboardUrl"];
+    var isLiveMode = dbMode == HeimdallDatabaseMode.Live;
 }
 <!DOCTYPE html>
-<html lang="en" data-theme="@uiTheme" @(isCosmic ? Html.Raw($"data-gold=\"{goldVariant}\"") : null)>
+<html lang="en" class="@(isDevChrome ? "hd-dev-mode" : "")" data-theme="@uiTheme" @(isCosmic ? Html.Raw($"data-gold=\"{goldVariant}\"") : null)>
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -20,10 +27,16 @@
 <body>
     <header class="hd-header">
         <div class="container hd-nav">
-            <a class="hd-brand hd-brand-text" asp-page="/Index">Heimdall</a>
-            <a class="hd-brand hd-brand-cosmic" asp-page="/Index">
-                <img class="hd-brand-logo" src="~/img/heimdall-logo-cosmic.png" alt="Heimdall" width="440" height="144" />
-            </a>
+            <div class="hd-nav-brand-cluster">
+                @if (isDevChrome)
+                {
+                    <span class="hd-dev-badge" title="Sandbox database — not production agents">DEV</span>
+                }
+                <a class="hd-brand hd-brand-text" asp-page="/Index">Heimdall</a>
+                <a class="hd-brand hd-brand-cosmic" asp-page="/Index">
+                    <img class="hd-brand-logo" src="~/img/heimdall-logo-cosmic.png" alt="Heimdall" width="440" height="144" />
+                </a>
+            </div>
             <nav class="hd-links">
                 <a asp-page="/Index">Machines</a>
                 <div class="dropdown hd-nav-dropdown">
@@ -72,6 +85,52 @@
                             <div class="d-flex flex-column gap-1">
                                 <a class="dropdown-item px-0" asp-page="/RemoteAccessGroups">Remote Access Groups</a>
                             </div>
+                        </div>
+                        <div class="hd-settings-section">
+                            <span class="hd-settings-label">Database mode</span>
+                            <div class="hd-mode-status small mb-2">
+                                Current:
+                                @if (isLiveMode)
+                                {
+                                    <strong>Live</strong>
+                                    <span class="text-secondary"> — real agent data</span>
+                                }
+                                else
+                                {
+                                    <strong>Sandbox (DEV)</strong>
+                                    <span class="text-secondary"> — demos &amp; tests only</span>
+                                }
+                                <div class="text-secondary mt-1"><code class="small">@dbPathDisplay</code></div>
+                            </div>
+                            @if (isLiveMode)
+                            {
+                                <a class="dropdown-item px-0"
+                                   href="/database-mode?mode=@HeimdallDatabaseMode.Sandbox&amp;returnUrl=@Uri.EscapeDataString(returnUrl)">
+                                    Switch to Dev sandbox
+                                </a>
+                            }
+                            else
+                            {
+                                <a class="dropdown-item px-0"
+                                   href="/database-mode?mode=@HeimdallDatabaseMode.Live&amp;returnUrl=@Uri.EscapeDataString(returnUrl)">
+                                    Switch to Live
+                                </a>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(liveDashboardUrl) && !isLiveMode)
+                            {
+                                <a class="dropdown-item px-0" href="@liveDashboardUrl" target="_blank" rel="noopener">
+                                    Open Live dashboard (other URL)
+                                </a>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(devDashboardUrl) && isLiveMode)
+                            {
+                                <a class="dropdown-item px-0" href="@devDashboardUrl" target="_blank" rel="noopener">
+                                    Open Dev dashboard (other URL)
+                                </a>
+                            }
+                            <p class="hd-mode-hint small text-secondary mb-0 mt-2">
+                                Agent ingest always writes to the live DB. Use one dashboard at a time — do not browse localhost while the installed service is your live view unless you mean to switch sandbox mode here.
+                            </p>
                         </div>
                         <div class="hd-settings-section">
                             <span class="hd-settings-label">Theme</span>

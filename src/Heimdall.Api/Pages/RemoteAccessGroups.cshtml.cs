@@ -6,7 +6,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Pages;
 
-public class RemoteAccessGroupsModel(HeimdallDbContext db, RemoteAccessGroupService groups, StaffAccessGuard guard) : PageModel
+public class RemoteAccessGroupsModel(
+    HeimdallDbContext db,
+    RemoteAccessGroupService groups,
+    StaffAccessGuard guard,
+    WindowsStaffIdentityService identity) : PageModel
 {
     public List<RemoteAccessGroup> Groups { get; private set; } = [];
     public RemoteAccessGroup? EditingGroup { get; private set; }
@@ -14,6 +18,11 @@ public class RemoteAccessGroupsModel(HeimdallDbContext db, RemoteAccessGroupServ
     public List<string> DiscoveredProcessNames { get; private set; } = [];
     public bool AdminPreviewConfigured { get; private set; }
     public bool IsConfiguredAdmin { get; private set; }
+    public bool WindowsAuthRequired { get; private set; }
+    public string? WindowsPrincipal { get; private set; }
+    public string? SamAccountName { get; private set; }
+    public IReadOnlyList<string> CandidateEmails { get; private set; } = [];
+    public string[] ConfiguredAdminEmails { get; private set; } = [];
 
     [BindProperty]
     public int? EditingGroupId { get; set; }
@@ -48,9 +57,14 @@ public class RemoteAccessGroupsModel(HeimdallDbContext db, RemoteAccessGroupServ
     [BindProperty]
     public string? MachineFriendlyName { get; set; }
 
-    public async Task OnGetAsync(int? edit)
+    public async Task<IActionResult> OnGetAsync(int? edit)
     {
+        WindowsAuthRequired = guard.IsWindowsAuthRequired;
+        if (!await guard.EnsureWindowsAuthAsync(HttpContext))
+            return new EmptyResult();
+
         await LoadAsync(edit);
+        return Page();
     }
 
     public async Task<IActionResult> OnGetPreviewAsync(int groupId)
@@ -111,6 +125,12 @@ public class RemoteAccessGroupsModel(HeimdallDbContext db, RemoteAccessGroupServ
 
     public async Task<IActionResult> OnPostAddStaffAsync()
     {
+        if (GroupId <= 0)
+        {
+            TempData["Error"] = "Open a group (Edit) before adding staff emails.";
+            return RedirectToPage();
+        }
+
         var emails = RemoteAccessGroupService.SplitMultiValue(EmailsInput).ToList();
         if (emails.Count == 0)
         {
@@ -187,10 +207,58 @@ public class RemoteAccessGroupsModel(HeimdallDbContext db, RemoteAccessGroupServ
         return RedirectToPage(null, new { edit = GroupId });
     }
 
+    public IActionResult OnGetAddStaff(int? edit, int groupId = 0)
+    {
+        var targetEdit = edit ?? (groupId > 0 ? groupId : GroupId > 0 ? GroupId : (int?)null);
+        TempData["Error"] = "Adding staff emails requires the Add email(s) button (form POST).";
+        return RedirectToPage(null, targetEdit is int id ? new { edit = id } : null);
+    }
+
+    public IActionResult OnGetAddMachines(int? edit, int groupId = 0) =>
+        RedirectPostOnlyHandler(edit, groupId, "Adding machines requires the Add selected machines button (form POST).");
+
+    public IActionResult OnGetAddFavorite(int? edit, int groupId = 0) =>
+        RedirectPostOnlyHandler(edit, groupId, "Adding favourites requires the Add button (form POST).");
+
+    public IActionResult OnGetRenameGroup(int? edit, int groupId = 0) =>
+        RedirectPostOnlyHandler(edit, groupId, "Renaming requires the Rename button (form POST).");
+
+    public IActionResult OnGetSetMachineFriendlyName(int? edit, int groupId = 0) =>
+        RedirectPostOnlyHandler(edit, groupId, "Saving a friendly name requires the Save button (form POST).");
+
+    public IActionResult OnGetSetFavoritesOnly(int? edit, int groupId = 0) =>
+        RedirectPostOnlyHandler(edit, groupId, "Changing staff page defaults requires the toggle (form POST).");
+
+    public IActionResult OnGetRemoveStaff(int? edit, int groupId = 0) =>
+        RedirectPostOnlyHandler(edit, groupId, "Removing staff requires the Remove button (form POST).");
+
+    public IActionResult OnGetRemoveMachine(int? edit, int groupId = 0) =>
+        RedirectPostOnlyHandler(edit, groupId, "Removing a machine requires the Remove button (form POST).");
+
+    public IActionResult OnGetRemoveFavorite(int? edit, int groupId = 0) =>
+        RedirectPostOnlyHandler(edit, groupId, "Removing a favourite requires the Remove button (form POST).");
+
+    public IActionResult OnGetDeleteGroup() =>
+        RedirectPostOnlyHandler(null, 0, "Deleting a group requires the Delete button (form POST).");
+
+    public IActionResult OnGetCreateGroup() =>
+        RedirectPostOnlyHandler(null, 0, "Creating a group requires the Create button (form POST).");
+
+    private IActionResult RedirectPostOnlyHandler(int? edit, int groupId, string message)
+    {
+        var targetEdit = edit ?? (groupId > 0 ? groupId : GroupId > 0 ? GroupId : (int?)null);
+        TempData["Error"] = message;
+        return RedirectToPage(null, targetEdit is int id ? new { edit = id } : null);
+    }
+
     private async Task LoadAsync(int? editId)
     {
         Groups = await groups.ListGroupsAsync(HttpContext.RequestAborted);
         AdminPreviewConfigured = guard.Options.AdminEmails.Length > 0;
+        ConfiguredAdminEmails = guard.Options.AdminEmails;
+        WindowsPrincipal = identity.GetWindowsPrincipalName(HttpContext);
+        SamAccountName = WindowsStaffIdentityService.GetSamAccountName(WindowsPrincipal);
+        CandidateEmails = identity.GetCandidateEmails(HttpContext);
         IsConfiguredAdmin = guard.IsConfiguredAdmin(HttpContext);
         AllMachineHostnames = await db.Machines.AsNoTracking()
             .OrderBy(m => m.Hostname)

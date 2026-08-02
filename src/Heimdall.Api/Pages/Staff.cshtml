@@ -40,33 +40,35 @@
     <div class="alert alert-danger">@err</div>
 }
 
-<p class="text-secondary small mb-3">
+<p class="text-secondary small @(Model.Rows.Any(r => string.IsNullOrWhiteSpace(r.FriendlyName)) ? "mb-2" : "mb-3")">
     <strong>Sampling:</strong> starts only while this page is open. The agent takes 1 sample/sec for the first 10 seconds
     (average shown first), then one reading every 10 seconds. If teammates have this page open too, sampling still runs
     only once per machine — everyone reads the same live data from the API.
 </p>
+@if (Model.Rows.Any(r => string.IsNullOrWhiteSpace(r.FriendlyName)))
+{
+    <p class="text-secondary small mb-3">
+        Machines without a friendly name show hostname only.
+        Set a <strong>friendly name</strong> under
+        <a asp-page="/RemoteAccessGroups" asp-route-edit="@Model.Id">Admin → Remote Access Groups → Edit group → Machines</a>.
+    </p>
+}
 
-<div class="hd-panel hd-remote-panel mb-4">
+<div class="hd-panel hd-remote-panel hd-staff-panel mb-4">
     <table class="hd-table hd-staff-table">
-        <colgroup>
-            <col class="hd-scol-status" /><col class="hd-scol-machine" /><col class="hd-scol-ip" />
-            <col class="hd-scol-contact" /><col class="hd-scol-rds" /><col class="hd-scol-metric" />
-            <col class="hd-scol-metric" /><col class="hd-scol-metric" /><col class="hd-scol-metric" />
-            <col class="hd-scol-metric" /><col class="hd-scol-sampling" />
-        </colgroup>
         <thead>
             <tr>
-                <th>Status</th>
-                <th>Machine</th>
-                <th>IP</th>
-                <th>Last contact</th>
-                <th class="hd-th-stacked"><span>RDS</span><span>Service</span></th>
-                <th>CPU</th>
-                <th>GPU</th>
-                <th>RAM</th>
-                <th class="hd-th-stacked"><span>Disk</span><span>Reads</span></th>
-                <th class="hd-th-stacked"><span>Disk</span><span>Writes</span></th>
-                <th>Sampling</th>
+                <th class="hd-staff-th-status">Status</th>
+                <th class="hd-staff-th-machine">Machine</th>
+                <th class="hd-staff-th-ip">IP</th>
+                <th class="hd-staff-th-contact">Last contact</th>
+                <th class="hd-staff-th-rds hd-th-stacked"><span>RDS</span><span>Service</span></th>
+                <th class="hd-staff-th-metric">CPU</th>
+                <th class="hd-staff-th-metric">GPU</th>
+                <th class="hd-staff-th-metric">RAM</th>
+                <th class="hd-staff-th-metric hd-th-stacked"><span>Disk</span><span>Reads</span></th>
+                <th class="hd-staff-th-metric hd-th-stacked"><span>Disk</span><span>Writes</span></th>
+                <th class="hd-staff-th-sampling">Sampling</th>
             </tr>
         </thead>
         <tbody>
@@ -77,52 +79,52 @@
         @foreach (var r in Model.Rows)
         {
             var m = r.Metric;
-            <tr data-hd-staff-row data-hostname="@r.Hostname">
-                <td>
+            <tr data-hd-staff-row data-hostname="@r.Hostname" data-display-name="@r.DisplayName">
+                <td class="hd-staff-status">
                     @if (r.IsOnline)
                     {
-                        <span class="badge-pill badge-active">Online</span>
+                        <span class="badge-pill badge-active hd-staff-pill">Online</span>
                     }
                     else
                     {
-                        <span class="badge-pill badge-ended">Offline</span>
+                        <span class="badge-pill badge-ended hd-staff-pill">Offline</span>
                     }
                 </td>
-                <td>
+                <td class="hd-staff-machine">
                     @if (string.IsNullOrWhiteSpace(r.FriendlyName))
                     {
-                        <strong>@r.Hostname</strong>
+                        <strong class="hd-staff-hostname">@r.Hostname</strong>
                     }
                     else
                     {
-                        <strong title="@r.Hostname">@r.DisplayName</strong>
-                        <br /><span class="text-secondary small">@r.Hostname</span>
+                        <strong class="hd-staff-display-name" title="@r.Hostname">@r.DisplayName</strong>
+                        <span class="text-secondary small d-block hd-staff-hostname-sub">@r.Hostname</span>
                     }
                 </td>
-                <td class="hd-remote-ip">@(r.LastIp ?? "—")</td>
-                <td class="hd-remote-contact">@StaffModel.FormatContact(r.LastSeenUtc)</td>
-                <td>
+                <td class="hd-remote-ip hd-staff-ip">@(r.LastIp ?? "—")</td>
+                <td class="hd-remote-contact hd-staff-contact">@StaffModel.FormatContact(r.LastSeenUtc)</td>
+                <td class="hd-staff-rds">
                     @if (!string.IsNullOrWhiteSpace(r.TermServiceStatus))
                     {
-                        <span class="badge-pill @StaffModel.TermServiceBadgeClass(r.TermServiceStatus)">@r.TermServiceStatus</span>
+                        <span class="badge-pill hd-staff-pill @StaffModel.TermServiceBadgeClass(r.TermServiceStatus)">@r.TermServiceStatus</span>
                     }
                     else
                     {
                         <span class="text-secondary">—</span>
                     }
                 </td>
-                <td class="hd-metric-cell" data-hd-metric="cpu">
+                <td class="hd-metric-cell hd-staff-metric" data-hd-metric="cpu">
                     <div class="hd-metric-value">@StaffModel.FormatPercent(m.CpuPercent)</div>
-                    <ul class="hd-metric-top" data-hd-top="cpu">
+                    <ul class="hd-metric-top hd-staff-metric-top" data-hd-top="cpu">
                         @foreach (var p in m.TopCpuProcesses)
                         {
                             <li>@p.ProcessName <span class="text-secondary">@p.Value.ToString("0.#")%</span></li>
                         }
                     </ul>
                 </td>
-                <td class="hd-metric-cell" data-hd-metric="gpu">
+                <td class="hd-metric-cell hd-staff-metric" data-hd-metric="gpu">
                     <div class="hd-metric-value">@StaffModel.FormatPercent(m.GpuPercent)</div>
-                    <ul class="hd-metric-top" data-hd-top="gpu">
+                    <ul class="hd-metric-top hd-staff-metric-top" data-hd-top="gpu">
                         @foreach (var p in m.TopGpuProcesses)
                         {
                             <li>@p.ProcessName <span class="text-secondary">@p.Value.ToString("0.#")%</span></li>
@@ -133,35 +135,35 @@
                         <div class="text-secondary small">n/a on this host</div>
                     }
                 </td>
-                <td class="hd-metric-cell" data-hd-metric="ram">
+                <td class="hd-metric-cell hd-staff-metric" data-hd-metric="ram">
                     <div class="hd-metric-value">@StaffModel.FormatRam(m)</div>
-                    <ul class="hd-metric-top" data-hd-top="ram">
+                    <ul class="hd-metric-top hd-staff-metric-top" data-hd-top="ram">
                         @foreach (var p in m.TopRamProcesses)
                         {
                             <li>@p.ProcessName <span class="text-secondary">@p.Value.ToString("0.#") MB</span></li>
                         }
                     </ul>
                 </td>
-                <td class="hd-metric-cell" data-hd-metric="diskRead">
-                    <span class="badge-pill @StaffModel.DiskLevelBadgeClass(m.DiskReadLevel)" data-hd-level="diskRead">@m.DiskReadLevel</span>
-                    <ul class="hd-metric-top" data-hd-top="diskRead">
+                <td class="hd-metric-cell hd-staff-metric" data-hd-metric="diskRead">
+                    <span class="badge-pill hd-staff-pill @StaffModel.DiskLevelBadgeClass(m.DiskReadLevel)" data-hd-level="diskRead">@m.DiskReadLevel</span>
+                    <ul class="hd-metric-top hd-staff-metric-top" data-hd-top="diskRead">
                         @foreach (var p in m.TopDiskReadProcesses)
                         {
                             <li>@p.ProcessName <span class="text-secondary">@FormatBytesPerSec(p.Value)</span></li>
                         }
                     </ul>
                 </td>
-                <td class="hd-metric-cell" data-hd-metric="diskWrite">
-                    <span class="badge-pill @StaffModel.DiskLevelBadgeClass(m.DiskWriteLevel)" data-hd-level="diskWrite">@m.DiskWriteLevel</span>
-                    <ul class="hd-metric-top" data-hd-top="diskWrite">
+                <td class="hd-metric-cell hd-staff-metric" data-hd-metric="diskWrite">
+                    <span class="badge-pill hd-staff-pill @StaffModel.DiskLevelBadgeClass(m.DiskWriteLevel)" data-hd-level="diskWrite">@m.DiskWriteLevel</span>
+                    <ul class="hd-metric-top hd-staff-metric-top" data-hd-top="diskWrite">
                         @foreach (var p in m.TopDiskWriteProcesses)
                         {
                             <li>@p.ProcessName <span class="text-secondary">@FormatBytesPerSec(p.Value)</span></li>
                         }
                     </ul>
                 </td>
-                <td data-hd-sampling-status>
-                    <span class="badge-pill @StaffModel.SamplingStatusBadgeClass(m)">@StaffModel.SamplingStatusLabel(m)</span>
+                <td class="hd-staff-sampling" data-hd-sampling-status>
+                    <span class="badge-pill hd-staff-pill hd-staff-sampling-pill @StaffModel.SamplingStatusBadgeClass(m)">@StaffModel.SamplingStatusLabel(m)</span>
                 </td>
             </tr>
         }

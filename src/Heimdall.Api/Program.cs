@@ -11,6 +11,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService(options => options.ServiceName = "HeimdallApi");
 
 builder.Services.Configure<StaffAccessOptions>(builder.Configuration.GetSection("Heimdall:StaffAccess"));
+builder.Services.AddSingleton<ActiveDirectoryStaffEmailResolver>();
 builder.Services.AddSingleton<WindowsStaffIdentityService>();
 builder.Services.AddScoped<StaffAccessGuard>();
 
@@ -21,14 +22,13 @@ if (staffAccessOpts.RequireWindowsAuth)
     builder.Services.AddAuthorization();
 }
 
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<HeimdallDbConnectionResolver>();
 builder.Services.AddRazorPages();
-builder.Services.AddDbContext<HeimdallDbContext>(options =>
+builder.Services.AddDbContext<HeimdallDbContext>((serviceProvider, options) =>
 {
-    var dbPath = builder.Configuration.GetConnectionString("Heimdall")
-                 ?? $"Data Source={Path.Combine(builder.Environment.ContentRootPath, "heimdall.db")}";
-    options.UseSqlite(dbPath.StartsWith("Data Source=", StringComparison.OrdinalIgnoreCase)
-        ? dbPath
-        : $"Data Source={dbPath}");
+    var resolver = serviceProvider.GetRequiredService<HeimdallDbConnectionResolver>();
+    options.UseSqlite(resolver.ResolveConnectionString());
 });
 builder.Services.AddScoped<IngestService>();
 builder.Services.AddScoped<ConfigService>();
@@ -43,9 +43,12 @@ builder.Services.AddScoped<SessionDrilldownService>();
 
 var app = builder.Build();
 
-using (var scope = app.Services.CreateScope())
+foreach (var mode in new[] { HeimdallDatabaseMode.Live, HeimdallDatabaseMode.Sandbox })
 {
-    var db = scope.ServiceProvider.GetRequiredService<HeimdallDbContext>();
+    var conn = HeimdallDatabaseMode.GetConnectionStringForMode(app.Configuration, mode);
+    var optionsBuilder = new DbContextOptionsBuilder<HeimdallDbContext>();
+    optionsBuilder.UseSqlite(conn);
+    await using var db = new HeimdallDbContext(optionsBuilder.Options);
     await SeedData.EnsureSeededAsync(db);
 }
 
@@ -69,6 +72,28 @@ app.MapGet("/ui-theme", (HttpContext ctx, string theme, string? returnUrl) =>
 {
     var normalized = UiTheme.Normalize(theme);
     ctx.Response.Cookies.Append(UiTheme.CookieName, normalized, new CookieOptions
+    {
+        Path = "/",
+        MaxAge = TimeSpan.FromDays(365),
+        SameSite = SameSiteMode.Lax,
+        IsEssential = true
+    });
+
+    var dest = "/";
+    if (!string.IsNullOrWhiteSpace(returnUrl)
+        && returnUrl.StartsWith('/')
+        && !returnUrl.StartsWith("//", StringComparison.Ordinal))
+    {
+        dest = returnUrl;
+    }
+
+    return Results.Redirect(dest);
+});
+
+app.MapGet("/database-mode", (HttpContext ctx, string mode, string? returnUrl) =>
+{
+    var normalized = HeimdallDatabaseMode.Normalize(mode);
+    ctx.Response.Cookies.Append(HeimdallDatabaseMode.CookieName, normalized, new CookieOptions
     {
         Path = "/",
         MaxAge = TimeSpan.FromDays(365),
