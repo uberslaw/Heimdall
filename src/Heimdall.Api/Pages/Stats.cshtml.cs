@@ -96,16 +96,6 @@ public class StatsModel(StatsQueryService stats) : PageModel
         To = ToUtc.ToString("yyyy-MM-dd");
     }
 
-    public static string FormatDuration(long seconds)
-    {
-        var ts = TimeSpan.FromSeconds(Math.Max(0, seconds));
-        return ts.TotalDays >= 1
-            ? ts.ToString(@"d\.hh\:mm\:ss")
-            : ts.ToString(@"hh\:mm\:ss");
-    }
-
-    public static string FormatDuration(double seconds) => FormatDuration((long)Math.Round(seconds));
-
     public static string FormatBytes(long? bytes)
     {
         if (bytes is null) return "—";

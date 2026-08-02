@@ -38,5 +38,4 @@ public class MachineModel(StatsQueryService stats) : PageModel
         HostNotFound = Detail is null;
     }
 
-    public static string FormatDuration(double seconds) => StatsModel.FormatDuration(seconds);
 }

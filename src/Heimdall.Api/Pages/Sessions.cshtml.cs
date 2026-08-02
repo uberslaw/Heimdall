@@ -84,8 +84,6 @@ public class SessionsModel(StatsQueryService stats, HeimdallDbContext db) : Page
         return null;
     }
 
-    public static string FormatDuration(long seconds) => StatsModel.FormatDuration(seconds);
-
     public record SessionRow(
         string Hostname,
         string Username,

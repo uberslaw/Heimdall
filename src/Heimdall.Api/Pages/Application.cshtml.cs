@@ -44,5 +44,4 @@ public class ApplicationModel(StatsQueryService stats) : PageModel
             ct);
     }
 
-    public static string FormatDuration(double seconds) => StatsModel.FormatDuration(seconds);
 }
