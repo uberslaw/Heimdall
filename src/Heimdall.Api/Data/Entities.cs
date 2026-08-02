@@ -408,6 +408,8 @@ public class RemoteAccessGroupMachine
     public int GroupId { get; set; }
     public RemoteAccessGroup Group { get; set; } = null!;
     public required string Hostname { get; set; }
+    /// <summary>Per-group display label on the Staff page; hostname remains the canonical id.</summary>
+    public string? FriendlyName { get; set; }
 }
 
 /// <summary>Favourited process name for a group (persisted per-group — see RemoteAccessGroup.FavoritesOnly).</summary>

@@ -125,6 +125,26 @@ public class RemoteAccessGroupService(HeimdallDbContext db)
         return true;
     }
 
+    public async Task<bool> SetMachineFriendlyNameAsync(int groupMachineId, string? friendlyName, CancellationToken ct)
+    {
+        var gm = await db.RemoteAccessGroupMachines
+            .Include(m => m.Group)
+            .FirstOrDefaultAsync(m => m.Id == groupMachineId, ct);
+        if (gm is null) return false;
+
+        var trimmed = friendlyName?.Trim();
+        gm.FriendlyName = string.IsNullOrEmpty(trimmed) ? null : trimmed;
+        gm.Group.UpdatedUtc = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public static string GetMachineDisplayName(string hostname, string? friendlyName) =>
+        string.IsNullOrWhiteSpace(friendlyName) ? hostname : friendlyName.Trim();
+
+    public static string GetMachineDisplayName(RemoteAccessGroupMachine machine) =>
+        GetMachineDisplayName(machine.Hostname, machine.FriendlyName);
+
     public async Task<bool> SetFavoritesOnlyAsync(int groupId, bool favoritesOnly, CancellationToken ct)
     {
         var group = await db.RemoteAccessGroups.FirstOrDefaultAsync(g => g.Id == groupId, ct);

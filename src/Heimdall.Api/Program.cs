@@ -170,12 +170,12 @@ app.MapPost("/api/staff/groups/{groupId:int}/viewer/heartbeat", async (int group
     if (!await guard.EnsureWindowsAuthAsync(ctx))
         return Results.Empty;
 
-    var email = guard.TryGetVerifiedEmail(ctx);
-    if (email is null || !await groups.IsEmailInGroupAsync(email, groupId, ct))
+    if (!await guard.CanAccessGroupAsync(ctx, groupId, groups, ct))
         return Results.Unauthorized();
     if (string.IsNullOrWhiteSpace(body.ViewerId))
         return Results.BadRequest();
 
+    var email = guard.TryGetVerifiedEmail(ctx) ?? (guard.IsAdminPreviewActive(ctx) ? "admin-preview" : null);
     await sampling.JoinOrHeartbeatAsync(groupId, body.ViewerId, email, ct);
     return Results.Ok();
 });
@@ -197,8 +197,7 @@ app.MapGet("/api/staff/groups/{groupId:int}/metrics", async (int groupId, HttpCo
     if (!await guard.EnsureWindowsAuthAsync(ctx))
         return Results.Empty;
 
-    var email = guard.TryGetVerifiedEmail(ctx);
-    if (email is null || !await groups.IsEmailInGroupAsync(email, groupId, ct))
+    if (!await guard.CanAccessGroupAsync(ctx, groupId, groups, ct))
         return Results.Unauthorized();
 
     var hostnames = await groups.GroupHostnamesAsync(groupId, ct);

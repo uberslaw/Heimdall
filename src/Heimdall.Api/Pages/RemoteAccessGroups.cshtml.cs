@@ -6,12 +6,14 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Pages;
 
-public class RemoteAccessGroupsModel(HeimdallDbContext db, RemoteAccessGroupService groups) : PageModel
+public class RemoteAccessGroupsModel(HeimdallDbContext db, RemoteAccessGroupService groups, StaffAccessGuard guard) : PageModel
 {
     public List<RemoteAccessGroup> Groups { get; private set; } = [];
     public RemoteAccessGroup? EditingGroup { get; private set; }
     public List<string> AllMachineHostnames { get; private set; } = [];
     public List<string> DiscoveredProcessNames { get; private set; } = [];
+    public bool AdminPreviewConfigured { get; private set; }
+    public bool IsConfiguredAdmin { get; private set; }
 
     [BindProperty]
     public int? EditingGroupId { get; set; }
@@ -43,9 +45,34 @@ public class RemoteAccessGroupsModel(HeimdallDbContext db, RemoteAccessGroupServ
     [BindProperty]
     public int FavoriteId { get; set; }
 
+    [BindProperty]
+    public string? MachineFriendlyName { get; set; }
+
     public async Task OnGetAsync(int? edit)
     {
         await LoadAsync(edit);
+    }
+
+    public async Task<IActionResult> OnGetPreviewAsync(int groupId)
+    {
+        if (!await guard.EnsureWindowsAuthAsync(HttpContext))
+            return new EmptyResult();
+
+        if (!guard.IsConfiguredAdmin(HttpContext))
+        {
+            TempData["Error"] = "Admin preview requires your Windows login (or dev-bypass email) to be listed in Heimdall:StaffAccess:AdminEmails.";
+            return RedirectToPage(null, new { edit = groupId });
+        }
+
+        var group = await groups.GetGroupAsync(groupId, HttpContext.RequestAborted);
+        if (group is null)
+        {
+            TempData["Error"] = "Group not found.";
+            return RedirectToPage();
+        }
+
+        StaffAdminPreviewService.Enable(HttpContext, guard.Options);
+        return RedirectToPage("/Staff", new { id = groupId });
     }
 
     public async Task<IActionResult> OnPostCreateGroupAsync()
@@ -125,6 +152,13 @@ public class RemoteAccessGroupsModel(HeimdallDbContext db, RemoteAccessGroupServ
         return RedirectToPage(null, new { edit = GroupId });
     }
 
+    public async Task<IActionResult> OnPostSetMachineFriendlyNameAsync()
+    {
+        await groups.SetMachineFriendlyNameAsync(GroupMachineId, MachineFriendlyName, HttpContext.RequestAborted);
+        TempData["Message"] = "Machine display name updated.";
+        return RedirectToPage(null, new { edit = GroupId });
+    }
+
     public async Task<IActionResult> OnPostSetFavoritesOnlyAsync()
     {
         await groups.SetFavoritesOnlyAsync(GroupId, FavoritesOnly, HttpContext.RequestAborted);
@@ -156,6 +190,8 @@ public class RemoteAccessGroupsModel(HeimdallDbContext db, RemoteAccessGroupServ
     private async Task LoadAsync(int? editId)
     {
         Groups = await groups.ListGroupsAsync(HttpContext.RequestAborted);
+        AdminPreviewConfigured = guard.Options.AdminEmails.Length > 0;
+        IsConfiguredAdmin = guard.IsConfiguredAdmin(HttpContext);
         AllMachineHostnames = await db.Machines.AsNoTracking()
             .OrderBy(m => m.Hostname)
             .Select(m => m.Hostname)

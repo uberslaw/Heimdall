@@ -11,6 +11,20 @@
     Staff sign in at <a asp-page="/StaffAccess">Staff Access</a> — their Windows login must match the email you register here (UPN or <code>user@domain</code>).
 </p>
 
+@if (!Model.AdminPreviewConfigured)
+{
+    <div class="alert alert-secondary">
+        <strong>Admin preview:</strong> add your email to <code>Heimdall:StaffAccess:AdminEmails</code> in appsettings
+        to enable the Preview button below (Windows auth required in production).
+    </div>
+}
+else if (!Model.IsConfiguredAdmin)
+{
+    <div class="alert alert-secondary">
+        <strong>Admin preview:</strong> your current Windows login is not in <code>AdminEmails</code> — Preview links will be disabled until it matches.
+    </div>
+}
+
 @if (TempData["Message"] is string msg)
 {
     <div class="alert alert-success">@msg</div>
@@ -33,7 +47,11 @@
     </div>
     <div class="col-lg-7">
         <div class="hd-panel h-100">
-            <h2 class="h5 mb-3">Groups</h2>
+            <h2 class="h5 mb-3">Group directory</h2>
+            <p class="text-secondary small mb-3">
+                Staff page URLs for every group. Share the link with registered staff, or use <strong>Preview</strong>
+                to open the page as an admin (requires <code>AdminEmails</code> + Windows auth).
+            </p>
             @if (Model.Groups.Count == 0)
             {
                 <p class="text-secondary mb-0">No Remote Access Groups yet. Create one to get started.</p>
@@ -43,22 +61,40 @@
                 <table class="hd-table mb-0">
                     <thead>
                         <tr>
-                            <th>Name</th>
+                            <th>Group</th>
                             <th>Staff</th>
                             <th>Machines</th>
-                            <th>Staff link</th>
+                            <th>Staff page URL</th>
                             <th></th>
                         </tr>
                     </thead>
                     <tbody>
                     @foreach (var g in Model.Groups)
                     {
+                        var staffUrl = $"/Staff/{g.Id}";
                         <tr class="@(editing?.Id == g.Id ? "hd-row-active" : "")">
                             <td><strong>@g.Name</strong></td>
                             <td>@g.Staff.Count</td>
                             <td>@g.Machines.Count</td>
-                            <td><a href="/Staff/@g.Id" target="_blank">/Staff/@g.Id</a></td>
+                            <td>
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                    <code class="small">@staffUrl</code>
+                                    <button type="button" class="btn btn-ghost btn-sm"
+                                            onclick="navigator.clipboard.writeText(window.location.origin + '@staffUrl'); this.textContent='Copied'; setTimeout(() => this.textContent='Copy', 1500);">
+                                        Copy
+                                    </button>
+                                    <a class="btn btn-ghost btn-sm" href="@staffUrl" target="_blank" rel="noopener">Open</a>
+                                </div>
+                            </td>
                             <td class="text-end text-nowrap">
+                                @if (Model.IsConfiguredAdmin)
+                                {
+                                    <a class="btn btn-hd btn-sm" asp-page="/RemoteAccessGroups" asp-page-handler="Preview" asp-route-groupId="@g.Id">Preview</a>
+                                }
+                                else
+                                {
+                                    <span class="btn btn-ghost btn-sm disabled" title="Add your email to Heimdall:StaffAccess:AdminEmails">Preview</span>
+                                }
                                 <a class="btn btn-ghost btn-sm" asp-page="/RemoteAccessGroups" asp-route-edit="@g.Id">Edit</a>
                                 <form method="post" asp-page-handler="DeleteGroup" class="d-inline"
                                       onsubmit="return confirm('Delete group @g.Name? Staff, machine assignments, favourites and viewer sessions for this group will be removed.');">
@@ -130,14 +166,35 @@
 
             <div class="col-lg-6">
                 <h3 class="h6 mb-2">Machines (@editing.Machines.Count)</h3>
+                <p class="text-secondary small mb-2">
+                    Set a friendly display name per machine for this group. Staff see the friendly name on their page; hostname stays as the subtitle.
+                </p>
                 @if (editing.Machines.Count > 0)
                 {
                     <div class="hd-process-list mb-3">
                         <div class="hd-process-items">
                             @foreach (var m in editing.Machines.OrderBy(x => x.Hostname, StringComparer.OrdinalIgnoreCase))
                             {
-                                <div class="hd-process-item">
-                                    <span class="hd-process-name flex-grow-1">@m.Hostname</span>
+                                var display = RemoteAccessGroupService.GetMachineDisplayName(m);
+                                <div class="hd-process-item flex-wrap gap-2">
+                                    <div class="flex-grow-1" style="min-width: 160px;">
+                                        @if (string.IsNullOrWhiteSpace(m.FriendlyName))
+                                        {
+                                            <span class="hd-process-name d-block">@m.Hostname</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="hd-process-name d-block" title="@m.Hostname">@display</span>
+                                            <span class="text-secondary small">@m.Hostname</span>
+                                        }
+                                    </div>
+                                    <form method="post" asp-page-handler="SetMachineFriendlyName" class="d-flex gap-1 align-items-center flex-grow-1">
+                                        <input type="hidden" name="GroupId" value="@editing.Id" />
+                                        <input type="hidden" name="GroupMachineId" value="@m.Id" />
+                                        <input type="text" class="form-control form-control-sm" name="MachineFriendlyName"
+                                               value="@m.FriendlyName" placeholder="Friendly name (optional)" />
+                                        <button type="submit" class="btn btn-ghost btn-sm text-nowrap">Save</button>
+                                    </form>
                                     <form method="post" asp-page-handler="RemoveMachine" class="d-inline">
                                         <input type="hidden" name="GroupId" value="@editing.Id" />
                                         <input type="hidden" name="GroupMachineId" value="@m.Id" />

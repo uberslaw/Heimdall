@@ -22,6 +22,15 @@
     </div>
 </div>
 
+@if (Model.IsAdminPreview)
+{
+    <div class="alert alert-warning">
+        <strong>Admin preview.</strong> You are viewing this Staff page without group membership.
+        Live metrics and favourites still work. Configure allowlisted admins under
+        <code>Heimdall:StaffAccess:AdminEmails</code>.
+    </div>
+}
+
 @if (TempData["Message"] is string msg)
 {
     <div class="alert alert-success">@msg</div>
@@ -79,7 +88,17 @@
                         <span class="badge-pill badge-ended">Offline</span>
                     }
                 </td>
-                <td><strong>@r.Hostname</strong></td>
+                <td>
+                    @if (string.IsNullOrWhiteSpace(r.FriendlyName))
+                    {
+                        <strong>@r.Hostname</strong>
+                    }
+                    else
+                    {
+                        <strong title="@r.Hostname">@r.DisplayName</strong>
+                        <br /><span class="text-secondary small">@r.Hostname</span>
+                    }
+                </td>
                 <td class="hd-remote-ip">@(r.LastIp ?? "—")</td>
                 <td class="hd-remote-contact">@StaffModel.FormatContact(r.LastSeenUtc)</td>
                 <td>
@@ -199,7 +218,15 @@
                 @foreach (var r in Model.Rows.Where(r => r.Metric.FavoriteProcesses.Count > 0))
                 {
                     <div class="mb-2">
-                        <strong>@r.Hostname</strong>
+                        @if (string.IsNullOrWhiteSpace(r.FriendlyName))
+                        {
+                            <strong>@r.Hostname</strong>
+                        }
+                        else
+                        {
+                            <strong title="@r.Hostname">@r.DisplayName</strong>
+                            <span class="text-secondary small">(@r.Hostname)</span>
+                        }
                         <ul class="hd-metric-top">
                             @foreach (var f in r.Metric.FavoriteProcesses)
                             {

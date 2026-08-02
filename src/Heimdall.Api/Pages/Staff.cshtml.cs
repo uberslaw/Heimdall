@@ -24,6 +24,7 @@ public class StaffModel(
     public RemoteAccessGroup? Group { get; private set; }
     public List<StaffMachineRow> Rows { get; private set; } = [];
     public string? SignedInEmail { get; private set; }
+    public bool IsAdminPreview { get; private set; }
 
     [BindProperty]
     public bool FavoritesOnly { get; set; }
@@ -39,17 +40,25 @@ public class StaffModel(
         if (!await guard.EnsureWindowsAuthAsync(HttpContext))
             return new EmptyResult();
 
-        var email = guard.TryGetVerifiedEmail(HttpContext);
-        if (email is null)
-            return RedirectToPage("/StaffAccess");
-
-        if (!await groups.IsEmailInGroupAsync(email, Id, ct))
+        if (await guard.CanAccessGroupAsync(HttpContext, Id, groups, ct))
         {
-            TempData["Error"] = "Your account does not have access to that Remote Access Group.";
+            IsAdminPreview = guard.IsAdminPreviewActive(HttpContext) && guard.IsConfiguredAdmin(HttpContext);
+            SignedInEmail = IsAdminPreview
+                ? "admin preview"
+                : guard.TryGetVerifiedEmail(HttpContext);
+        }
+        else if (guard.TryGetVerifiedEmail(HttpContext) is null && !guard.IsAdminPreviewActive(HttpContext))
+        {
+            return RedirectToPage("/StaffAccess");
+        }
+        else
+        {
+            TempData["Error"] = guard.IsAdminPreviewActive(HttpContext)
+                ? "Admin preview expired or your Windows login is not in Heimdall:StaffAccess:AdminEmails."
+                : "Your account does not have access to that Remote Access Group.";
             return RedirectToPage("/StaffAccess");
         }
 
-        SignedInEmail = email;
         await LoadAsync(ct);
         return Page();
     }
@@ -90,9 +99,7 @@ public class StaffModel(
         if (!await guard.EnsureWindowsAuthAsync(HttpContext))
             return false;
 
-        var email = guard.TryGetVerifiedEmail(HttpContext);
-        if (email is null) return false;
-        return await groups.IsEmailInGroupAsync(email, Id, ct);
+        return await guard.CanAccessGroupAsync(HttpContext, Id, groups, ct);
     }
 
     private async Task LoadAsync(CancellationToken ct)
@@ -101,18 +108,28 @@ public class StaffModel(
         if (Group is null) return;
 
         FavoritesOnly = Group.FavoritesOnly;
+        var friendlyByHost = Group.Machines.ToDictionary(
+            m => m.Hostname,
+            m => m.FriendlyName,
+            StringComparer.OrdinalIgnoreCase);
         var hostnames = Group.Machines.Select(m => m.Hostname).OrderBy(h => h, StringComparer.OrdinalIgnoreCase).ToList();
         var remoteRows = await remote.ListForHostnamesAsync(hostnames, ct);
         var metrics = await sampling.GetLatestMetricsAsync(hostnames, ct);
 
         Rows = remoteRows
-            .Select(r => new StaffMachineRow(
-                r.Hostname,
-                r.IsOnline,
-                r.LastIp,
-                r.LastSeenUtc,
-                r.TermServiceStatus,
-                metrics.TryGetValue(r.Hostname, out var m) ? m : EmptyMetric(r.Hostname)))
+            .Select(r =>
+            {
+                friendlyByHost.TryGetValue(r.Hostname, out var friendlyName);
+                return new StaffMachineRow(
+                    r.Hostname,
+                    RemoteAccessGroupService.GetMachineDisplayName(r.Hostname, friendlyName),
+                    friendlyName,
+                    r.IsOnline,
+                    r.LastIp,
+                    r.LastSeenUtc,
+                    r.TermServiceStatus,
+                    metrics.TryGetValue(r.Hostname, out var m) ? m : EmptyMetric(r.Hostname));
+            })
             .ToList();
     }
 
@@ -159,6 +176,8 @@ public class StaffModel(
 
 public sealed record StaffMachineRow(
     string Hostname,
+    string DisplayName,
+    string? FriendlyName,
     bool IsOnline,
     string? LastIp,
     DateTimeOffset LastSeenUtc,

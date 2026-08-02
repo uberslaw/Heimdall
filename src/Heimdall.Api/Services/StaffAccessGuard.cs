@@ -13,6 +13,8 @@ public sealed class StaffAccessGuard(
     WindowsStaffIdentityService identity,
     IWebHostEnvironment env)
 {
+    public StaffAccessOptions Options => options.Value;
+
     public bool IsWindowsAuthRequired =>
         options.Value.RequireWindowsAuth && !(env.IsDevelopment() && options.Value.AllowDevBypass);
 
@@ -87,5 +89,54 @@ public sealed class StaffAccessGuard(
             return true;
 
         return identity.EmailMatchesWindowsUser(ctx, email);
+    }
+
+    /// <summary>Whether the current request carries a valid admin preview cookie.</summary>
+    public bool IsAdminPreviewActive(HttpContext ctx) => StaffAdminPreviewService.IsActive(ctx);
+
+    /// <summary>
+    /// Whether the signed-in Windows user (or dev-bypass cookie email) is listed in AdminEmails.
+    /// </summary>
+    public bool IsConfiguredAdmin(HttpContext ctx)
+    {
+        var admins = options.Value.AdminEmails;
+        if (admins.Length == 0)
+            return false;
+
+        if (IsDevBypassActive)
+        {
+            var cookieEmail = StaffAuthService.TryGetEmail(ctx);
+            return cookieEmail is not null && MatchesAdminList(cookieEmail, admins);
+        }
+
+        if (!IsWindowsAuthRequired)
+            return false;
+
+        if (identity.GetWindowsPrincipalName(ctx) is null)
+            return false;
+
+        return identity.GetCandidateEmails(ctx).Any(c => MatchesAdminList(c, admins));
+    }
+
+    /// <summary>Staff page or staff API access: group member, or admin preview for configured admins.</summary>
+    public async Task<bool> CanAccessGroupAsync(
+        HttpContext ctx,
+        int groupId,
+        RemoteAccessGroupService groups,
+        CancellationToken ct)
+    {
+        if (IsAdminPreviewActive(ctx) && IsConfiguredAdmin(ctx))
+            return await groups.GetGroupAsync(groupId, ct) is not null;
+
+        var email = TryGetVerifiedEmail(ctx);
+        return email is not null && await groups.IsEmailInGroupAsync(email, groupId, ct);
+    }
+
+    private static bool MatchesAdminList(string candidate, string[] adminEmails)
+    {
+        var normalized = WindowsStaffIdentityService.NormalizeEmail(candidate);
+        if (normalized.Length == 0) return false;
+        return adminEmails.Any(a =>
+            string.Equals(WindowsStaffIdentityService.NormalizeEmail(a), normalized, StringComparison.OrdinalIgnoreCase));
     }
 }

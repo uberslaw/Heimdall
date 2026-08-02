@@ -19,4 +19,13 @@ public sealed class StaffAccessOptions
     /// and shows a dev warning. Never enable in production.
     /// </summary>
     public bool AllowDevBypass { get; set; }
+
+    /// <summary>
+    /// Staff Access admin preview: Windows logins (or dev-bypass cookie emails) matching one of these addresses
+    /// may open any group's Staff page via the Preview action on Admin → Remote Access Groups.
+    /// </summary>
+    public string[] AdminEmails { get; set; } = [];
+
+    /// <summary>How long the admin preview cookie lasts after clicking Preview (minutes).</summary>
+    public int AdminPreviewMinutes { get; set; } = 30;
 }

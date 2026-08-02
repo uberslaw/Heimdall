@@ -1149,6 +1149,7 @@ public static class SeedData
             """);
         await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_RemoteAccessGroupMachines_Group_Host ON RemoteAccessGroupMachines(GroupId, Hostname)");
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_RemoteAccessGroupMachines_Host ON RemoteAccessGroupMachines(Hostname)");
+        await TryExec(db, "ALTER TABLE RemoteAccessGroupMachines ADD COLUMN FriendlyName TEXT NULL");
         await TryExec(db, """
             CREATE TABLE IF NOT EXISTS RemoteAccessFavoriteProcesses (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
