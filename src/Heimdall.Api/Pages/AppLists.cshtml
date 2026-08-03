@@ -10,7 +10,7 @@
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
     <div>
         <h1 class="hd-title mb-1">App lists</h1>
-        <p class="hd-sub mb-0">Named process schemas · analyze machines · approve before tracking</p>
+        <p class="hd-sub mb-0">Named process schemas · apply anywhere · analyze machines · approve before tracking</p>
     </div>
     <div class="d-flex gap-2">
         <a class="hd-btn hd-btn-black" asp-page="/Discovery" title="Browse the full process catalog">View Discovery</a>
@@ -176,6 +176,33 @@
     </div>
 
     <div class="col-lg-7">
+        <details class="hd-panel mb-4 hd-collapsible" data-key="apply-scope" open="@string.Equals(Request.Query["section"], "apply", StringComparison.OrdinalIgnoreCase)">
+            <summary class="h5 mb-3">Apply list to scope</summary>
+            <form method="post" asp-page-handler="Apply" id="apply-form">
+                <div class="mb-3">
+                    <label class="form-label">App list</label>
+                    <select class="form-select" asp-for="ApplyAppListId" required>
+                        <option value="">— select —</option>
+                        @foreach (var l in Model.Lists)
+                        {
+                            <option value="@l.Id">@l.Name (@l.EntryCount apps)</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" asp-for="ApplyGlobal" id="apply-global" />
+                    <label class="form-check-label" for="apply-global">Global (all machines)</label>
+                </div>
+                <p class="text-secondary small">Or tick regions, offices, and/or individual machines below.</p>
+                @{
+                    ViewData["TreeId"] = "app-list-tree";
+                    ViewData["TreeInputPrefix"] = "Selected";
+                }
+                <partial name="_MachineTree" model="Model.Tree" />
+                <button type="submit" class="hd-btn hd-btn-silver mt-3">Apply List</button>
+            </form>
+        </details>
+
         <details class="hd-panel mb-4 hd-collapsible" data-key="machine-focus" id="machine-focus" open="@(Model.Lookup is not null)">
             <summary class="h5 mb-3">Machine lookup &amp; analysis</summary>
             <form method="post" class="row g-2 align-items-end mb-3" id="machine-lookup-form">
@@ -548,6 +575,7 @@
 </div>
 
 @section Scripts {
+<script src="~/js/machine-tree.js" asp-append-version="true"></script>
 <script src="~/js/hd-table.js" asp-append-version="true"></script>
 <script>
 (() => {

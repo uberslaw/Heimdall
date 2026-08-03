@@ -1487,6 +1487,54 @@ table.hd-sortable th.sorted-desc::after {
   border-color: var(--hd-border);
 }
 
+/* Live Fleet (Historical Dashboard) — keep hostname / IP / user readable */
+.hd-live-fleet-table {
+  width: 100%;
+  min-width: 72rem;
+  table-layout: fixed;
+}
+
+.hd-live-fleet-table .hd-col-host {
+  width: 11.5rem;
+  text-align: left;
+}
+
+.hd-live-fleet-table .hd-col-user {
+  width: 12rem;
+  text-align: left;
+}
+
+.hd-live-fleet-table .hd-col-checkin {
+  width: 7.5rem;
+  white-space: nowrap;
+}
+
+.hd-live-fleet-table th,
+.hd-live-fleet-table td {
+  padding: 0.55rem 0.5rem;
+  vertical-align: middle;
+}
+
+.hd-live-fleet-table .hd-col-host,
+.hd-live-fleet-table .hd-col-user {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.hd-live-fleet-table .hd-live-host,
+.hd-live-fleet-table .hd-live-ip,
+.hd-live-fleet-table .hd-col-user {
+  white-space: nowrap;
+}
+
+.hd-live-fleet-panel {
+  overflow-x: auto;
+}
+
+.hd-panel:has(.hd-live-fleet-table) {
+  overflow-x: auto;
+}
+
 /* Remote Machines page — fit table without horizontal scroll at common widths */
 .hd-remote-panel {
   overflow-x: visible;

@@ -177,7 +177,7 @@ else if (tab == "live")
             || (r.LastIp?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
     }
 
-    <div class="hd-panel hd-remote-panel">
+    <div class="hd-panel hd-live-fleet-panel">
         @if (Model.Enrolled.Count == 0)
         {
             <p class="text-secondary mb-0">
@@ -186,11 +186,11 @@ else if (tab == "live")
         }
         else
         {
-            <table class="hd-table hd-remote-table hd-sortable" id="live-fleet-table">
+            <table class="hd-table hd-live-fleet-table hd-sortable" id="live-fleet-table">
                 <thead>
                     <tr>
-                        <th data-sort="text">Machine</th>
-                        <th data-sort="text">User</th>
+                        <th class="hd-col-host" data-sort="text">Machine</th>
+                        <th class="hd-col-user" data-sort="text">User</th>
                         <th data-sort="text">TUFLOW</th>
                         <th data-sort="text">Active / Idle</th>
                         <th data-sort="num">GPU %</th>
@@ -204,7 +204,7 @@ else if (tab == "live")
                         <th data-sort="num" data-default-desc>Today runtime</th>
                         <th data-sort="num">Today active</th>
                         <th data-sort="num">Today GPU h</th>
-                        <th data-sort="date">Last check-in</th>
+                        <th class="hd-col-checkin" data-sort="date">Last check-in</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -215,14 +215,14 @@ else if (tab == "live")
                 @foreach (var r in live)
                 {
                     <tr>
-                        <td data-sort-value="@r.Hostname">
-                            <a asp-page="/HistoricalDashboardMachine" asp-route-id="@r.MachineId">@r.Hostname</a>
+                        <td class="hd-col-host" data-sort-value="@r.Hostname">
+                            <a class="hd-live-host" asp-page="/HistoricalDashboardMachine" asp-route-id="@r.MachineId">@r.Hostname</a>
                             @if (!string.IsNullOrWhiteSpace(r.LastIp))
                             {
-                                <div class="text-secondary small">@r.LastIp</div>
+                                <div class="hd-live-ip text-secondary small">@r.LastIp</div>
                             }
                         </td>
-                        <td data-sort-value="@(r.Username ?? "")">@(r.Username ?? "—")</td>
+                        <td class="hd-col-user" data-sort-value="@(r.Username ?? "")">@(r.Username ?? "—")</td>
                         <td data-sort-value="@(r.TuflowRunning ? "Y" : "N")">@(r.TuflowRunning ? "Y" : "N")</td>
                         <td data-sort-value="@HistoricalDashboardModel.ActiveIdleLabel(r.Status)">
                             @if (r.Status is FleetDashboardService.FleetStatus.Active or FleetDashboardService.FleetStatus.Idle)

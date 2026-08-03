@@ -11,6 +11,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 {
     public List<AppListRow> Lists { get; private set; } = [];
     public List<Team> Teams { get; private set; } = [];
+    public IReadOnlyList<MachineHierarchy.RegionNode> Tree { get; private set; } = [];
     public List<Machine> AllMachines { get; private set; } = [];
     public int CatalogTotalCount { get; private set; }
     public int CatalogUnclassifiedCount { get; private set; }
@@ -35,6 +36,12 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     [BindProperty] public int? TeamId { get; set; }
     [BindProperty] public string? Notes { get; set; }
     [BindProperty] public string ProcessesText { get; set; } = "";
+
+    [BindProperty] public int ApplyAppListId { get; set; }
+    [BindProperty] public List<string> SelectedRegions { get; set; } = [];
+    [BindProperty] public List<string> SelectedOffices { get; set; } = [];
+    [BindProperty] public List<string> SelectedMachines { get; set; } = [];
+    [BindProperty] public bool ApplyGlobal { get; set; }
 
     [BindProperty] public string? LookupHostname { get; set; }
     [BindProperty] public string? AnalyzeHostname { get; set; }
@@ -96,6 +103,34 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
         TempData["Message"] = $"Upload complete: {lists} list(s), {entries} entr(y/ies). CSV format: ProcessName or DisplayName,ProcessName[,Team][,ListName].";
         return RedirectToPage(new { section = "lists" });
+    }
+
+    public async Task<IActionResult> OnPostApplyAsync()
+    {
+        await LoadAsync();
+        if (ApplyAppListId <= 0)
+        {
+            TempData["Error"] = "Pick an app list to apply.";
+            return Page();
+        }
+
+        var scopes = BuildScopes();
+        if (scopes.Count == 0)
+        {
+            TempData["Error"] = "Select Global and/or at least one region, office, or machine.";
+            return Page();
+        }
+
+        await appLists.AssignAsync(ApplyAppListId, scopes, HttpContext.RequestAborted);
+        TempData["Message"] = $"Applied app list to {scopes.Count} scope(s).";
+        return RedirectToPage(new { section = "apply" });
+    }
+
+    public async Task<IActionResult> OnPostUnassignAsync(int assignmentId)
+    {
+        await appLists.UnassignAsync(assignmentId, HttpContext.RequestAborted);
+        TempData["Message"] = "Assignment removed.";
+        return RedirectToPage(new { section = "apply" });
     }
 
     public async Task<IActionResult> OnPostAnalyzeAsync()
@@ -533,6 +568,9 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     {
         Teams = await db.Teams.AsNoTracking().OrderBy(t => t.Name).ToListAsync();
         AllMachines = await db.Machines.AsNoTracking().OrderBy(m => m.Hostname).ToListAsync();
+        foreach (var m in AllMachines)
+            MachineHierarchy.EnsureDefaults(m);
+        Tree = MachineHierarchy.BuildTree(AllMachines);
 
         Lists = (await db.AppLists.AsNoTracking()
             .Include(a => a.Team)
@@ -569,6 +607,45 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
             CatalogBlankPathCount = catalogStatus.BlankPathCount;
             ShowCatalogBackfill = catalogStatus.ShowBackfill;
         }
+    }
+
+    private List<(ConfigScope Scope, string? ScopeValue)> BuildScopes()
+    {
+        var scopes = new List<(ConfigScope, string?)>();
+        if (ApplyGlobal)
+            scopes.Add((ConfigScope.All, null));
+
+        foreach (var r in SelectedRegions.Where(s => !string.IsNullOrWhiteSpace(s)))
+            scopes.Add((ConfigScope.Region, r.Trim()));
+
+        foreach (var o in SelectedOffices.Where(s => !string.IsNullOrWhiteSpace(s)))
+        {
+            var region = o.Contains('/') ? o.Split('/')[0] : null;
+            if (region is not null && SelectedRegions.Contains(region, StringComparer.OrdinalIgnoreCase))
+                continue;
+            scopes.Add((ConfigScope.Office, o.Trim()));
+        }
+
+        var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var region in Tree)
+        {
+            var regionSelected = SelectedRegions.Contains(region.Name, StringComparer.OrdinalIgnoreCase);
+            foreach (var office in region.Offices)
+            {
+                var officeKey = $"{region.Name}/{office.Name}";
+                if (regionSelected || SelectedOffices.Contains(officeKey, StringComparer.OrdinalIgnoreCase))
+                    foreach (var m in office.Machines)
+                        covered.Add(m.Hostname);
+            }
+        }
+
+        foreach (var host in SelectedMachines.Where(s => !string.IsNullOrWhiteSpace(s)))
+        {
+            if (covered.Contains(host)) continue;
+            scopes.Add((ConfigScope.Machine, host.Trim()));
+        }
+
+        return scopes;
     }
 
     private static List<(string ProcessName, string? DisplayName)> ParseProcessesText(string text)

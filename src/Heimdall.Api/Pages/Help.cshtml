@@ -57,13 +57,12 @@
     <h2 class="h5">App lists</h2>
     <p class="text-secondary small mb-2">
         <strong>Purpose:</strong> named schemas of processes (e.g. a team's toolset). Discovering apps on a machine never auto-tracks them — you approve first.
-        To assign a list to one machine, use that machine's <a asp-page="/Machine">detail page</a>.
-        For scoped tracking of individual processes (region / office / machine tree), use <a asp-page="/TrackSoftware" asp-fragment="track-software">Track Software</a>.
     </p>
     <ol class="small">
         <li><strong>Existing lists</strong> — browse, edit, or select several and <em>Export Selected</em> (App list CSV/JSON, or Classification CSV for the AI workflow below).</li>
         <li><strong>Create app list</strong> — name it, optionally link a team, and paste process names (one per line, or <code>DisplayName,ProcessName</code>). <em>Create List</em> / <em>Save List</em> (silver); <em>Cancel</em> (rose).</li>
         <li><strong>Upload CSV / JSON</strong> — <em>Choose File</em> then <em>Upload File</em>; same shape as Export Selected for round-tripping.</li>
+        <li><strong>Apply list to scope</strong> — pick a list, optionally tick <em>Global</em>, or select regions/offices/machines in the tree, then <em>Apply List</em>.</li>
         <li>
             <strong>Machine lookup &amp; analysis</strong> — pick a machine, then:
             <ul>
