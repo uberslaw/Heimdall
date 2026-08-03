@@ -33,8 +33,14 @@ public class HistoricalDashboardModel(FleetDashboardService fleet) : PageModel
     public IReadOnlyList<FleetDashboardService.EnrolledMachineRow> Enrolled { get; private set; } = [];
     public IReadOnlyList<FleetDashboardService.MachineSearchHit> SearchHits { get; private set; } = [];
     public IReadOnlyList<FleetDashboardService.LiveFleetRow> LiveRows { get; private set; } = [];
+    public IReadOnlyList<FleetDashboardService.LiveFleetRow> FilteredLiveRows { get; private set; } = [];
     public FleetDashboardService.FleetMetrics Summary { get; private set; } = FleetDashboardService.FleetMetrics.Empty;
     public IReadOnlyList<(int MachineId, string Hostname, FleetDashboardService.FleetMetrics Metrics)> PerMachine { get; private set; } = [];
+    public IReadOnlyList<(int MachineId, string Hostname, FleetDashboardService.FleetMetrics Metrics)> TopGpu { get; private set; } = [];
+    public IReadOnlyList<(int MachineId, string Hostname, FleetDashboardService.FleetMetrics Metrics)> TopCpu { get; private set; } = [];
+    public IReadOnlyList<(int MachineId, string Hostname, FleetDashboardService.FleetMetrics Metrics)> TopRam { get; private set; } = [];
+    public IReadOnlyList<(int MachineId, string Hostname, FleetDashboardService.FleetMetrics Metrics)> TopDisk { get; private set; } = [];
+    public IReadOnlyList<(int MachineId, string Hostname, FleetDashboardService.FleetMetrics Metrics)> TopActive { get; private set; } = [];
     public string PeriodLabel { get; private set; } = "Today";
     public bool IsAveragesMode { get; private set; }
     public int MachinesActiveToday { get; private set; }
@@ -73,6 +79,16 @@ public class HistoricalDashboardModel(FleetDashboardService fleet) : PageModel
             LiveRows = LiveRows.Where(r => StatusMatches(r.Status, StatusFilter)).ToList();
         }
 
+        FilteredLiveRows = LiveRows;
+        if (!string.IsNullOrWhiteSpace(Q))
+        {
+            var q = Q.Trim();
+            FilteredLiveRows = LiveRows.Where(r =>
+                r.Hostname.Contains(q, StringComparison.OrdinalIgnoreCase)
+                || (r.Username?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (r.LastIp?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
+        }
+
         IsAveragesMode = string.Equals(HistMode, "averages", StringComparison.OrdinalIgnoreCase);
         var (from, to) = ResolveUiPeriod(Period, IsAveragesMode);
         PeriodLabel = LabelForPeriod(Period, IsAveragesMode);
@@ -87,6 +103,13 @@ public class HistoricalDashboardModel(FleetDashboardService fleet) : PageModel
                 .Select(p => (p.MachineId, p.Hostname, p.Metrics.DivideBy(divisor)))
                 .ToList();
         }
+
+        var ranked = PerMachine.Where(p => p.Metrics.SampleCount > 0).ToList();
+        TopGpu = ranked.OrderByDescending(p => p.Metrics.GpuHours).Take(5).ToList();
+        TopCpu = ranked.OrderByDescending(p => p.Metrics.CpuHours).Take(5).ToList();
+        TopRam = ranked.OrderByDescending(p => p.Metrics.RamGbHours).Take(5).ToList();
+        TopDisk = ranked.OrderByDescending(p => p.Metrics.DiskReadGb + p.Metrics.DiskWriteGb).Take(5).ToList();
+        TopActive = ranked.OrderByDescending(p => p.Metrics.ActiveRuntimeHours).Take(5).ToList();
 
         MachinesActiveToday = LiveRows.Count(r => r.TodayActiveHours > 0.01 || r.Status == FleetDashboardService.FleetStatus.Active);
         AvgActiveRuntimePerMachine = Enrolled.Count == 0
