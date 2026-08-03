@@ -1,0 +1,333 @@
+@page
+@model DiscoveryModel
+@{
+    ViewData["Title"] = "Discovery";
+    const int colCount = 8; // Name, Name&Location, Version, Cat, SubCat, Installs, Freq, Actions
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+    <div>
+        <h1 class="hd-title mb-1">Discovery</h1>
+        <p class="hd-sub mb-0">
+            Every process in the central catalog · @Model.TotalCount tracked (unique by name + path)
+            · <span class="@(Model.UnclassifiedCount > 0 ? "text-warning" : "text-secondary")">@Model.UnclassifiedCount awaiting classification</span>
+            @if (Model.BlankPathCount > 0)
+            {
+                <span class="text-secondary"> · @Model.BlankPathCount missing path — use <a asp-page="/AppLists">Request Inventory</a> on App Lists</span>
+            }
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        <a class="hd-btn hd-btn-black" asp-page="/Apps">Applications</a>
+        <a class="hd-btn hd-btn-black" asp-page="/AppLists">App lists</a>
+        <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="discovery" title="How Discovery works">Help</a>
+    </div>
+</div>
+
+<div id="hd-toast-region" class="hd-toast-region">
+    @if (TempData["Message"] is string msg)
+    {
+        <div class="hd-toast hd-toast-success" role="status" data-autodismiss="5000">
+            <span>@msg</span>
+            <button type="button" class="hd-toast-close" aria-label="Dismiss">&times;</button>
+        </div>
+    }
+    @if (TempData["Error"] is string err)
+    {
+        <div class="hd-toast hd-toast-error" role="alert" data-autodismiss="5000">
+            <span>@err</span>
+            <button type="button" class="hd-toast-close" aria-label="Dismiss">&times;</button>
+        </div>
+    }
+</div>
+
+<form method="get" class="hd-panel mb-3">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-5 col-lg-4">
+            <input type="search" class="form-control hd-table-filter" placeholder="Filter name, exe, or path…" data-filter-for="discovery-table" />
+        </div>
+        <div class="col-auto">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="blankPathOnly" value="true" id="blank-path-only" @(Model.BlankPathOnly ? "checked" : null) onchange="this.form.submit()" />
+                <label class="form-check-label" for="blank-path-only">Missing path only@(Model.BlankPathCount > 0 ? $" ({Model.BlankPathCount})" : "")</label>
+            </div>
+        </div>
+        <div class="col-auto">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="hideIgnored" value="true" id="hide-ignored" @(Model.HideIgnored ? "checked" : null) onchange="this.form.submit()" />
+                <label class="form-check-label" for="hide-ignored">Hide ignored@(Model.IgnoredCount > 0 ? $" ({Model.IgnoredCount})" : "")</label>
+            </div>
+        </div>
+        <div class="col-auto ms-md-auto">
+            <div class="d-flex gap-2" id="discovery-toolbar">
+                <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="discovery-edit-btn">Edit</button>
+                <button type="submit" form="discovery-save-form" class="hd-btn hd-btn-silver hd-btn-sm" id="discovery-save-btn" disabled>Save</button>
+                <button type="button" class="hd-btn hd-btn-rose hd-btn-sm" id="discovery-discard-btn" disabled>Discard</button>
+            </div>
+        </div>
+    </div>
+</form>
+
+<div class="hd-panel">
+    <form method="post" asp-page-handler="SaveAll" id="discovery-save-form">
+        <input type="hidden" name="hideIgnored" value="@Model.HideIgnored" />
+        <div class="table-responsive">
+            <table class="hd-table hd-sortable mb-0" id="discovery-table"
+                   data-has-cat="@(Model.ShowCategoryColumn ? "true" : "false")"
+                   data-has-subcat="@(Model.ShowSubcategoryColumn ? "true" : "false")">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Name</th>
+                        <th data-sort="text">Name &amp; Location</th>
+                        <th data-sort="text" class="hd-discovery-version-col">Version</th>
+                        <th data-sort="text" class="hd-discovery-cat-col @(Model.ShowCategoryColumn ? null : "d-none")">Cat</th>
+                        <th data-sort="text" class="hd-discovery-subcat-col @(Model.ShowSubcategoryColumn ? null : "d-none")">SubCat</th>
+                        <th data-sort="num" title="Number of machines where this process was seen">Installs</th>
+                        <th data-sort="num" data-default-desc title="Average weekly users with real runtime across machines">Freq</th>
+                        <th class="hd-discovery-actions-col"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @if (Model.Rows.Count == 0)
+                {
+                    <tr><td colspan="@colCount">No processes in the catalog yet. Discovery is populated from tracked runs, machine inventories, and app lists.</td></tr>
+                }
+                @for (var i = 0; i < Model.Rows.Count; i++)
+                {
+                    var r = Model.Rows[i];
+                    var versionFull = r.VersionDisplay ?? "unknown";
+                    var versionShort = versionFull.Length > 6 ? versionFull[..6] + "…" : versionFull;
+                    var hasDescription = !string.IsNullOrWhiteSpace(r.Description);
+                    var filterText = $"{r.Name} {r.ExeName} {r.Path} {r.Description} {r.Category} {r.Subcategory}".ToLowerInvariant();
+                    <tr class="hd-discovery-main @(r.Ignored ? "hd-row-muted" : null)"
+                        data-discovery-id="@r.Id"
+                        data-filter-text="@filterText">
+                        <td data-sort-value="@r.Name" style="min-width:10rem">
+                            <input type="hidden" name="Edits[@i].Id" value="@r.Id" />
+                            <span class="hd-discovery-read" data-field="name">@r.Name</span>
+                            <input class="form-control form-control-sm hd-discovery-edit d-none" type="text"
+                                   name="Edits[@i].Name" value="@r.Name" maxlength="200"
+                                   data-original="@r.Name" data-field="name" />
+                            @if (r.Unclassified && !r.Ignored)
+                            {
+                                <span class="badge-pill badge-rdp mt-1" title="Not yet in a classification/group">unclassified</span>
+                            }
+                            @if (r.Ignored)
+                            {
+                                <span class="badge-pill badge-ended mt-1">ignored</span>
+                            }
+                        </td>
+                        <td data-sort-value="@($"{r.ExeName} {r.Path}")" class="hd-discovery-location-cell">
+                            <div class="hd-discovery-exe"><code>@r.ExeName</code></div>
+                            <div class="hd-meta-line hd-discovery-path">@(string.IsNullOrWhiteSpace(r.Path) ? "—" : r.Path)</div>
+                        </td>
+                        <td data-sort-value="@(r.VersionDisplay ?? "")" class="hd-discovery-version-col">
+                            <span class="hd-discovery-read hd-discovery-version-text"
+                                  title="@versionFull"
+                                  data-field="version">@versionShort</span>
+                            <input class="form-control form-control-sm hd-discovery-edit d-none hd-discovery-version-input" type="text"
+                                   name="Edits[@i].Version" value="@r.ManualVersion"
+                                   placeholder="@(r.VersionDisplay ?? "unknown")" maxlength="50"
+                                   data-original="@(r.ManualVersion ?? "")" data-field="version"
+                                   title="@(r.VersionDisplay is null ? "No version known — type one to save it manually" : $"Current: {r.VersionDisplay} ({r.VersionSource})")" />
+                            @if (r.VersionSource != "manual" && r.VersionSource != "unknown")
+                            {
+                                <div class="text-secondary small mt-1 hd-discovery-version-source">@r.VersionSource</div>
+                            }
+                        </td>
+                        <td data-sort-value="@(r.Category ?? "")" class="hd-discovery-cat-col @(Model.ShowCategoryColumn ? null : "d-none")">
+                            <span class="hd-discovery-read" data-field="category">@(r.Category ?? "—")</span>
+                            <input class="form-control form-control-sm hd-discovery-edit d-none" type="text"
+                                   name="Edits[@i].Category" value="@r.Category" maxlength="100"
+                                   data-original="@(r.Category ?? "")" data-field="category" />
+                        </td>
+                        <td data-sort-value="@(r.Subcategory ?? "")" class="hd-discovery-subcat-col @(Model.ShowSubcategoryColumn ? null : "d-none")">
+                            <span class="hd-discovery-read" data-field="subcategory">@(r.Subcategory ?? "—")</span>
+                            <input class="form-control form-control-sm hd-discovery-edit d-none" type="text"
+                                   name="Edits[@i].Subcategory" value="@r.Subcategory" maxlength="100"
+                                   data-original="@(r.Subcategory ?? "")" data-field="subcategory" />
+                        </td>
+                        <td data-sort-value="@r.SeenHosts.Count" title="@(r.SeenHosts.Count == 0 ? "Not tied to a specific host yet" : string.Join(", ", r.SeenHosts))">
+                            @r.SeenHosts.Count
+                        </td>
+                        <td data-sort-value="@r.AvgWeeklyUsers.ToString(System.Globalization.CultureInfo.InvariantCulture)">
+                            @r.AvgWeeklyUsers.ToString("0.0")
+                        </td>
+                        <td class="hd-discovery-actions-col text-end">
+                            @if (r.Ignored)
+                            {
+                                <button type="submit" formaction="?handler=Unignore" formmethod="post"
+                                        class="hd-btn hd-btn-silver hd-btn-sm"
+                                        name="id" value="@r.Id"
+                                        formnovalidate>
+                                    Restore
+                                </button>
+                            }
+                            else
+                            {
+                                <button type="submit" formaction="?handler=Ignore" formmethod="post"
+                                        class="hd-btn hd-btn-rose hd-btn-sm"
+                                        name="id" value="@r.Id"
+                                        formnovalidate>
+                                    Ignore
+                                </button>
+                            }
+                        </td>
+                    </tr>
+                    <tr class="hd-discovery-desc @(hasDescription ? null : "d-none")"
+                        data-discovery-desc-for="@r.Id"
+                        data-filter-text="@filterText">
+                        <td colspan="@colCount" class="hd-discovery-desc-cell">
+                            <span class="hd-discovery-read hd-meta-line" data-field="description">@r.Description</span>
+                            <textarea class="form-control form-control-sm hd-discovery-edit d-none" rows="2"
+                                      name="Edits[@i].Description" maxlength="2000"
+                                      data-original="@(r.Description ?? "")" data-field="description">@r.Description</textarea>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </form>
+    <p class="text-secondary small mt-3 mb-0">
+        <strong>Installs</strong> is the number of machines that have reported this process (hover for the list).
+        <strong>Freq</strong> is the average number of distinct users per week — averaged across every week since it was first seen with real runtime,
+        counting only <code>ProcessRuns</code> that had actual duration (not bare inventory sightings).
+        Use <strong>Edit</strong> to change friendly names, descriptions, categories, and versions, then <strong>Save</strong>.
+    </p>
+</div>
+
+@section Scripts {
+<script>
+(() => {
+  document.querySelectorAll('.hd-toast[data-autodismiss]').forEach((toast) => {
+    const dismiss = () => {
+      toast.classList.add('hd-toast-hide');
+      setTimeout(() => toast.remove(), 300);
+    };
+    const ms = parseInt(toast.dataset.autodismiss, 10) || 5000;
+    const timer = setTimeout(dismiss, ms);
+    toast.querySelector('.hd-toast-close')?.addEventListener('click', () => { clearTimeout(timer); dismiss(); });
+  });
+
+  const table = document.getElementById('discovery-table');
+  const editBtn = document.getElementById('discovery-edit-btn');
+  const saveBtn = document.getElementById('discovery-save-btn');
+  const discardBtn = document.getElementById('discovery-discard-btn');
+  const saveForm = document.getElementById('discovery-save-form');
+  let editing = false;
+
+  function mainRows() {
+    return [...table.querySelectorAll('tbody tr.hd-discovery-main')];
+  }
+
+  function descRowFor(id) {
+    return table.querySelector(`tr.hd-discovery-desc[data-discovery-desc-for="${id}"]`);
+  }
+
+  function setEditing(on) {
+    editing = on;
+    table.classList.toggle('hd-discovery-editing', on);
+    editBtn.disabled = on;
+    saveBtn.disabled = !on;
+    discardBtn.disabled = !on;
+
+    table.querySelectorAll('.hd-discovery-read').forEach(el => el.classList.toggle('d-none', on));
+    table.querySelectorAll('.hd-discovery-edit').forEach(el => el.classList.toggle('d-none', !on));
+
+    if (on) {
+      table.querySelectorAll('th.hd-discovery-cat-col, td.hd-discovery-cat-col').forEach(el => el.classList.remove('d-none'));
+      table.querySelectorAll('th.hd-discovery-subcat-col, td.hd-discovery-subcat-col').forEach(el => el.classList.remove('d-none'));
+      mainRows().forEach(row => {
+        const desc = descRowFor(row.dataset.discoveryId);
+        if (desc) desc.classList.remove('d-none');
+      });
+    } else {
+      if (table.dataset.hasCat !== 'true') {
+        table.querySelectorAll('th.hd-discovery-cat-col, td.hd-discovery-cat-col').forEach(el => el.classList.add('d-none'));
+      }
+      if (table.dataset.hasSubcat !== 'true') {
+        table.querySelectorAll('th.hd-discovery-subcat-col, td.hd-discovery-subcat-col').forEach(el => el.classList.add('d-none'));
+      }
+      mainRows().forEach(row => {
+        const desc = descRowFor(row.dataset.discoveryId);
+        if (!desc) return;
+        const text = desc.querySelector('.hd-discovery-read')?.textContent.trim() || '';
+        if (!text) desc.classList.add('d-none');
+      });
+    }
+  }
+
+  function markDirty() {
+    if (editing) saveBtn.disabled = false;
+  }
+
+  editBtn?.addEventListener('click', () => setEditing(true));
+
+  discardBtn?.addEventListener('click', () => {
+    table.querySelectorAll('.hd-discovery-edit').forEach(el => {
+      el.value = el.dataset.original ?? '';
+    });
+    setEditing(false);
+    saveBtn.disabled = true;
+  });
+
+  saveForm?.querySelectorAll('.hd-discovery-edit').forEach(el => {
+    el.addEventListener('input', markDirty);
+  });
+
+  // Custom filter: match path text and keep description rows in sync with main rows.
+  const filterInput = document.querySelector('[data-filter-for="discovery-table"]');
+  filterInput?.addEventListener('input', () => {
+    const q = filterInput.value.trim().toLowerCase();
+    mainRows().forEach(row => {
+      const text = row.dataset.filterText || row.textContent.toLowerCase();
+      const show = !q || text.includes(q);
+      row.style.display = show ? '' : 'none';
+      const desc = descRowFor(row.dataset.discoveryId);
+      if (desc) desc.style.display = show ? '' : 'none';
+    });
+  });
+
+  // Custom sort: move description rows with their parent main row.
+  table?.querySelectorAll('thead th[data-sort]').forEach((th, colIdx) => {
+    if (th.dataset.discoverySortBound === 'true') return;
+    th.dataset.discoverySortBound = 'true';
+    th.addEventListener('click', () => {
+      const tbody = table.tBodies[0];
+      const type = th.dataset.sort;
+      const asc = th.dataset.dir !== 'asc';
+      table.querySelectorAll('thead th[data-sort]').forEach(h => {
+        h.dataset.dir = '';
+        h.classList.remove('sorted-asc', 'sorted-desc');
+      });
+      th.dataset.dir = asc ? 'asc' : 'desc';
+      th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
+
+      const pairs = mainRows().map(row => ({ row, desc: descRowFor(row.dataset.discoveryId) }));
+      pairs.sort((a, b) => {
+        const ca = a.row.children[colIdx];
+        const cb = b.row.children[colIdx];
+        let va = ca?.dataset.sortValue ?? ca?.textContent ?? '';
+        let vb = cb?.dataset.sortValue ?? cb?.textContent ?? '';
+        if (type === 'num' || type === 'date') {
+          va = parseFloat(va);
+          vb = parseFloat(vb);
+          if (Number.isNaN(va)) va = -Infinity;
+          if (Number.isNaN(vb)) vb = -Infinity;
+          return asc ? va - vb : vb - va;
+        }
+        va = String(va).toLowerCase();
+        vb = String(vb).toLowerCase();
+        return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+      });
+      pairs.forEach(p => {
+        tbody.appendChild(p.row);
+        if (p.desc) tbody.appendChild(p.desc);
+      });
+    });
+    if (th.dataset.defaultDesc !== undefined) th.click();
+  });
+})();
+</script>
+}

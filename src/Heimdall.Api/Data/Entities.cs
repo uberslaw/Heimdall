@@ -242,6 +242,14 @@ public class ProcessCatalogEntry
     /// <summary>From Win32 FileVersionInfo on the agent, when the path was readable.</summary>
     public string? FileVersion { get; set; }
     public string? ProductVersion { get; set; }
+    /// <summary>Human-entered version, used on the Discovery page when FileVersion/ProductVersion are unknown and a path-derived guess isn't good enough.</summary>
+    public string? ManualVersion { get; set; }
+    /// <summary>Free-text app description (Discovery edits, classification CSV import).</summary>
+    public string? Description { get; set; }
+    /// <summary>User-facing category label (Discovery edits, optional CSV column).</summary>
+    public string? Category { get; set; }
+    /// <summary>User-facing subcategory label (Discovery edits, optional CSV column).</summary>
+    public string? Subcategory { get; set; }
     public string? CompanyName { get; set; }
     public string? FileDescription { get; set; }
     public DateTimeOffset FirstSeenUtc { get; set; }
@@ -249,6 +257,10 @@ public class ProcessCatalogEntry
     public int SeenCount { get; set; } = 1;
     public string? FirstSeenHostname { get; set; }
     public string? LastSeenHostname { get; set; }
+    /// <summary>JSON map hostname → { lastSeenUtc, count } for every machine that reported this process.</summary>
+    public string? SeenHostnamesJson { get; set; }
+    /// <summary>When true, excluded from "awaiting classification" counts (catalog noise / known junk).</summary>
+    public bool Ignored { get; set; }
     /// <summary>Heuristic suggestion computed when first seen and not yet explicitly classified; see ProcessCatalogService.</summary>
     public AppGroup? SuggestedGroup { get; set; }
     public string? SuggestionReason { get; set; }
@@ -504,4 +516,62 @@ public class MachineResourceMetric
     public string TopDiskWriteProcessesJson { get; set; } = "[]";
     /// <summary>JSON array of FavoriteProcessSampleDto.</summary>
     public string FavoriteProcessesJson { get; set; } = "[]";
+}
+
+/// <summary>
+/// A user-defined UI theme skin layered on top of one of the built-in structural presets
+/// (see UiTheme.Presets). Colours are hex strings; *Opacity fields are 0..1 fractions used to build
+/// rgba() CSS values. HeadingFont/BodyFont are keys into ThemeFonts.Catalog — null inherits the base
+/// preset's font. See CustomThemeStyle for how these fields become CSS custom properties.
+/// </summary>
+public class CustomTheme
+{
+    public int Id { get; set; }
+    public required string Name { get; set; }
+
+    /// <summary>One of UiTheme.Presets — supplies structural CSS (blur/glass vs flat panels, brand logo).</summary>
+    public string BasePreset { get; set; } = "cosmic";
+
+    // Primary / secondary / accent
+    public string PrimaryHex { get; set; } = "#d4b86a";
+    public string SecondaryHex { get; set; } = "#c8ced8";
+    public string AccentHex { get; set; } = "#a88838";
+
+    // Text
+    public string TextHex { get; set; } = "#eef1f8";
+    public string MutedHex { get; set; } = "#a4aec4";
+
+    // Panels / cards (with transparency)
+    public string PanelHex { get; set; } = "#0a0e1a";
+    public double PanelOpacity { get; set; } = 0.72;
+    public string PanelAltHex { get; set; } = "#0e1220";
+    public double PanelAltOpacity { get; set; } = 0.80;
+
+    // Header / nav background
+    public string HeaderBgHex { get; set; } = "#060810";
+    public double HeaderBgOpacity { get; set; } = 0.72;
+
+    // Borders / gold accent
+    public string BorderHex { get; set; } = "#c0c6d0";
+    public double BorderOpacity { get; set; } = 0.16;
+    public string GoldHex { get; set; } = "#d4b86a";
+
+    // Shading / overlays (glass shine + rim highlights)
+    public string ShadeHex { get; set; } = "#ffecbe";
+    public double ShadeOpacityPercent { get; set; } = 12;
+
+    // Click / hover / active secondary colour
+    public string HoverHex { get; set; } = "#ecd898";
+
+    // Background colour, shader overlay, image
+    public string BackgroundHex { get; set; } = "#060810";
+    public string? BackgroundImagePath { get; set; }
+    public double BackgroundOverlayOpacity { get; set; } = 0.38;
+
+    // Fonts (null = inherit base preset default)
+    public string? HeadingFont { get; set; }
+    public string? BodyFont { get; set; }
+
+    public DateTime CreatedUtc { get; set; }
+    public DateTime UpdatedUtc { get; set; }
 }

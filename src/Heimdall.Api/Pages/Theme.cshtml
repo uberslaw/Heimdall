@@ -1,0 +1,490 @@
+@page
+@model ThemeModel
+@{
+    ViewData["Title"] = "Theme";
+    var returnUrl = "/Theme";
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <h1 class="hd-title mb-1">Theme</h1>
+</div>
+<p class="hd-sub">Pick a premade look, or build and save your own — colours are CSS variables, so every page updates instantly.</p>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<section class="hd-theme-section">
+    <div class="hd-theme-section-head">
+        <h2 class="h5 mb-0">Premade themes</h2>
+    </div>
+    <div class="hd-theme-gallery">
+        @foreach (var p in Model.Premades)
+        {
+            var isActive = !Model.ActiveIsCustom && Model.ActiveRaw == p.Preset;
+            <div class="hd-theme-card @(isActive ? "is-active" : "")">
+                @if (isActive)
+                {
+                    <span class="badge-pill badge-active hd-theme-card-badge">Active</span>
+                }
+                <div class="hd-theme-card-swatch" style="background: @p.Bg;">
+                    <span class="hd-theme-card-swatch-dot" style="background: @p.Panel;"></span>
+                    <span class="hd-theme-card-swatch-dot" style="background: @p.Accent;"></span>
+                    <span class="hd-theme-card-swatch-dot" style="background: @p.Text;"></span>
+                </div>
+                <h3>@p.Label</h3>
+                <p>@p.Description</p>
+                <a class="btn btn-hd btn-sm" href="/ui-theme?theme=@p.Preset&amp;returnUrl=@Uri.EscapeDataString(returnUrl)">
+                    @(isActive ? "Re-apply" : "Use this theme")
+                </a>
+            </div>
+        }
+    </div>
+
+    @{
+        var cosmicActive = !Model.ActiveIsCustom && Model.ActiveRaw == UiTheme.Cosmic;
+    }
+    <div class="hd-panel mt-3 @(cosmicActive ? "" : "d-none")" id="cosmic-gold-panel">
+        <span class="hd-settings-label">Cosmic gold accent</span>
+        <div class="hd-gold-switcher" role="group" aria-label="Cosmic gold variant">
+            <a class="hd-gold-swatch @(Model.ActiveGold == UiGoldVariant.Bright ? "active" : "")"
+               href="/ui-gold?gold=@UiGoldVariant.Bright&amp;returnUrl=@Uri.EscapeDataString(returnUrl)"
+               data-gold="@UiGoldVariant.Bright" title="Bright gold" aria-label="Bright gold"></a>
+            <a class="hd-gold-swatch @(Model.ActiveGold == UiGoldVariant.Champagne ? "active" : "")"
+               href="/ui-gold?gold=@UiGoldVariant.Champagne&amp;returnUrl=@Uri.EscapeDataString(returnUrl)"
+               data-gold="@UiGoldVariant.Champagne" title="Champagne gold" aria-label="Champagne gold"></a>
+            <a class="hd-gold-swatch @(Model.ActiveGold == UiGoldVariant.Brass ? "active" : "")"
+               href="/ui-gold?gold=@UiGoldVariant.Brass&amp;returnUrl=@Uri.EscapeDataString(returnUrl)"
+               data-gold="@UiGoldVariant.Brass" title="Brass gold" aria-label="Brass gold"></a>
+            <a class="hd-gold-swatch @(Model.ActiveGold == UiGoldVariant.Obsidian ? "active" : "")"
+               href="/ui-gold?gold=@UiGoldVariant.Obsidian&amp;returnUrl=@Uri.EscapeDataString(returnUrl)"
+               data-gold="@UiGoldVariant.Obsidian" title="Obsidian gold" aria-label="Obsidian gold"></a>
+        </div>
+    </div>
+</section>
+
+<section class="hd-theme-section">
+    <div class="hd-theme-section-head">
+        <h2 class="h5 mb-0">Your custom themes</h2>
+        @if (Model.EditingId is not null)
+        {
+            <a class="btn btn-ghost btn-sm" asp-page="/Theme">+ New theme</a>
+        }
+    </div>
+    @if (Model.SavedThemes.Count == 0)
+    {
+        <p class="text-secondary">No custom themes yet — build one below and save it.</p>
+    }
+    else
+    {
+        <div class="hd-custom-theme-list">
+            @foreach (var t in Model.SavedThemes)
+            {
+                var isActive = Model.ActiveIsCustom && Model.ActiveCustomId == t.Id;
+                <div class="hd-custom-theme-row @(isActive ? "is-active" : "")">
+                    <div class="hd-custom-theme-meta">
+                        <span class="hd-custom-theme-swatch" style="background: @t.PrimaryHex;"></span>
+                        <div class="min-width-0">
+                            <div><strong>@t.Name</strong> @if (isActive) { <span class="badge-pill badge-active">Active</span> }</div>
+                            <div class="text-secondary small">Based on @UiTheme.Label(t.BasePreset) · updated @t.UpdatedUtc.ToLocalTime().ToString("d MMM yyyy")</div>
+                        </div>
+                    </div>
+                    <div class="hd-custom-theme-actions">
+                        <a class="btn btn-hd btn-sm" href="/ui-theme-custom?id=@t.Id&amp;returnUrl=@Uri.EscapeDataString(returnUrl)">Apply</a>
+                        <a class="btn btn-ghost btn-sm" asp-page="/Theme" asp-route-edit="@t.Id">Edit</a>
+                        <form method="post" asp-page-handler="Delete" class="d-inline" onsubmit="return confirm('Delete theme &quot;@t.Name&quot;?');">
+                            <input type="hidden" name="id" value="@t.Id" />
+                            <button type="submit" class="btn btn-ghost btn-sm">Delete</button>
+                        </form>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</section>
+
+<section class="hd-theme-section">
+    <div class="hd-theme-section-head">
+        <h2 class="h5 mb-0">@(Model.EditingId is null ? "Build a new theme" : $"Edit “{Model.Form.Name}”")</h2>
+    </div>
+
+    <form method="post" enctype="multipart/form-data" asp-page-handler="Save" id="theme-editor-form">
+        <input type="hidden" asp-for="EditingId" />
+        <div class="hd-theme-editor-grid">
+            <div>
+                <div class="hd-theme-fieldset">
+                    <div class="row g-3">
+                        <div class="col-md-7">
+                            <label class="form-label">Theme name</label>
+                            <input class="form-control" asp-for="Form.Name" placeholder="e.g. Studio Amber" required />
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label">Base preset (structure)</label>
+                            <select class="form-select" asp-for="Form.BasePreset">
+                                @foreach (var preset in UiTheme.Presets)
+                                {
+                                    <option value="@preset">@UiTheme.Label(preset)</option>
+                                }
+                            </select>
+                            <div class="form-text">Controls layout details like glass/blur panels (Cosmic) vs flat panels, and the brand logo.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <fieldset class="hd-theme-fieldset">
+                    <legend>Primary / secondary / accent</legend>
+                    <div class="hd-color-field-grid">
+                        @{ await RenderColorFieldAsync("Primary", "Form.PrimaryHex", Model.Form.PrimaryHex, "Links, highlights, primary buttons"); }
+                        @{ await RenderColorFieldAsync("Secondary", "Form.SecondaryHex", Model.Form.SecondaryHex, "Secondary badges & accents"); }
+                        @{ await RenderColorFieldAsync("Accent (hover/pressed)", "Form.AccentHex", Model.Form.AccentHex, "Dim shade for gradients"); }
+                    </div>
+                </fieldset>
+
+                <fieldset class="hd-theme-fieldset">
+                    <legend>Text</legend>
+                    <div class="hd-color-field-grid">
+                        @{ await RenderColorFieldAsync("Primary text", "Form.TextHex", Model.Form.TextHex, null); }
+                        @{ await RenderColorFieldAsync("Muted text", "Form.MutedHex", Model.Form.MutedHex, "Labels, captions, secondary copy"); }
+                    </div>
+                </fieldset>
+
+                <fieldset class="hd-theme-fieldset">
+                    <legend>Panels &amp; cards</legend>
+                    <div class="hd-color-field-grid">
+                        @{ await RenderColorFieldAsync("Panel", "Form.PanelHex", Model.Form.PanelHex, null, "Form.PanelOpacity", Model.Form.PanelOpacity); }
+                        @{ await RenderColorFieldAsync("Panel (alt)", "Form.PanelAltHex", Model.Form.PanelAltHex, "Inputs, nested surfaces", "Form.PanelAltOpacity", Model.Form.PanelAltOpacity); }
+                    </div>
+                </fieldset>
+
+                <fieldset class="hd-theme-fieldset">
+                    <legend>Header / nav background</legend>
+                    <div class="hd-color-field-grid">
+                        @{ await RenderColorFieldAsync("Header background", "Form.HeaderBgHex", Model.Form.HeaderBgHex, null, "Form.HeaderBgOpacity", Model.Form.HeaderBgOpacity); }
+                    </div>
+                </fieldset>
+
+                <fieldset class="hd-theme-fieldset">
+                    <legend>Borders &amp; gold accent</legend>
+                    <div class="hd-color-field-grid">
+                        @{ await RenderColorFieldAsync("Border", "Form.BorderHex", Model.Form.BorderHex, null, "Form.BorderOpacity", Model.Form.BorderOpacity); }
+                        @{ await RenderColorFieldAsync("Gold / trim", "Form.GoldHex", Model.Form.GoldHex, "Drives light/dim/deep/glow shades automatically"); }
+                    </div>
+                </fieldset>
+
+                <fieldset class="hd-theme-fieldset">
+                    <legend>Shading &amp; overlays</legend>
+                    <div class="hd-color-field-grid">
+                        @{ await RenderColorFieldAsync("Shine / rim tint", "Form.ShadeHex", Model.Form.ShadeHex, "Glass edge highlights (Cosmic-based themes)", "Form.ShadeOpacityPercent", Model.Form.ShadeOpacityPercent, isPercent: true); }
+                    </div>
+                </fieldset>
+
+                <fieldset class="hd-theme-fieldset">
+                    <legend>Click / hover / active</legend>
+                    <div class="hd-color-field-grid">
+                        @{ await RenderColorFieldAsync("Hover colour", "Form.HoverHex", Model.Form.HoverHex, "Link hover, button hover"); }
+                    </div>
+                </fieldset>
+
+                <fieldset class="hd-theme-fieldset">
+                    <legend>Background</legend>
+                    <div class="hd-color-field-grid">
+                        @{ await RenderColorFieldAsync("Background colour", "Form.BackgroundHex", Model.Form.BackgroundHex, null); }
+                    </div>
+                    <div class="mt-3">
+                        <label class="form-label">Overlay opacity <span class="hd-opacity-value" id="overlayOpacityValue"></span></label>
+                        <div class="hd-opacity-row">
+                            <input type="range" class="form-range hd-opacity-slider" min="0" max="1" step="0.01"
+                                   id="Form_BackgroundOverlayOpacity_range" data-target="Form_BackgroundOverlayOpacity" data-display="overlayOpacityValue" data-percent="false"
+                                   value="@Model.Form.BackgroundOverlayOpacity.ToString(System.Globalization.CultureInfo.InvariantCulture)" oninput="syncSlider(this); applyPreview();" />
+                            <input type="hidden" asp-for="Form.BackgroundOverlayOpacity" id="Form_BackgroundOverlayOpacity" />
+                        </div>
+                        <div class="form-text">Tint applied over the background image (or colour) — see live preview.</div>
+                    </div>
+                    <div class="mt-3">
+                        <label class="form-label">Background image</label>
+                        <div class="hd-theme-bg-picker mb-2">
+                            <button type="button" class="hd-theme-bg-thumb hd-theme-bg-none @(string.IsNullOrEmpty(Model.BackgroundExisting) ? "active" : "")" data-value="" onclick="pickExistingImage(this)">None</button>
+                            @foreach (var img in Model.ExistingImages)
+                            {
+                                <button type="button" class="hd-theme-bg-thumb @(Model.BackgroundExisting == img ? "active" : "")" style="background-image: url('@img');" data-value="@img" title="@img" onclick="pickExistingImage(this)"></button>
+                            }
+                        </div>
+                        <input type="hidden" asp-for="BackgroundExisting" id="BackgroundExisting" />
+                        <div class="row g-2">
+                            <div class="col-md-6">
+                                <input class="form-control form-control-sm" asp-for="BackgroundUrl" placeholder="Or paste an image URL" />
+                            </div>
+                            <div class="col-md-6">
+                                <input class="form-control form-control-sm" type="file" asp-for="BackgroundUpload" accept=".jpg,.jpeg,.png,.webp,.gif" />
+                            </div>
+                        </div>
+                        <div class="form-text">Priority when saving: uploaded file &gt; pasted URL &gt; picked existing image &gt; none.</div>
+                    </div>
+                </fieldset>
+
+                <fieldset class="hd-theme-fieldset">
+                    <legend>Fonts</legend>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Heading font</label>
+                            <select class="form-select" asp-for="Form.HeadingFont" onchange="applyPreview();">
+                                @foreach (var f in Model.HeadingFontOptions)
+                                {
+                                    <option value="@f.Key">@f.Label</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Body font</label>
+                            <select class="form-select" asp-for="Form.BodyFont" onchange="applyPreview();">
+                                @foreach (var f in Model.BodyFontOptions)
+                                {
+                                    <option value="@f.Key">@f.Label</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+                </fieldset>
+
+                <div class="d-flex gap-2 flex-wrap">
+                    <button type="submit" class="btn btn-hd">@(Model.EditingId is null ? "Save & apply" : "Save changes")</button>
+                    @if (Model.EditingId is not null)
+                    {
+                        <a class="btn btn-ghost" asp-page="/Theme">Cancel</a>
+                    }
+                </div>
+            </div>
+
+            <div>
+                <div class="hd-theme-preview" id="theme-preview">
+                    <div class="hd-theme-preview-swatch" id="theme-preview-swatch" style="background: var(--hd-bg);">
+                        <h4>Live preview</h4>
+                        <p class="mb-0" style="color: var(--hd-muted);">This box previews your picks — save to apply site-wide.</p>
+                    </div>
+
+                    <div class="hd-panel">
+                        <div class="text-secondary small mb-1">Buttons — Gold primary · Silver secondary · Rose destructive · Black nav</div>
+                        <div class="hd-theme-preview-row mb-1">
+                            <button type="button" class="hd-btn hd-btn-gold">Analyze Apps</button>
+                            <button type="button" class="hd-btn hd-btn-silver">Apply List</button>
+                            <button type="button" class="hd-btn hd-btn-rose">Cancel</button>
+                            <button type="button" class="hd-btn hd-btn-black">Help</button>
+                        </div>
+                        <div class="hd-theme-preview-row mb-3">
+                            <button type="button" class="hd-btn hd-btn-gold hd-btn-sm">Import CSV</button>
+                            <button type="button" class="hd-btn hd-btn-silver hd-btn-sm">Choose File</button>
+                            <button type="button" class="hd-btn hd-btn-rose hd-btn-sm">Dismiss All</button>
+                            <button type="button" class="hd-btn hd-btn-black hd-btn-sm">Help</button>
+                        </div>
+                        <div class="hd-theme-preview-row mb-2">
+                            <span class="badge-pill badge-active">Active</span>
+                            <span class="badge-pill badge-local">Local</span>
+                            <span class="badge-pill badge-rdp">RDP</span>
+                            <span class="badge-pill badge-warn">Warn</span>
+                        </div>
+                        <div class="mb-2">
+                            <a href="#">A sample link</a>
+                        </div>
+                        <input class="form-control form-control-sm mb-2" placeholder="Sample input" />
+                        <div class="util-bar mb-1"><span style="width: 62%"></span></div>
+                        <div class="text-secondary small">Utilisation bar</div>
+                    </div>
+
+                    <div class="hd-panel">
+                        <table class="hd-table mb-0">
+                            <thead>
+                                <tr><th>Machine</th><th>Status</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>WKS-014</td><td><span class="badge-pill badge-active">Active</span></td></tr>
+                                <tr><td>WKS-021</td><td><span class="badge-pill badge-ended">Ended</span></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </form>
+</section>
+
+@functions {
+    async Task RenderColorFieldAsync(string label, string boundName, string hexValue, string? hint, string? opacityBoundName = null, double? opacityValue = null, bool isPercent = false)
+    {
+        var inputId = boundName.Replace(".", "_");
+        var colorId = inputId + "_picker";
+        <div class="hd-color-field">
+            <label for="@inputId">@label</label>
+            <div class="hd-color-field-row">
+                <input type="color" class="hd-color-swatch-input" id="@colorId" value="@hexValue" oninput="syncHexFromColor(this, '@inputId'); applyPreview();" />
+                <input type="text" class="form-control form-control-sm hd-color-hex-input" name="@boundName" id="@inputId" value="@hexValue" oninput="syncColorFromHex(this, '@colorId'); applyPreview();" />
+            </div>
+            @if (hint is not null)
+            {
+                <div class="form-text">@hint</div>
+            }
+            @if (opacityBoundName is not null && opacityValue is not null)
+            {
+                var opacityId = opacityBoundName.Replace(".", "_");
+                var displayId = opacityId + "_value";
+                var rawValue = opacityValue.Value;
+                var sliderMax = isPercent ? "100" : "1";
+                var sliderStep = isPercent ? "1" : "0.01";
+                var sliderValue = rawValue.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                <div class="hd-opacity-row">
+                    <input type="range" class="form-range hd-opacity-slider" min="0" max="@sliderMax" step="@sliderStep"
+                           id="@(opacityId)_range" data-target="@opacityId" data-display="@displayId" data-percent="@(isPercent ? "true" : "false")"
+                           value="@sliderValue" oninput="syncSlider(this); applyPreview();" />
+                    <span class="hd-opacity-value" id="@displayId"></span>
+                    <input type="hidden" name="@opacityBoundName" id="@opacityId" value="@sliderValue" />
+                </div>
+            }
+        </div>
+        await Task.CompletedTask;
+    }
+}
+
+@section Scripts {
+    <script>
+        (function () {
+            function clamp01(x) { return Math.max(0, Math.min(1, x)); }
+
+            function hexToRgb(hex) {
+                var h = (hex || "#000000").replace("#", "");
+                if (h.length === 3) h = h.split("").map(function (c) { return c + c; }).join("");
+                var num = parseInt(h, 16) || 0;
+                return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+            }
+
+            function toHex(r, g, b) {
+                function c(v) { return Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0"); }
+                return "#" + c(r) + c(g) + c(b);
+            }
+
+            function rgba(hex, a) {
+                var c = hexToRgb(hex);
+                return "rgba(" + c.r + ", " + c.g + ", " + c.b + ", " + clamp01(a).toFixed(3) + ")";
+            }
+
+            function lighten(hex, t) {
+                var c = hexToRgb(hex);
+                return toHex(c.r + (255 - c.r) * t, c.g + (255 - c.g) * t, c.b + (255 - c.b) * t);
+            }
+
+            function darken(hex, t) {
+                var c = hexToRgb(hex);
+                return toHex(c.r * (1 - t), c.g * (1 - t), c.b * (1 - t));
+            }
+
+            function contrastText(hex) {
+                var c = hexToRgb(hex);
+                var lum = (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) / 255;
+                return lum > 0.6 ? "#1a1408" : "#f8f5ec";
+            }
+
+            function val(id) {
+                var el = document.getElementById(id);
+                return el ? el.value : "";
+            }
+
+            function num(id) {
+                var v = parseFloat(val(id));
+                return isNaN(v) ? 0 : v;
+            }
+
+            window.syncHexFromColor = function (colorEl, textId) {
+                var textEl = document.getElementById(textId);
+                if (textEl) textEl.value = colorEl.value;
+            };
+
+            window.syncColorFromHex = function (textEl, colorId) {
+                var colorEl = document.getElementById(colorId);
+                if (colorEl && /^#[0-9a-fA-F]{6}$/.test(textEl.value.trim())) {
+                    colorEl.value = textEl.value.trim();
+                }
+            };
+
+            window.syncSlider = function (rangeEl) {
+                var targetId = rangeEl.getAttribute("data-target");
+                var displayId = rangeEl.getAttribute("data-display");
+                var isPercent = rangeEl.getAttribute("data-percent") === "true";
+                var target = document.getElementById(targetId);
+                if (target) target.value = rangeEl.value;
+                var display = document.getElementById(displayId);
+                if (display) {
+                    var pct = isPercent ? Math.round(parseFloat(rangeEl.value)) : Math.round(parseFloat(rangeEl.value) * 100);
+                    display.textContent = pct + "%";
+                }
+            };
+
+            window.pickExistingImage = function (btn) {
+                document.querySelectorAll(".hd-theme-bg-thumb").forEach(function (b) { b.classList.remove("active"); });
+                btn.classList.add("active");
+                var hidden = document.getElementById("BackgroundExisting");
+                if (hidden) hidden.value = btn.getAttribute("data-value") || "";
+                var urlInput = document.getElementById("BackgroundUrl");
+                if (urlInput) urlInput.value = "";
+            };
+
+            window.applyPreview = function () {
+                var preview = document.getElementById("theme-preview");
+                if (!preview) return;
+
+                var primary = val("Form_PrimaryHex");
+                var secondary = val("Form_SecondaryHex");
+                var accent = val("Form_AccentHex");
+                var gold = val("Form_GoldHex");
+                var shade = val("Form_ShadeHex");
+                var shadeOpacityPercent = num("Form_ShadeOpacityPercent");
+                var shadeScale = shadeOpacityPercent / 12;
+
+                var vars = {
+                    "--hd-accent": primary,
+                    "--hd-accent-secondary": secondary,
+                    "--hd-accent-dim": accent,
+                    "--hd-text": val("Form_TextHex"),
+                    "--hd-muted": val("Form_MutedHex"),
+                    "--hd-panel": rgba(val("Form_PanelHex"), num("Form_PanelOpacity")),
+                    "--hd-panel-2": rgba(val("Form_PanelAltHex"), num("Form_PanelAltOpacity")),
+                    "--hd-header-bg": rgba(val("Form_HeaderBgHex"), num("Form_HeaderBgOpacity")),
+                    "--hd-border": rgba(val("Form_BorderHex"), num("Form_BorderOpacity")),
+                    "--hd-gold": gold,
+                    "--hd-gold-light": lighten(gold, 0.35),
+                    "--hd-gold-dim": darken(gold, 0.30),
+                    "--hd-gold-deep": darken(gold, 0.55),
+                    "--hd-gold-glow": rgba(gold, 0.32),
+                    "--hd-glass-shine": rgba(shade, shadeOpacityPercent / 100),
+                    "--hd-glass-rim": rgba(shade, clamp01(0.55 * shadeScale)),
+                    "--hd-glass-rim-dim": rgba(shade, clamp01(0.35 * shadeScale)),
+                    "--hd-silver-rim": rgba(secondary, clamp01(0.42 * shadeScale)),
+                    "--hd-link-hover": val("Form_HoverHex"),
+                    "--hd-btn-primary-hover": val("Form_HoverHex"),
+                    "--hd-btn-primary-text": contrastText(primary),
+                    "--hd-focus-ring": rgba(primary, 0.3),
+                    "--hd-bg": val("Form_BackgroundHex")
+                };
+
+                Object.keys(vars).forEach(function (k) { preview.style.setProperty(k, vars[k]); });
+
+                var headingSel = document.getElementById("Form_HeadingFont");
+                var bodySel = document.getElementById("Form_BodyFont");
+                var fontMap = {
+                    "playfair": "\"Playfair Display\", Georgia, serif",
+                    "space-grotesk": "\"Space Grotesk\", system-ui, sans-serif",
+                    "georgia": "Georgia, \"Times New Roman\", serif",
+                    "inter": "\"Inter\", system-ui, sans-serif",
+                    "system": "system-ui, -apple-system, \"Segoe UI\", sans-serif"
+                };
+                if (headingSel) preview.style.setProperty("--hd-font-heading", fontMap[headingSel.value] || "");
+                if (bodySel) preview.style.setProperty("--hd-font-body", fontMap[bodySel.value] || "");
+            };
+
+            document.querySelectorAll(".hd-opacity-slider").forEach(function (s) { syncSlider(s); });
+            applyPreview();
+        })();
+    </script>
+}

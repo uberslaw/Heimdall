@@ -1,7 +1,10 @@
-﻿@inject IConfiguration Configuration
+﻿@using Heimdall.Api.Data
+@inject IConfiguration Configuration
 @inject IWebHostEnvironment Environment
+@inject HeimdallDbContext Db
 @{
-    var uiTheme = UiTheme.Resolve(Configuration, Context.Request.Cookies);
+    var activeTheme = await ThemeResolution.ResolveAsync(Configuration, Context.Request.Cookies, Db);
+    var uiTheme = activeTheme.BasePreset;
     var goldVariant = UiGoldVariant.Resolve(Context.Request.Cookies);
     var returnUrl = Context.Request.Path + Context.Request.QueryString;
     var isCosmic = uiTheme == UiTheme.Cosmic;
@@ -11,9 +14,14 @@
     var liveDashboardUrl = Configuration["Heimdall:LiveDashboardUrl"];
     var devDashboardUrl = Configuration["Heimdall:DevDashboardUrl"];
     var isLiveMode = dbMode == HeimdallDatabaseMode.Live;
+    var customGoogleFontsUrl = activeTheme.Custom is not null
+        ? ThemeFonts.BuildGoogleFontsUrl(activeTheme.Custom.HeadingFont, activeTheme.Custom.BodyFont)
+        : null;
 }
 <!DOCTYPE html>
-<html lang="en" class="@(isDevChrome ? "hd-dev-mode" : "")" data-theme="@uiTheme" @(isCosmic ? Html.Raw($"data-gold=\"{goldVariant}\"") : null)>
+<html lang="en" class="@(isDevChrome ? "hd-dev-mode" : "")" data-theme="@uiTheme"
+      @(isCosmic && !activeTheme.IsCustom ? Html.Raw($"data-gold=\"{goldVariant}\"") : null)
+      @(activeTheme.IsCustom ? Html.Raw($"data-custom-theme=\"{activeTheme.Custom!.Id}\"") : null)>
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -21,8 +29,16 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet" />
+    @if (!string.IsNullOrEmpty(customGoogleFontsUrl))
+    {
+        <link href="@customGoogleFontsUrl" rel="stylesheet" />
+    }
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    @if (activeTheme.Custom is not null)
+    {
+        <style>@Html.Raw(CustomThemeStyle.BuildOverrideStyleBlock(activeTheme.Custom, activeTheme.Custom.Id))</style>
+    }
 </head>
 <body>
     <header class="hd-header">
@@ -46,6 +62,7 @@
                     <div class="dropdown-menu hd-nav-dropdown-menu">
                         <a class="dropdown-item" asp-page="/Apps">Applications</a>
                         <a class="dropdown-item" asp-page="/AppLists">App lists</a>
+                        <a class="dropdown-item" asp-page="/Discovery">Discovery</a>
                         <a class="dropdown-item" asp-page="/Socratize">Socratize</a>
                         <a class="dropdown-item" asp-page="/TrackSoftware">Track Software</a>
                     </div>
@@ -100,12 +117,10 @@
                                 @if (isLiveMode)
                                 {
                                     <strong>Live</strong>
-                                    <span class="text-secondary"> — real agent data</span>
                                 }
                                 else
                                 {
                                     <strong>Sandbox (DEV)</strong>
-                                    <span class="text-secondary"> — demos &amp; tests only</span>
                                 }
                                 <div class="text-secondary mt-1"><code class="small">@dbPathDisplay</code></div>
                             </div>
@@ -135,37 +150,9 @@
                                     Open Dev dashboard (other URL)
                                 </a>
                             }
-                            <p class="hd-mode-hint small text-secondary mb-0 mt-2">
-                                Agent ingest always writes to the live DB. Use one dashboard at a time — do not browse localhost while the installed service is your live view unless you mean to switch sandbox mode here.
-                            </p>
                         </div>
                         <div class="hd-settings-section">
-                            <span class="hd-settings-label">Theme</span>
-                            <div class="hd-theme-switcher" role="group" aria-label="UI theme">
-                                <a class="hd-theme-opt @(uiTheme == UiTheme.Original ? "active" : "")"
-                                   href="/ui-theme?theme=@UiTheme.Original&amp;returnUrl=@Uri.EscapeDataString(returnUrl)"
-                                   data-theme="@UiTheme.Original">Original Recipe</a>
-                                <a class="hd-theme-opt @(uiTheme == UiTheme.Cosmic ? "active" : "")"
-                                   href="/ui-theme?theme=@UiTheme.Cosmic&amp;returnUrl=@Uri.EscapeDataString(returnUrl)"
-                                   data-theme="@UiTheme.Cosmic">Cosmic</a>
-                            </div>
-                        </div>
-                        <div class="hd-settings-gold @(isCosmic ? "" : "d-none")">
-                            <span class="hd-settings-label">Gold accent</span>
-                            <div class="hd-gold-switcher" role="group" aria-label="Cosmic gold variant">
-                                <a class="hd-gold-swatch @(goldVariant == UiGoldVariant.Bright ? "active" : "")"
-                                   href="/ui-gold?gold=@UiGoldVariant.Bright&amp;returnUrl=@Uri.EscapeDataString(returnUrl)"
-                                   data-gold="@UiGoldVariant.Bright" title="Bright gold" aria-label="Bright gold"></a>
-                                <a class="hd-gold-swatch @(goldVariant == UiGoldVariant.Champagne ? "active" : "")"
-                                   href="/ui-gold?gold=@UiGoldVariant.Champagne&amp;returnUrl=@Uri.EscapeDataString(returnUrl)"
-                                   data-gold="@UiGoldVariant.Champagne" title="Champagne gold" aria-label="Champagne gold"></a>
-                                <a class="hd-gold-swatch @(goldVariant == UiGoldVariant.Brass ? "active" : "")"
-                                   href="/ui-gold?gold=@UiGoldVariant.Brass&amp;returnUrl=@Uri.EscapeDataString(returnUrl)"
-                                   data-gold="@UiGoldVariant.Brass" title="Brass gold" aria-label="Brass gold"></a>
-                                <a class="hd-gold-swatch @(goldVariant == UiGoldVariant.Obsidian ? "active" : "")"
-                                   href="/ui-gold?gold=@UiGoldVariant.Obsidian&amp;returnUrl=@Uri.EscapeDataString(returnUrl)"
-                                   data-gold="@UiGoldVariant.Obsidian" title="Obsidian gold" aria-label="Obsidian gold"></a>
-                            </div>
+                            <a class="dropdown-item px-0" asp-page="/Theme">Theme</a>
                         </div>
                     </div>
                 </div>
@@ -184,65 +171,6 @@
     </footer>
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script src="~/js/hd-duration.js" asp-append-version="true"></script>
-    <script>
-        (function () {
-            var themeCookie = "hd_theme";
-            var goldCookie = "hd_gold";
-            var cosmic = "@UiTheme.Cosmic";
-
-            function setGoldSwitcherVisible(show) {
-                document.querySelectorAll(".hd-settings-gold").forEach(function (el) {
-                    el.classList.toggle("d-none", !show);
-                });
-            }
-
-            function readCookie(name) {
-                var match = document.cookie.match(new RegExp("(?:^|; )" + name + "=([^;]*)"));
-                return match ? decodeURIComponent(match[1]) : null;
-            }
-
-            function applyGold(gold) {
-                if (!gold) gold = "@UiGoldVariant.Default";
-                document.documentElement.setAttribute("data-gold", gold);
-                document.querySelectorAll(".hd-gold-swatch").forEach(function (opt) {
-                    opt.classList.toggle("active", opt.getAttribute("data-gold") === gold);
-                });
-            }
-
-            document.querySelectorAll(".hd-theme-opt").forEach(function (link) {
-                link.addEventListener("click", function (e) {
-                    var theme = link.getAttribute("data-theme");
-                    if (!theme) return;
-                    e.preventDefault();
-                    document.documentElement.setAttribute("data-theme", theme);
-                    document.querySelectorAll(".hd-theme-opt").forEach(function (opt) {
-                        opt.classList.toggle("active", opt.getAttribute("data-theme") === theme);
-                    });
-                    document.cookie = themeCookie + "=" + encodeURIComponent(theme) + ";path=/;max-age=31536000;samesite=lax";
-                    try { localStorage.setItem(themeCookie, theme); } catch (_) { }
-                    setGoldSwitcherVisible(theme === cosmic);
-                    if (theme === cosmic) {
-                        var gold = readCookie(goldCookie);
-                        try { gold = gold || localStorage.getItem(goldCookie); } catch (_) { }
-                        applyGold(gold);
-                    } else {
-                        document.documentElement.removeAttribute("data-gold");
-                    }
-                });
-            });
-
-            document.querySelectorAll(".hd-gold-swatch").forEach(function (link) {
-                link.addEventListener("click", function (e) {
-                    var gold = link.getAttribute("data-gold");
-                    if (!gold) return;
-                    e.preventDefault();
-                    applyGold(gold);
-                    document.cookie = goldCookie + "=" + encodeURIComponent(gold) + ";path=/;max-age=31536000;samesite=lax";
-                    try { localStorage.setItem(goldCookie, gold); } catch (_) { }
-                });
-            });
-        })();
-    </script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

@@ -11,11 +11,13 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 {
     public List<AppListRow> Lists { get; private set; } = [];
     public List<Team> Teams { get; private set; } = [];
-    public List<AppListAuditLog> AuditLogs { get; private set; } = [];
-    public IReadOnlyList<MachineHierarchy.RegionNode> Tree { get; private set; } = [];
     public List<Machine> AllMachines { get; private set; } = [];
     public int CatalogTotalCount { get; private set; }
     public int CatalogUnclassifiedCount { get; private set; }
+    public int CatalogDiscoverySourceCount { get; private set; }
+    public int CatalogMissingFromDiscoveryCount { get; private set; }
+    public int CatalogBlankPathCount { get; private set; }
+    public bool ShowCatalogBackfill { get; private set; }
 
     public AppListService.MachineAppListsView? Lookup { get; private set; }
     public AppListService.AnalysisResult? Analysis { get; private set; }
@@ -33,12 +35,6 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     [BindProperty] public int? TeamId { get; set; }
     [BindProperty] public string? Notes { get; set; }
     [BindProperty] public string ProcessesText { get; set; } = "";
-
-    [BindProperty] public int ApplyAppListId { get; set; }
-    [BindProperty] public List<string> SelectedRegions { get; set; } = [];
-    [BindProperty] public List<string> SelectedOffices { get; set; } = [];
-    [BindProperty] public List<string> SelectedMachines { get; set; } = [];
-    [BindProperty] public bool ApplyGlobal { get; set; }
 
     [BindProperty] public string? LookupHostname { get; set; }
     [BindProperty] public string? AnalyzeHostname { get; set; }
@@ -100,34 +96,6 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
         TempData["Message"] = $"Upload complete: {lists} list(s), {entries} entr(y/ies). CSV format: ProcessName or DisplayName,ProcessName[,Team][,ListName].";
         return RedirectToPage(new { section = "lists" });
-    }
-
-    public async Task<IActionResult> OnPostApplyAsync()
-    {
-        await LoadAsync();
-        if (ApplyAppListId <= 0)
-        {
-            TempData["Error"] = "Pick an app list to apply.";
-            return Page();
-        }
-
-        var scopes = BuildScopes();
-        if (scopes.Count == 0)
-        {
-            TempData["Error"] = "Select Global and/or at least one region, office, or machine.";
-            return Page();
-        }
-
-        await appLists.AssignAsync(ApplyAppListId, scopes, HttpContext.RequestAborted);
-        TempData["Message"] = $"Applied app list to {scopes.Count} scope(s).";
-        return RedirectToPage(new { section = "apply" });
-    }
-
-    public async Task<IActionResult> OnPostUnassignAsync(int assignmentId)
-    {
-        await appLists.UnassignAsync(assignmentId, HttpContext.RequestAborted);
-        TempData["Message"] = "Assignment removed.";
-        return RedirectToPage(new { section = "apply" });
     }
 
     public async Task<IActionResult> OnPostAnalyzeAsync()
@@ -307,19 +275,34 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
     public async Task<IActionResult> OnGetExportCatalogCsvAsync()
     {
+        await catalog.BackfillFromDiscoveriesAsync(HttpContext.RequestAborted);
         var entries = await catalog.GetAllAsync(HttpContext.RequestAborted);
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine("ProcessName,ExecutablePath,DisplayName,FileVersion,ProductVersion,CompanyName,FileDescription,SeenCount,FirstSeenUtc,LastSeenUtc,FirstSeenHost,LastSeenHost,SuggestedGroup,SuggestionReason");
+        sb.AppendLine("ProcessName,ExecutablePath,DisplayName,FileVersion,ProductVersion,CompanyName,FileDescription,SeenCount,FirstSeenUtc,LastSeenUtc,FirstSeenHost,LastSeenHost,SeenOnHosts,Ignored,SuggestedGroup,SuggestionReason");
         foreach (var e in entries)
         {
+            var seenHosts = string.Join("; ", ProcessCatalogService.GetSeenHostnames(e));
             sb.AppendLine(string.Join(",",
                 CsvCell(e.ProcessName), CsvCell(e.ExecutablePath), CsvCell(e.DisplayName ?? ""),
                 CsvCell(e.FileVersion ?? ""), CsvCell(e.ProductVersion ?? ""), CsvCell(e.CompanyName ?? ""), CsvCell(e.FileDescription ?? ""),
                 e.SeenCount.ToString(), CsvCell(e.FirstSeenUtc.ToString("u")), CsvCell(e.LastSeenUtc.ToString("u")),
-                CsvCell(e.FirstSeenHostname ?? ""), CsvCell(e.LastSeenHostname ?? ""),
+                CsvCell(e.FirstSeenHostname ?? ""), CsvCell(e.LastSeenHostname ?? ""), CsvCell(seenHosts),
+                e.Ignored ? "yes" : "",
                 CsvCell(e.SuggestedGroup?.ToString() ?? ""), CsvCell(e.SuggestionReason ?? "")));
         }
         return File(System.Text.Encoding.UTF8.GetBytes(sb.ToString()), "text/csv; charset=utf-8", "heimdall-process-catalog.csv");
+    }
+
+    public async Task<IActionResult> OnPostBackfillCatalogAsync()
+    {
+        var result = await catalog.BackfillFromDiscoveriesAsync(HttpContext.RequestAborted);
+        TempData["Message"] = result.NewCount + result.UpdatedCount == 0
+            ? "Catalog is already up to date with discovery sources."
+            : result.NewCount == 0
+                ? $"Catalog backfill complete: {result.UpdatedCount} existing entries refreshed (none newly added)."
+                : $"Catalog backfill complete: {result.NewCount} newly added, {result.UpdatedCount} existing refreshed.";
+        var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
+        return RedirectToPage(string.IsNullOrWhiteSpace(host) ? new { section = "csv-classifications" } : new { host, section = "csv-classifications" });
     }
 
     private static string CsvCell(string value)
@@ -472,6 +455,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
                 result.ImportedRows.Select(r => new ProcessCatalogService.CatalogItem(r.ProcessName, r.ExecutablePath, r.DisplayName)),
                 null, "classification CSV import", HttpContext.RequestAborted);
             newCatalogCount = catalogResult.NewCount;
+            await catalog.ApplyImportMetadataAsync(result.ImportedRows, HttpContext.RequestAborted);
         }
 
         var summary = $"Import complete: {result.Updated} updated, {result.Skipped} skipped.";
@@ -549,9 +533,6 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     {
         Teams = await db.Teams.AsNoTracking().OrderBy(t => t.Name).ToListAsync();
         AllMachines = await db.Machines.AsNoTracking().OrderBy(m => m.Hostname).ToListAsync();
-        foreach (var m in AllMachines)
-            MachineHierarchy.EnsureDefaults(m);
-        Tree = MachineHierarchy.BuildTree(AllMachines);
 
         Lists = (await db.AppLists.AsNoTracking()
             .Include(a => a.Team)
@@ -569,52 +550,25 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
                 a.UpdatedUtc))
             .ToList();
 
-        AuditLogs = (await db.AppListAuditLogs.AsNoTracking().ToListAsync())
-            .OrderByDescending(a => a.Utc)
-            .Take(100)
-            .ToList();
-
         CatalogTotalCount = await catalog.CountAsync(HttpContext.RequestAborted);
         CatalogUnclassifiedCount = await catalog.CountNeedingClassificationAsync(HttpContext.RequestAborted);
-    }
+        var catalogStatus = await catalog.GetCatalogStatusAsync(HttpContext.RequestAborted);
+        CatalogDiscoverySourceCount = catalogStatus.DiscoverySourceCount;
+        CatalogMissingFromDiscoveryCount = catalogStatus.MissingFromCatalog;
+        CatalogBlankPathCount = catalogStatus.BlankPathCount;
+        ShowCatalogBackfill = catalogStatus.ShowBackfill;
 
-    private List<(ConfigScope Scope, string? ScopeValue)> BuildScopes()
-    {
-        var scopes = new List<(ConfigScope, string?)>();
-        if (ApplyGlobal)
-            scopes.Add((ConfigScope.All, null));
-
-        foreach (var r in SelectedRegions.Where(s => !string.IsNullOrWhiteSpace(s)))
-            scopes.Add((ConfigScope.Region, r.Trim()));
-
-        foreach (var o in SelectedOffices.Where(s => !string.IsNullOrWhiteSpace(s)))
+        if (ShowCatalogBackfill)
         {
-            var region = o.Contains('/') ? o.Split('/')[0] : null;
-            if (region is not null && SelectedRegions.Contains(region, StringComparer.OrdinalIgnoreCase))
-                continue;
-            scopes.Add((ConfigScope.Office, o.Trim()));
+            await catalog.BackfillFromDiscoveriesAsync(HttpContext.RequestAborted);
+            catalogStatus = await catalog.GetCatalogStatusAsync(HttpContext.RequestAborted);
+            CatalogTotalCount = catalogStatus.TotalCount;
+            CatalogUnclassifiedCount = catalogStatus.UnclassifiedCount;
+            CatalogDiscoverySourceCount = catalogStatus.DiscoverySourceCount;
+            CatalogMissingFromDiscoveryCount = catalogStatus.MissingFromCatalog;
+            CatalogBlankPathCount = catalogStatus.BlankPathCount;
+            ShowCatalogBackfill = catalogStatus.ShowBackfill;
         }
-
-        var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var region in Tree)
-        {
-            var regionSelected = SelectedRegions.Contains(region.Name, StringComparer.OrdinalIgnoreCase);
-            foreach (var office in region.Offices)
-            {
-                var officeKey = $"{region.Name}/{office.Name}";
-                if (regionSelected || SelectedOffices.Contains(officeKey, StringComparer.OrdinalIgnoreCase))
-                    foreach (var m in office.Machines)
-                        covered.Add(m.Hostname);
-            }
-        }
-
-        foreach (var host in SelectedMachines.Where(s => !string.IsNullOrWhiteSpace(s)))
-        {
-            if (covered.Contains(host)) continue;
-            scopes.Add((ConfigScope.Machine, host.Trim()));
-        }
-
-        return scopes;
     }
 
     private static List<(string ProcessName, string? DisplayName)> ParseProcessesText(string text)

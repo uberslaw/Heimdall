@@ -12,13 +12,36 @@
     return;
 }
 
-<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-2">
     <div>
         <h1 class="hd-title mb-1">@Model.Group.Name</h1>
         <p class="hd-sub mb-0">
-            Your machines · live CPU / GPU / RAM / disk activity while this page is open.
+            Your machines · CPU / GPU / RAM / disk activity.
             Signed in as @Model.SignedInEmail · <a asp-page="/StaffAccess">switch group</a>
         </p>
+    </div>
+    <div class="hd-staff-live-bar" data-hd-staff-live-bar>
+        <div class="hd-staff-live-idle d-flex flex-wrap align-items-center gap-2" data-hd-live-idle>
+            <label class="text-secondary small mb-0" for="hd-live-duration">Duration</label>
+            <select class="form-select form-select-sm hd-staff-live-duration" id="hd-live-duration" data-hd-live-duration>
+                <option value="30" selected>30 min</option>
+                <option value="60">1 hour</option>
+                <option value="120">2 hours</option>
+                <option value="180">3 hours</option>
+                <option value="240">4 hours</option>
+                <option value="360">6 hours</option>
+                <option value="480">8 hours</option>
+            </select>
+            <button type="button" class="hd-btn hd-btn-gold" data-hd-live-start>Start Live</button>
+        </div>
+        <div class="hd-staff-live-active d-flex flex-wrap align-items-center gap-2" data-hd-live-active hidden>
+            <span class="badge-pill badge-active hd-staff-pill">Live</span>
+            <span class="hd-staff-live-countdown" aria-live="polite">
+                <span class="text-secondary small">Remaining</span>
+                <span class="hd-countdown-digits" data-hd-live-countdown>30:00</span>
+            </span>
+            <button type="button" class="hd-btn hd-btn-rose hd-btn-sm" data-hd-live-stop>Stop</button>
+        </div>
     </div>
 </div>
 
@@ -41,9 +64,10 @@
 }
 
 <p class="text-secondary small @(Model.Rows.Any(r => string.IsNullOrWhiteSpace(r.FriendlyName)) ? "mb-2" : "mb-3")">
-    <strong>Sampling:</strong> starts only while this page is open. The agent takes 1 sample/sec for the first 10 seconds
-    (average shown first), then one reading every 10 seconds. If teammates have this page open too, sampling still runs
-    only once per machine — everyone reads the same live data from the API.
+    <strong>Live tracking:</strong> click <strong>Start Live</strong> to begin a timed session (default 30 minutes, up to 8 hours).
+    While active, the agent takes 1 sample/sec for the first 10 seconds (average shown first), then one reading every 10 seconds.
+    When the timer ends or you click <strong>Stop</strong>, sampling stops for your tab. If teammates also have live sessions open,
+    sampling still runs only once per machine — everyone reads the same data from the API.
 </p>
 @if (Model.Rows.Any(r => string.IsNullOrWhiteSpace(r.FriendlyName)))
 {

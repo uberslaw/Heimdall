@@ -95,14 +95,16 @@
 
         if (data.rdpResponding === true || data.rdpResponding === false) {
             var ok = data.rdpResponding === true;
-            var label = ok ? "Accepting" : "Not responding";
+            var label = ok ? "Accepting" : "Unreachable";
             var cls = rdpBadgeClass(data.rdpResponding);
-            var when = data.lastRdpProbeUtc
-                ? '<div class="text-secondary small">' + formatContact(data.lastRdpProbeUtc) + "</div>"
-                : "";
             rdpCell.innerHTML =
                 '<span class="badge-pill ' + cls + '" title="' + (data.rdpError || "") + '">' +
-                label + "</span>" + when;
+                label + "</span>";
+
+            if (window.HeimdallRemoteMachines) {
+                var hostname = row.getAttribute("data-hostname");
+                window.HeimdallRemoteMachines.saveRdpProbe(hostname, data.rdpResponding, data.rdpError);
+            }
         }
     }
 

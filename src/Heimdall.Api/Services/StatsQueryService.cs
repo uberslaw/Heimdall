@@ -125,13 +125,32 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
                         && (s.EndedAtUtc ?? s.LastObservedUtc) >= fromUtc)
             .ToList();
 
+        var allSessions = (await db.Sessions.AsNoTracking().ToListAsync(ct))
+            .Where(s => s.MachineId == machine.Id)
+            .ToList();
+
         var now = DateTimeOffset.UtcNow;
         var windowSeconds = Math.Max(1, (toUtc - fromUtc).TotalSeconds);
         var occupied = sessions.Sum(s => SessionOverlapSeconds(s, fromUtc, toUtc, now));
         var utilPct = Math.Clamp(occupied / windowSeconds * 100.0, 0, 100);
 
-        var lastSession = sessions.OrderByDescending(s => s.LastObservedUtc).FirstOrDefault();
+        var lastSession = allSessions.OrderByDescending(s => s.LastObservedUtc).FirstOrDefault();
+        var (lastUserDepartedUtc, lastUserStillLoggedIn) = ResolveLastUserDeparture(lastSession);
         var onlineCutoff = now.AddMinutes(-5);
+
+        var runs = FilterRunsInWindow(
+            (await db.ProcessRuns.AsNoTracking().ToListAsync(ct))
+                .Where(r => r.MachineId == machine.Id)
+                .ToList(),
+            fromUtc,
+            toUtc);
+        var processPaths = runs
+            .Where(r => !string.IsNullOrWhiteSpace(r.ExecutablePath))
+            .GroupBy(r => r.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(r => r.LastSeenAtUtc).First().ExecutablePath,
+                StringComparer.OrdinalIgnoreCase);
 
         return new MachineDetailSnapshot(
             Hostname: machine.Hostname,
@@ -142,7 +161,10 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
             LastUser: lastSession is null
                 ? null
                 : NormalizeUser(lastSession.Username, lastSession.Domain),
+            LastUserDepartedUtc: lastUserDepartedUtc,
+            LastUserStillLoggedIn: lastUserStillLoggedIn,
             LastSessionType: lastSession?.SessionType,
+            LastSessionState: lastSession?.State,
             UtilisationPct: utilPct,
             Sessions: new MachineSessionSummary(
                 sessions.Count,
@@ -151,8 +173,23 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
                 sessions.Count(s => s.State != SessionState.Ended)),
             AppOptions: appOptions,
             Apps: filteredApps,
+            ProcessPaths: processPaths,
             FromUtc: fromUtc,
             ToUtc: toUtc);
+    }
+
+    private static (DateTimeOffset? DepartedUtc, bool StillLoggedIn) ResolveLastUserDeparture(UserSession? session)
+    {
+        if (session is null)
+            return (null, false);
+
+        return session.State switch
+        {
+            SessionState.Active => (null, true),
+            SessionState.Disconnected => (session.LastObservedUtc, false),
+            SessionState.Ended => (session.EndedAtUtc ?? session.LastObservedUtc, false),
+            _ => (session.EndedAtUtc ?? session.LastObservedUtc, false)
+        };
     }
 
     public async Task<SessionsPageSnapshot> QuerySessionsPageAsync(
@@ -741,11 +778,15 @@ public sealed record MachineDetailSnapshot(
     bool IsInUse,
     DateTimeOffset LastSeenUtc,
     string? LastUser,
+    DateTimeOffset? LastUserDepartedUtc,
+    bool LastUserStillLoggedIn,
     SessionType? LastSessionType,
+    SessionState? LastSessionState,
     double UtilisationPct,
     MachineSessionSummary Sessions,
     IReadOnlyList<AppFilterOption> AppOptions,
     IReadOnlyList<AppStatRow> Apps,
+    IReadOnlyDictionary<string, string?> ProcessPaths,
     DateTimeOffset FromUtc,
     DateTimeOffset ToUtc);
 

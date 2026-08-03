@@ -19,7 +19,15 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
         string DisplayName);
 
     public record CsvImportResult(int Updated, int Skipped, IReadOnlyList<string> Errors,
-        IReadOnlyList<(string ProcessName, string? ExecutablePath, string? DisplayName)>? ImportedRows = null);
+        IReadOnlyList<CsvImportedRow>? ImportedRows = null);
+
+    public record CsvImportedRow(
+        string ProcessName,
+        string? ExecutablePath,
+        string? DisplayName,
+        string? Description,
+        string? Category,
+        string? Subcategory);
     public async Task<ProcessClassificationContext> BuildContextAsync(CancellationToken ct = default)
     {
         var assignments = await db.ProcessGroupAssignments.AsNoTracking().ToListAsync(ct);
@@ -367,6 +375,8 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
         var groupIdx = IndexOfAny(headers, "Group", "Classification");
         var descIdx = IndexOfAny(headers, "Description", "Notes", "Note");
         var dispIdx = IndexOfAny(headers, "DisplayName", "Name", "App");
+        var catIdx = IndexOfAny(headers, "Category", "Cat");
+        var subcatIdx = IndexOfAny(headers, "Subcategory", "SubCat", "Subcat");
 
         if (procIdx < 0)
             return new CsvImportResult(0, 0, ["Missing required column: ProcessName."]);
@@ -380,7 +390,7 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
         var skipped = 0;
         var errors = new List<string>();
         var rowNum = 1;
-        var importedRows = new List<(string ProcessName, string? ExecutablePath, string? DisplayName)>();
+        var importedRows = new List<CsvImportedRow>();
 
         string? line;
         while ((line = await reader.ReadLineAsync(ct)) is not null)
@@ -420,7 +430,9 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
             var description = NullIfEmpty(GetCol(cols, descIdx));
             var displayName = NullIfEmpty(GetCol(cols, dispIdx)) ?? processName;
             var executablePath = NullIfEmpty(GetCol(cols, pathIdx)); // informational for export round-trip; not persisted on assignment, but feeds the catalog
-            importedRows.Add((processName, executablePath, displayName));
+            var category = NullIfEmpty(GetCol(cols, catIdx));
+            var subcategory = NullIfEmpty(GetCol(cols, subcatIdx));
+            importedRows.Add(new CsvImportedRow(processName, executablePath, displayName, description, category, subcategory));
 
             var changed = false;
             if (assignmentMap.TryGetValue(processName, out var existing))

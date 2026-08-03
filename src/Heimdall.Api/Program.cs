@@ -136,6 +136,29 @@ app.MapGet("/ui-gold", (HttpContext ctx, string gold, string? returnUrl) =>
     return Results.Redirect(dest);
 });
 
+app.MapGet("/ui-theme-custom", async (HttpContext ctx, int id, string? returnUrl, HeimdallDbContext db) =>
+{
+    var exists = await db.CustomThemes.AnyAsync(t => t.Id == id);
+    var value = exists ? UiTheme.CustomToken(id) : UiTheme.Cosmic;
+    ctx.Response.Cookies.Append(UiTheme.CookieName, value, new CookieOptions
+    {
+        Path = "/",
+        MaxAge = TimeSpan.FromDays(365),
+        SameSite = SameSiteMode.Lax,
+        IsEssential = true
+    });
+
+    var dest = "/Theme";
+    if (!string.IsNullOrWhiteSpace(returnUrl)
+        && returnUrl.StartsWith('/')
+        && !returnUrl.StartsWith("//", StringComparison.Ordinal))
+    {
+        dest = returnUrl;
+    }
+
+    return Results.Redirect(dest);
+});
+
 var apiKey = builder.Configuration["Heimdall:ApiKey"] ?? "heimdall-poc-key";
 
 bool IsAuthorized(HttpRequest request) =>

@@ -1,10 +1,17 @@
 @page
 @model MachineModel
+@using Heimdall.Api.Services
+@using Heimdall.Shared.Contracts
 @{
     ViewData["Title"] = string.IsNullOrWhiteSpace(Model.Hostname) ? "Machine" : Model.Hostname;
     var d = Model.Detail;
     var shortLabel = Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d";
     var appTotal = d?.Apps.Sum(a => a.TotalOpenSeconds) ?? 0;
+    var appLists = Model.AppListsView;
+    var excluded = Model.MachineExcludedProcesses.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    static string TruncateName(string name, int max = 20) =>
+        name.Length <= max ? name : name[..max] + "…";
 }
 
 <p class="hd-meta-line mb-2">
@@ -19,6 +26,15 @@
         <a asp-page="/AppLists" asp-route-host="@d.Hostname">Analyze apps</a>
     }
 </p>
+
+@if (TempData["Message"] is string toastMsg)
+{
+    <div class="hd-toast hd-toast-success mb-3" role="status">@toastMsg</div>
+}
+@if (TempData["Error"] is string toastErr)
+{
+    <div class="hd-toast hd-toast-error mb-3" role="alert">@toastErr</div>
+}
 
 @if (string.IsNullOrWhiteSpace(Model.Hostname))
 {
@@ -68,13 +84,112 @@ else if (d is not null)
         </div>
         <div class="hd-stat">
             <div class="label">Last user</div>
-            <div class="value" style="font-size:1.1rem;">@(d.LastUser ?? "—")</div>
+            <div class="value" style="font-size:1rem;margin-top:0.35rem">
+                @(d.LastUser ?? "—")
+                @if (d.LastUserDepartedUtc is DateTimeOffset departed)
+                {
+                    var eventLabel = d.LastSessionState == SessionState.Disconnected ? "Disconnected" : "Log off";
+                    <br /><span class="text-secondary small">@eventLabel · @MachineModel.FormatLocalTimestamp(departed)</span>
+                }
+                else if (d.LastUserStillLoggedIn)
+                {
+                    <br /><span class="text-secondary small">Still logged in</span>
+                }
+                else if (!string.IsNullOrWhiteSpace(d.LastUser))
+                {
+                    <br /><span class="text-secondary small">Time unknown</span>
+                }
+            </div>
         </div>
         <div class="hd-stat">
             <div class="label">@shortLabel utilisation</div>
             <div class="value">@d.UtilisationPct.ToString("0")%</div>
         </div>
     </div>
+
+    @if (appLists is not null)
+    {
+        <div class="hd-panel mb-3">
+            <h2 class="hd-section-title">App lists</h2>
+            @if (appLists.ActiveLists.Count == 0)
+            {
+                <p class="text-secondary small mb-3">No app lists apply to this machine yet. Assign one below or use <a asp-page="/AppLists" asp-route-host="@d.Hostname">Analyze apps</a>.</p>
+            }
+            else
+            {
+                <ul class="list-unstyled mb-3 hd-app-list-assignments">
+                    @foreach (var a in appLists.ActiveLists)
+                    {
+                        <li class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                            <strong>@a.Name</strong>
+                            <span class="badge-pill badge-ended">@a.Scope@(string.IsNullOrEmpty(a.ScopeValue) ? "" : $":{a.ScopeValue}")</span>
+                            <span class="text-secondary small">@a.EntryCount apps</span>
+                            @if (!string.IsNullOrEmpty(a.TeamName))
+                            {
+                                <span class="text-secondary small">· @a.TeamName</span>
+                            }
+                            @if (a.CanUnassign)
+                            {
+                                <form method="post" asp-page-handler="RemoveAppList" class="d-inline ms-auto">
+                                    <input type="hidden" asp-for="Hostname" />
+                                    <input type="hidden" asp-for="Range" />
+                                    <input type="hidden" name="RemoveAssignmentId" value="@a.AssignmentId" />
+                                    <button type="submit" class="btn btn-ghost btn-sm" onclick="return confirm('Remove @a.Name from this machine?');">Remove</button>
+                                </form>
+                            }
+                            else
+                            {
+                                <span class="text-secondary small ms-auto">Inherited</span>
+                            }
+                        </li>
+                    }
+                </ul>
+            }
+
+            <form method="post" asp-page-handler="ApplyAppList" class="row g-2 align-items-end mb-3">
+                <input type="hidden" asp-for="Hostname" />
+                <input type="hidden" asp-for="Range" />
+                <div class="col-md-8 col-lg-6">
+                    <label class="form-label" for="apply-applist">Apply app list to this machine</label>
+                    <select class="form-select" asp-for="ApplyAppListId" id="apply-applist" required>
+                        <option value="">— select list —</option>
+                        @foreach (var l in Model.AppListPicker)
+                        {
+                            <option value="@l.Id">@l.Name (@l.EntryCount apps)</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-4 col-lg-2">
+                    <button type="submit" class="btn btn-hd w-100">Apply</button>
+                </div>
+            </form>
+
+            @if (appLists.MergedProcesses.Count > 0)
+            {
+                <details class="mt-2">
+                    <summary class="form-label mb-0" style="cursor:pointer">Customize tracked apps for this machine</summary>
+                    <p class="text-secondary small mt-2 mb-2">
+                        Uncheck apps to stop tracking them on <strong>@d.Hostname</strong> only. Global and shared app lists are unchanged.
+                    </p>
+                    <form method="post" asp-page-handler="SaveTrackingOverrides">
+                        <input type="hidden" asp-for="Hostname" />
+                        <input type="hidden" asp-for="Range" />
+                        <div class="hd-check-grid mb-2">
+                            @foreach (var proc in appLists.MergedProcesses)
+                            {
+                                var isTracked = !excluded.Contains(proc);
+                                <label class="badge-pill @(isTracked ? "badge-local" : "badge-ended")" style="cursor:pointer;">
+                                    <input type="checkbox" name="TrackedProcesses" value="@proc" class="form-check-input me-1" @(isTracked ? "checked" : null) />
+                                    @proc
+                                </label>
+                            }
+                        </div>
+                        <button type="submit" class="btn btn-ghost btn-sm">Save tracking overrides</button>
+                    </form>
+                </details>
+            }
+        </div>
+    }
 
     <div class="hd-grid mb-3">
         <div class="hd-stat">
@@ -99,7 +214,7 @@ else if (d is not null)
         <input type="hidden" name="hostname" value="@d.Hostname" />
         <div class="row g-3 align-items-end">
             <div class="col-md-4 col-lg-3">
-                <label class="form-label" for="util-range">Period</label>
+                <label class="form-label" for="util-range">Tracking Time Range</label>
                 <select class="form-select" name="range" id="util-range">
                     @foreach (var opt in IndexModel.RangeOptions)
                     {
@@ -122,7 +237,7 @@ else if (d is not null)
         @if (d.AppOptions.Count > 0)
         {
             <div class="mt-3">
-                <label class="form-label">Apps to show</label>
+                <label class="form-label">Show Usage Data</label>
                 <div class="d-flex flex-wrap gap-2">
                     @foreach (var opt in d.AppOptions)
                     {
@@ -132,21 +247,27 @@ else if (d is not null)
                             @opt.DisplayName
                             @if (!opt.HasData)
                             {
-                                <span class="text-secondary">(no data)</span>
+                                <span class="text-secondary" title="No usage data in this period">*</span>
                             }
                         </label>
                     }
                 </div>
                 <p class="text-secondary small mb-0 mt-2">
                     Tracked apps from config plus any process seen on this machine in the period.
-                    Uncheck apps to hide them; leave all checked to show everything with data.
+                    Uncheck apps to hide them from the table below; leave all checked to show everything with data.
                 </p>
             </div>
         }
     </form>
 
     <div class="hd-panel">
-        <h2 class="hd-section-title">Applications</h2>
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+            <h2 class="hd-section-title mb-0">Applications</h2>
+            @if (d.Apps.Count > 0)
+            {
+                <button type="button" class="btn btn-ghost btn-sm" id="machine-apps-expand-all" aria-pressed="false">Show full details</button>
+            }
+        </div>
         @if (d.Apps.Count == 0)
         {
             <p class="text-secondary mb-0">
@@ -156,45 +277,75 @@ else if (d is not null)
         }
         else
         {
-            <table class="hd-table hd-sortable" id="machine-apps-table">
-                <thead>
-                    <tr>
-                        <th data-sort="text">Application</th>
-                        <th data-sort="num" data-default-desc>Time open</th>
-                        <th data-sort="num">Avg # processes open</th>
-                        <th data-sort="num">Runs</th>
-                        <th data-sort="num">Users</th>
-                        <th data-sort="num">Share</th>
-                        <th data-sort="num">Peak CPU</th>
-                    </tr>
-                </thead>
-                <tbody>
+            <div class="hd-machine-apps" id="machine-apps-grid">
+                <div class="hd-machine-apps-head">
+                    <div class="hd-machine-apps-th" data-sort="text" data-default-desc>Application</div>
+                    <div class="hd-machine-apps-th" data-sort="num" data-default-desc>Time open</div>
+                    <div class="hd-machine-apps-th" data-sort="num">Avg # open</div>
+                    <div class="hd-machine-apps-th" data-sort="num">Runs</div>
+                    <div class="hd-machine-apps-th" data-sort="num">Users</div>
+                    <div class="hd-machine-apps-th" data-sort="num">Share</div>
+                    <div class="hd-machine-apps-th" data-sort="num">Peak CPU</div>
+                </div>
                 @foreach (var a in d.Apps)
                 {
                     var share = appTotal <= 0 ? 0 : a.TotalOpenSeconds * 100.0 / appTotal;
                     var display = d.AppOptions.FirstOrDefault(o =>
                         string.Equals(o.ProcessName, a.ProcessName, StringComparison.OrdinalIgnoreCase))?.DisplayName
                         ?? a.ProcessName;
-                    <tr>
-                        <td>
-                            <a asp-page="/Application" asp-route-process="@a.ProcessName" asp-route-range="@Model.Range" asp-route-hostname="@d.Hostname">
-                                <strong>@display</strong>
+                    d.ProcessPaths.TryGetValue(a.ProcessName, out var exePath);
+                    var label = display;
+                    var truncated = label.Length > 20;
+                    var shortLabel2 = TruncateName(label);
+                    <div class="hd-machine-apps-row">
+                        <div class="hd-machine-apps-cell hd-machine-apps-cell--app"
+                             data-sort-value="@label"
+                             data-full-name="@label"
+                             data-process="@a.ProcessName"
+                             data-path="@(exePath ?? "")"
+                             data-truncated="@(truncated ? "true" : "false")">
+                            <a asp-page="/Application" asp-route-process="@a.ProcessName" asp-route-range="@Model.Range" asp-route-hostname="@d.Hostname" class="hd-machine-apps-link" title="@(truncated ? label : null)">
+                                <strong class="hd-machine-apps-name">@shortLabel2</strong>
                             </a>
                             @if (!string.Equals(display, a.ProcessName, StringComparison.OrdinalIgnoreCase))
                             {
-                                <span class="text-secondary small">(@a.ProcessName)</span>
+                                <span class="hd-machine-apps-meta text-secondary">@TruncateName(a.ProcessName)</span>
                             }
-                        </td>
-                        <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
-                        <td data-sort-value="@a.AvgConcurrentProcesses.ToString("0.###")">@ConcurrentDisplay.Render(a.AvgConcurrentProcesses)</td>
-                        <td data-sort-value="@a.RunCount">@a.RunCount</td>
-                        <td data-sort-value="@a.UniqueUsers">@a.UniqueUsers</td>
-                        <td data-sort-value="@share">@share.ToString("0")%</td>
-                        <td data-sort-value="@(a.PeakCpuPercent ?? -1)">@StatsModel.FormatPct(a.PeakCpuPercent)</td>
-                    </tr>
+                            @if (truncated || !string.IsNullOrWhiteSpace(exePath))
+                            {
+                                <div class="hd-machine-apps-detail" hidden>
+                                    @if (truncated)
+                                    {
+                                        <div class="hd-machine-apps-fullname">@label</div>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(exePath))
+                                    {
+                                        <div class="hd-machine-apps-path text-secondary">@exePath</div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                        <div class="hd-machine-apps-cell" data-sort-value="@a.TotalOpenSeconds">
+                            <span class="hd-machine-apps-val">@DurationDisplay.Render(a.TotalOpenSeconds)</span>
+                        </div>
+                        <div class="hd-machine-apps-cell" data-sort-value="@a.AvgConcurrentProcesses.ToString("0.###")">
+                            <span class="hd-machine-apps-val">@ConcurrentDisplay.Render(a.AvgConcurrentProcesses)</span>
+                        </div>
+                        <div class="hd-machine-apps-cell" data-sort-value="@a.RunCount">
+                            <span class="hd-machine-apps-val">@a.RunCount</span>
+                        </div>
+                        <div class="hd-machine-apps-cell" data-sort-value="@a.UniqueUsers">
+                            <span class="hd-machine-apps-val">@a.UniqueUsers</span>
+                        </div>
+                        <div class="hd-machine-apps-cell" data-sort-value="@share">
+                            <span class="hd-machine-apps-val">@share.ToString("0")%</span>
+                        </div>
+                        <div class="hd-machine-apps-cell" data-sort-value="@(a.PeakCpuPercent ?? -1)">
+                            <span class="hd-machine-apps-val">@StatsModel.FormatPct(a.PeakCpuPercent)</span>
+                        </div>
+                    </div>
                 }
-                </tbody>
-            </table>
+            </div>
         }
     </div>
 }
@@ -202,20 +353,42 @@ else if (d is not null)
 @section Scripts {
 <script>
 (() => {
-  document.querySelectorAll('table.hd-sortable').forEach(table => {
-    const headers = [...table.querySelectorAll('thead th[data-sort]')];
+  const grid = document.getElementById('machine-apps-grid');
+  if (grid) {
+    const expandBtn = document.getElementById('machine-apps-expand-all');
+    const setExpanded = (on) => {
+      grid.classList.toggle('hd-machine-apps--expanded', on);
+      if (expandBtn) {
+        expandBtn.textContent = on ? 'Hide full details' : 'Show full details';
+        expandBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+    };
+    if (expandBtn) {
+      expandBtn.addEventListener('click', () => setExpanded(!grid.classList.contains('hd-machine-apps--expanded')));
+    }
+
+    grid.querySelectorAll('.hd-machine-apps-cell--app[data-truncated="true"]').forEach(cell => {
+      cell.addEventListener('click', (e) => {
+        if (e.target.closest('a')) return;
+        const detail = cell.querySelector('.hd-machine-apps-detail');
+        if (!detail) return;
+        const open = cell.classList.toggle('is-expanded');
+        detail.hidden = !open;
+      });
+    });
+
+    const headers = [...grid.querySelectorAll('.hd-machine-apps-th[data-sort]')];
     headers.forEach((th, colIdx) => {
       th.style.cursor = 'pointer';
       th.addEventListener('click', () => {
         const type = th.dataset.sort;
-        const tbody = table.tBodies[0];
-        const rows = [...tbody.querySelectorAll('tr')].filter(r => r.children.length > 1);
+        const rows = [...grid.querySelectorAll('.hd-machine-apps-row')];
         const asc = th.dataset.dir !== 'asc';
         headers.forEach(h => { h.dataset.dir = ''; h.classList.remove('sorted-asc', 'sorted-desc'); });
         th.dataset.dir = asc ? 'asc' : 'desc';
         th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
-        rows.sort((a, b) => {
-          const ca = a.children[colIdx], cb = b.children[colIdx];
+        rows.sort((ra, rb) => {
+          const ca = ra.children[colIdx], cb = rb.children[colIdx];
           let va = ca?.dataset.sortValue ?? ca?.textContent ?? '';
           let vb = cb?.dataset.sortValue ?? cb?.textContent ?? '';
           if (type === 'num') {
@@ -227,11 +400,11 @@ else if (d is not null)
           va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
           return asc ? va.localeCompare(vb) : vb.localeCompare(va);
         });
-        rows.forEach(r => tbody.appendChild(r));
+        rows.forEach(r => grid.appendChild(r));
       });
       if (th.dataset.defaultDesc !== undefined) th.click();
     });
-  });
+  }
 })();
 </script>
 }

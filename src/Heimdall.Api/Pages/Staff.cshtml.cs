@@ -9,8 +9,9 @@ namespace Heimdall.Api.Pages;
 /// <summary>
 /// Staff Access group page — lists only the machines this group was granted, with Remote-like fields plus
 /// live(ish) resource metrics. Sampling is fan-in ref-counted on the API (see LiveSamplingService); this
-/// page's JS heartbeats a per-tab viewer id every ~20s and sends an explicit leave on close, and polls
-/// /api/staff/groups/{id}/metrics every ~10s to refresh the metric cells without a full reload.
+/// page's JS starts an explicit timed live session (default 30 min, up to 8 h): while active it heartbeats
+/// a per-tab viewer id every ~20s, sends leave on stop/timer/unload, and polls /api/staff/groups/{id}/metrics
+/// every ~10s to refresh metric cells without a full reload.
 /// </summary>
 public class StaffModel(
     RemoteAccessGroupService groups,

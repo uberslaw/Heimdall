@@ -99,6 +99,15 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
         _ => "badge-ended"
     };
 
+    public static string RdpStatusLabel(bool responding) =>
+        responding ? "Accepting" : "Unreachable";
+
+    /// <summary>Show server-stored RDP probe only when probed on the current local calendar day.</summary>
+    public static bool ShouldShowRdpStatus(RemoteMachineService.RemoteMachineRow row) =>
+        row.RdpResponding is not null
+        && row.LastRdpProbeUtc is DateTimeOffset probeUtc
+        && probeUtc.ToLocalTime().Date == DateTimeOffset.Now.ToLocalTime().Date;
+
     public static string RestartProgressLabel(RemoteMachineService.RemoteMachineRow row) =>
         RemoteMachineService.FormatRestartProgressLabel(row);
 

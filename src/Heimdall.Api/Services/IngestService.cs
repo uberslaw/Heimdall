@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Services;
 
-public class IngestService(HeimdallDbContext db, AppListService appLists, IConfiguration configuration, RemoteMachineService remoteMachines)
+public class IngestService(HeimdallDbContext db, AppListService appLists, ProcessCatalogService catalog, IConfiguration configuration, RemoteMachineService remoteMachines)
 {
     public async Task IngestAsync(IngestBatchDto batch, CancellationToken ct)
     {
@@ -29,6 +29,14 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, IConfi
         {
             machine ??= await EnsureMachineAsync(run.Hostname, ct);
             await UpsertProcessRunAsync(machine, run, ct);
+        }
+
+        if (batch.ProcessRuns.Count > 0 && machine is not null)
+        {
+            await catalog.UpsertAsync(
+                batch.ProcessRuns.Select(r => new ProcessCatalogService.CatalogItem(
+                    r.ProcessName, r.ExecutablePath, null)),
+                machine.Hostname, "agent ingest", ct);
         }
 
         if (batch.DiscoveredProcesses.Count > 0)
@@ -381,7 +389,9 @@ public class ConfigService(HeimdallDbContext db)
             .ThenByDescending(c => c.Priority)
             .ToList();
 
-        var primary = applicable.FirstOrDefault() ?? CreateFallbackConfig();
+        var primary = applicable.FirstOrDefault(c => !IsMachineOverrideConfig(c))
+            ?? applicable.FirstOrDefault()
+            ?? CreateFallbackConfig();
 
         // Merge includes/excludes from all matching scopes (scoped Track Software entries + All).
         var include = new List<string>();
@@ -690,6 +700,70 @@ public class ConfigService(HeimdallDbContext db)
         if (s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             s = s[..^4];
         return s;
+    }
+
+    public const string MachineOverrideConfigPrefix = "Machine override:";
+
+    public static bool IsMachineOverrideConfig(TrackingConfig cfg) =>
+        cfg.Name.StartsWith(MachineOverrideConfigPrefix, StringComparison.OrdinalIgnoreCase);
+
+    public async Task<IReadOnlyList<string>> GetMachineExcludeProcessesAsync(string hostname, CancellationToken ct)
+    {
+        var host = hostname.Trim();
+        var cfg = await db.TrackingConfigs.AsNoTracking()
+            .FirstOrDefaultAsync(c =>
+                c.Scope == ConfigScope.Machine &&
+                c.ScopeValue == host &&
+                c.IsEnabled &&
+                c.Name.StartsWith(MachineOverrideConfigPrefix), ct);
+        return cfg is null ? [] : DeserializeList(cfg.ExcludeProcessesJson);
+    }
+
+    /// <summary>Machine-scoped exclude list — does not modify global lists or app list assignments.</summary>
+    public async Task SetMachineExcludeProcessesAsync(string hostname, IReadOnlyList<string> excludes, CancellationToken ct)
+    {
+        var host = hostname.Trim();
+        var normalized = excludes
+            .Select(NormalizeProcessName)
+            .Where(p => p.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var cfg = await db.TrackingConfigs.FirstOrDefaultAsync(c =>
+            c.Scope == ConfigScope.Machine &&
+            c.ScopeValue == host &&
+            c.Name.StartsWith(MachineOverrideConfigPrefix), ct);
+
+        if (normalized.Count == 0 && cfg is null)
+            return;
+
+        if (cfg is null)
+        {
+            var global = await db.TrackingConfigs.AsNoTracking()
+                .Where(c => c.Scope == ConfigScope.All && c.IsEnabled)
+                .OrderByDescending(c => c.Priority)
+                .FirstOrDefaultAsync(ct);
+
+            cfg = new TrackingConfig
+            {
+                Name = $"{MachineOverrideConfigPrefix}{host}",
+                Scope = ConfigScope.Machine,
+                ScopeValue = host,
+                Priority = 0,
+                IsEnabled = true,
+                SampleIntervalSeconds = global?.SampleIntervalSeconds ?? 30,
+                UploadIntervalSeconds = global?.UploadIntervalSeconds ?? 60,
+                ConfigRefreshSeconds = global?.ConfigRefreshSeconds ?? 300,
+                MinCpuPercentToTrack = global?.MinCpuPercentToTrack ?? 0,
+                IncludeProcessesJson = "[]",
+                ExcludeProcessesJson = "[]"
+            };
+            db.TrackingConfigs.Add(cfg);
+        }
+
+        cfg.ExcludeProcessesJson = JsonSerializer.Serialize(normalized);
+        cfg.IsEnabled = normalized.Count > 0;
+        await db.SaveChangesAsync(ct);
     }
 }
 
@@ -1226,6 +1300,46 @@ public static class SeedData
             """);
         await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_ProcessCatalogEntries_Name_Path ON ProcessCatalogEntries(ProcessName, ExecutablePath)");
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_ProcessCatalogEntries_Company ON ProcessCatalogEntries(CompanyName)");
+        await TryExec(db, "ALTER TABLE ProcessCatalogEntries ADD COLUMN SeenHostnamesJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE ProcessCatalogEntries ADD COLUMN Ignored INTEGER NOT NULL DEFAULT 0");
+        await TryExec(db, "ALTER TABLE ProcessCatalogEntries ADD COLUMN ManualVersion TEXT NULL");
+        await TryExec(db, "ALTER TABLE ProcessCatalogEntries ADD COLUMN Description TEXT NULL");
+        await TryExec(db, "ALTER TABLE ProcessCatalogEntries ADD COLUMN Category TEXT NULL");
+        await TryExec(db, "ALTER TABLE ProcessCatalogEntries ADD COLUMN Subcategory TEXT NULL");
+
+        // Custom UI themes (Theme page) — full colour/font token model layered on a built-in base preset.
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS CustomThemes (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT NOT NULL,
+                BasePreset TEXT NOT NULL DEFAULT 'cosmic',
+                PrimaryHex TEXT NOT NULL DEFAULT '#d4b86a',
+                SecondaryHex TEXT NOT NULL DEFAULT '#c8ced8',
+                AccentHex TEXT NOT NULL DEFAULT '#a88838',
+                TextHex TEXT NOT NULL DEFAULT '#eef1f8',
+                MutedHex TEXT NOT NULL DEFAULT '#a4aec4',
+                PanelHex TEXT NOT NULL DEFAULT '#0a0e1a',
+                PanelOpacity REAL NOT NULL DEFAULT 0.72,
+                PanelAltHex TEXT NOT NULL DEFAULT '#0e1220',
+                PanelAltOpacity REAL NOT NULL DEFAULT 0.80,
+                HeaderBgHex TEXT NOT NULL DEFAULT '#060810',
+                HeaderBgOpacity REAL NOT NULL DEFAULT 0.72,
+                BorderHex TEXT NOT NULL DEFAULT '#c0c6d0',
+                BorderOpacity REAL NOT NULL DEFAULT 0.16,
+                GoldHex TEXT NOT NULL DEFAULT '#d4b86a',
+                ShadeHex TEXT NOT NULL DEFAULT '#ffecbe',
+                ShadeOpacityPercent REAL NOT NULL DEFAULT 12,
+                HoverHex TEXT NOT NULL DEFAULT '#ecd898',
+                BackgroundHex TEXT NOT NULL DEFAULT '#060810',
+                BackgroundImagePath TEXT NULL,
+                BackgroundOverlayOpacity REAL NOT NULL DEFAULT 0.38,
+                HeadingFont TEXT NULL,
+                BodyFont TEXT NULL,
+                CreatedUtc TEXT NOT NULL,
+                UpdatedUtc TEXT NOT NULL
+            )
+            """);
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_CustomThemes_Name ON CustomThemes(Name)");
     }
 
     private static async Task<bool> HasSystemFlagAsync(HeimdallDbContext db, string key)

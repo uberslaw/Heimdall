@@ -30,6 +30,7 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<RemoteAccessViewer> RemoteAccessViewers => Set<RemoteAccessViewer>();
     public DbSet<SessionDrilldownViewer> SessionDrilldownViewers => Set<SessionDrilldownViewer>();
     public DbSet<MachineResourceMetric> MachineResourceMetrics => Set<MachineResourceMetric>();
+    public DbSet<CustomTheme> CustomThemes => Set<CustomTheme>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -216,6 +217,11 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
                 .WithMany()
                 .HasForeignKey(x => x.MachineId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CustomTheme>(e =>
+        {
+            e.HasIndex(x => x.Name);
         });
     }
 }

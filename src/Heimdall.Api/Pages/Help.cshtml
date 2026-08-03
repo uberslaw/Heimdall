@@ -12,6 +12,8 @@
         <a class="btn btn-ghost btn-sm" href="#machines">Machines</a>
         <a class="btn btn-ghost btn-sm" href="#applications">Applications</a>
         <a class="btn btn-ghost btn-sm" href="#app-lists">App lists</a>
+        <a class="btn btn-ghost btn-sm" href="#app-list-changelog">App list changelog</a>
+        <a class="btn btn-ghost btn-sm" href="#discovery">Discovery</a>
         <a class="btn btn-ghost btn-sm" href="#track-software">Track Software</a>
         <a class="btn btn-ghost btn-sm" href="#socratize">Socratize</a>
         <a class="btn btn-ghost btn-sm" href="#sessions">Sessions</a>
@@ -52,28 +54,72 @@
 <section id="app-lists" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">App lists</h2>
     <p class="text-secondary small mb-2">
-        <strong>Purpose:</strong> named schemas of processes (e.g. a team's toolset) that can be applied globally, or scoped to a region, office, or machine.
-        Discovering apps on a machine never auto-tracks them — you approve first.
+        <strong>Purpose:</strong> named schemas of processes (e.g. a team's toolset). Discovering apps on a machine never auto-tracks them — you approve first.
+        To assign a list to one machine, use that machine's <a asp-page="/Machine">detail page</a>.
+        For scoped tracking of individual processes (region / office / machine tree), use <a asp-page="/TrackSoftware" asp-fragment="track-software">Track Software</a>.
     </p>
     <ol class="small">
-        <li><strong>Existing lists</strong> — browse, edit, or select several and <em>Export selected</em> (App list CSV/JSON, or Classification CSV for the AI workflow below).</li>
-        <li><strong>Create app list</strong> — name it, optionally link a team, and paste process names (one per line, or <code>DisplayName,ProcessName</code>).</li>
-        <li><strong>Upload CSV / JSON</strong> — bulk-create/update lists from a file; the same shape the Export selected buttons produce, so round-tripping just works.</li>
-        <li><strong>Apply list to scope</strong> — pick a list and tick All machines, or specific regions/offices/machines in the tree.</li>
+        <li><strong>Existing lists</strong> — browse, edit, or select several and <em>Export Selected</em> (App list CSV/JSON, or Classification CSV for the AI workflow below).</li>
+        <li><strong>Create app list</strong> — name it, optionally link a team, and paste process names (one per line, or <code>DisplayName,ProcessName</code>). <em>Create List</em> / <em>Save List</em> (silver); <em>Cancel</em> (rose).</li>
+        <li><strong>Upload CSV / JSON</strong> — <em>Choose File</em> then <em>Upload File</em>; same shape as Export Selected for round-tripping.</li>
         <li>
             <strong>Machine lookup &amp; analysis</strong> — pick a machine, then:
             <ul>
-                <li><em>Analyze apps</em> — classifies everything already seen (Core Windows / SOE / Specialization) and proposes new Specialization apps for approval.</li>
-                <li><em>Request full inventory</em> — asks the agent to upload every running process on its next cycle (~5 min config refresh + ~1 min upload); use this when Analyze only shows a handful of apps.</li>
-                <li>Selecting a different machine from the dropdown reloads this section automatically — there's no separate "look up" step.</li>
-                <li>Tick rows in the inventory/proposals tables and use <em>Export selected</em> to pull just those processes out as CSV/JSON.</li>
-                <li>Rows tagged <span class="badge-pill badge-group-specialization">suggested</span> are new to the process catalog with a heuristic classification hint (same install folder or publisher as something already classified) — always double-check before approving.</li>
+                <li><em>Analyze Apps</em> (gold) — classifies everything already seen and proposes Specialization apps for approval.</li>
+                <li><em>Request Inventory</em> (silver) — agent uploads every running process on its next cycle (~5 min + ~1 min upload).</li>
+                <li>Selecting a different machine reloads this section automatically.</li>
+                <li>Inventory moves: <em>Move Core</em> / <em>Move SOE</em> / <em>Move Spec</em>; <em>Export Selected</em> for checked rows.</li>
+                <li>Proposals: <em>Approve All</em> / <em>Approve Selected</em> (gold), <em>Dismiss All</em> (rose).</li>
+                <li><em>Clear Noise</em> (rose) strips Core Windows &amp; SOE from an auto-discovered list.</li>
             </ul>
         </li>
-        <li><strong>CSV classifications (AI-assisted)</strong> — export processes (all, for one machine, or your selection above), have an AI fill in <code>Description</code> and correct <code>Group</code>, then import to batch-update. The <strong>central catalog</strong> summary here shows how many unique processes (by name + path) have ever been seen, and how many still need classifying.</li>
-        <li><strong>Change log</strong> — every create/upload/approve/import action is recorded here, so the toast messages that pop up (and auto-dismiss after ~5s) aren't the only record.</li>
+        <li>
+            <strong>Bulk Update Software Classifications</strong> — <em>Export Classified</em>, <em>Export All</em> (full catalog including unclassified), or <em>Export Machine</em>;
+            fill <code>Description</code>/<code>Group</code> in AI, then <em>Import CSV</em> (gold). Header: <code>ProcessName,ExecutablePath,Group,Description,DisplayName</code>.
+            <em>Backfill Discovered</em> (rose) imports discovery keys not yet in the catalog and merges blank-path / volatile-folder duplicates where safe.
+            Catalog identity is <strong>ProcessName + ExecutablePath</strong> (empty path = unknown location). Volatile segments (DriverStore hashes, WindowsApps package versions, version folders) are normalized on upsert so the same app does not spawn endless rows.
+            Rows missing a path can be filled by <em>Request Inventory</em> on App lists (agent WMI + file version scan) or by importing a CSV with <code>ExecutablePath</code> set.
+            See <a asp-page="/Discovery" asp-fragment="discovery">Discovery</a> for a browsable, editable view of the same central catalog.
+        </li>
+        <li>
+            <strong>Import CSV</strong> updates <code>ProcessGroupAssignment</code> by <code>ProcessName</code>. Groups: <code>CoreWindows</code>, <code>Soe</code>,
+            <code>Specialization</code>. SOE rows sync <code>SoeApps</code>.
+        </li>
+        <li><strong>Buttons</strong> — Gold = primary/big; Silver = secondary (Choose File, Edit, Apply, Save, Export); Black = nav only; Rose = Cancel / clear / dismiss / remove.</li>
+        <li><strong>View Changelog</strong> (black nav) opens the full <a asp-page="/AppListChangelog" asp-fragment="app-list-changelog">App list changelog</a> page — paginated audit of create/upload/approve/import actions.</li>
+        <li>Toasts on App lists auto-dismiss after ~5s.</li>
     </ol>
     <p class="small text-secondary mb-0">All cards on this page are collapsible and start collapsed — click a heading to expand it; your open/closed choices are remembered for the browser session.</p>
+</section>
+
+<section id="app-list-changelog" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">App list changelog</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> full audit trail for app-list work — list create/edit, uploads, assignments, machine analysis approvals, and classification imports.</p>
+    <ol class="small mb-0">
+        <li>Open from <em>View Changelog</em> on <a asp-page="/AppLists" asp-fragment="app-lists">App lists</a> (or go directly to <a asp-page="/AppListChangelog">/AppListChangelog</a>).</li>
+        <li>Newest entries first; 50 rows per page with Previous / Next when needed.</li>
+        <li>Click column headers to sort within the current page.</li>
+    </ol>
+</section>
+
+<section id="discovery" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Discovery</h2>
+    <p class="text-secondary small mb-2">
+        <strong>Purpose:</strong> a single browsable table of the entire central process catalog — every executable Heimdall has ever
+        seen, classified or not — with an editable friendly name and version, and two usage signals.
+    </p>
+    <ol class="small mb-0">
+        <li><strong>Name</strong> — friendly label (<code>DisplayName</code>); click <strong>Edit</strong>, change values, then <strong>Save</strong> (or <strong>Discard</strong> to revert).</li>
+        <li><strong>Name &amp; Location</strong> — exe name on top, full path underneath in muted text.</li>
+        <li><strong>Version</strong> — agent-reported file/product version when known, otherwise a path-derived guess; editable manually via Edit/Save.</li>
+        <li><strong>Cat</strong> / <strong>SubCat</strong> — optional labels (shown when any row has data, or while editing); populated via Discovery edits or optional CSV columns.</li>
+        <li><strong>Description</strong> — optional narrative shown on a sub-row spanning the table when present (or while editing).</li>
+        <li><strong>Installs</strong> — how many machines have reported this process; hover the count for the host list.</li>
+        <li><strong>Freq</strong> — average distinct users per week with real runtime, averaged across every week since first seen.</li>
+        <li><strong>Ignore</strong> (rose) marks catalog noise; <strong>Hide ignored</strong> toggles them out of view.</li>
+        <li><strong>Missing path only</strong> — filter rows where the agent could not resolve an executable path (access denied, short-lived process, or name-only import). Use <em>Request Inventory</em> on App lists to backfill paths from WMI.</li>
+        <li>Click a column header to sort; use the search box to filter by name, exe, or path.</li>
+    </ol>
 </section>
 
 <section id="track-software" class="hd-panel mb-4 hd-help-section">
@@ -197,7 +243,7 @@
     <h2 class="h5">Admin menu: Theme &amp; database mode</h2>
     <p class="text-secondary small mb-2"><strong>Purpose:</strong> personal display preferences and the sandbox/live data toggle, both in the top-right <strong>Admin</strong> menu.</p>
     <ol class="small mb-0">
-        <li><strong>Theme</strong> — switch between "Original Recipe" and "Cosmic" styling; Cosmic also unlocks a gold-accent variant picker. Both are remembered via cookie.</li>
+        <li><strong>Theme</strong> — the Admin menu links to the <a asp-page="/Theme">Theme page</a>, which offers premade looks (Original Recipe, Cosmic, Dark Slate, Light Clean) plus a full colour/font editor for building and saving your own named themes. The active theme is remembered via cookie.</li>
         <li><strong>Database mode</strong> — <em>Live</em> shows real agent data; <em>Sandbox (DEV)</em> is an isolated demo/test database. Agent ingest always writes to Live regardless of which mode you're browsing — don't confuse a quiet Sandbox view with agents being down.</li>
         <li>A <span class="hd-dev-badge" style="font-size:0.7rem;padding:0.1rem 0.4rem;">DEV</span>-style badge in the header means you're currently viewing the sandbox, not production data.</li>
     </ol>

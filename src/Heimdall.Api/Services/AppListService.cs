@@ -411,16 +411,27 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         return new MachineAppListsView(
             hostname,
             matching.Select(a => new ActiveAppListInfo(
+                a.Id,
                 a.AppListId,
                 a.AppList.Name,
                 a.AppList.Team?.Name,
                 a.Scope,
                 a.ScopeValue,
                 a.AppList.IsAutoDiscovered,
-                a.AppList.Entries.Count)).ToList(),
+                a.AppList.Entries.Count,
+                a.Scope == ConfigScope.Machine &&
+                string.Equals(a.ScopeValue, hostname, StringComparison.OrdinalIgnoreCase))).ToList(),
             processes.ToList(),
             machine?.AppAnalysisStatus ?? AppAnalysisStatus.None,
             DeserializeProposals(machine?.AppAnalysisProposalJson));
+    }
+
+    public async Task<IReadOnlyList<AppListPickerRow>> ListForPickerAsync(CancellationToken ct)
+    {
+        return await db.AppLists.AsNoTracking()
+            .OrderBy(a => a.Name)
+            .Select(a => new AppListPickerRow(a.Id, a.Name, a.Entries.Count))
+            .ToListAsync(ct);
     }
 
     public async Task<IReadOnlyList<string>> ResolveProcessNamesForHostAsync(string hostname, CancellationToken ct)
@@ -956,7 +967,8 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         string? SuggestionReason = null);
 
     public record AnalysisResult(string Hostname, IReadOnlyList<ProposedApp> Proposals, AppAnalysisStatus Status, bool queuedForAgent, int NewCatalogCount = 0);
-    public record ActiveAppListInfo(int AppListId, string Name, string? TeamName, ConfigScope Scope, string? ScopeValue, bool IsAutoDiscovered, int EntryCount);
+    public record ActiveAppListInfo(int AssignmentId, int AppListId, string Name, string? TeamName, ConfigScope Scope, string? ScopeValue, bool IsAutoDiscovered, int EntryCount, bool CanUnassign);
+    public record AppListPickerRow(int Id, string Name, int EntryCount);
     public record MachineAppListsView(string Hostname, IReadOnlyList<ActiveAppListInfo> ActiveLists, IReadOnlyList<string> MergedProcesses, AppAnalysisStatus AnalysisStatus, IReadOnlyList<ProposedApp> PendingProposals);
     public record TeamAppListOption(int AppListId, string ListName, string? TeamName, int EntryCount, bool MatchesMachineUsers, IReadOnlyList<string> ProcessNames);
 }

@@ -4,9 +4,18 @@
     var HEARTBEAT_MS = 20000;
     var POLL_MS = 10000;
     var STALE_LIVE_SEC = 20;
+    var DEFAULT_DURATION_MIN = 30;
+    var MAX_DURATION_MIN = 480;
+    var COUNTDOWN_TICK_MS = 1000;
 
     var groupId = window.HeimdallStaffGroupId;
     if (!groupId && groupId !== 0) return;
+
+    var sessionActive = false;
+    var sessionEndsAt = null;
+    var heartbeatTimer = null;
+    var pollTimer = null;
+    var countdownTimer = null;
 
     function makeViewerId() {
         try {
@@ -25,7 +34,6 @@
             sessionStorage.setItem(viewerKey(), created);
             return created;
         } catch (_) {
-            // sessionStorage unavailable (e.g. privacy mode) — fall back to a per-load id.
             if (!window.__hdViewerFallback) window.__hdViewerFallback = makeViewerId();
             return window.__hdViewerFallback;
         }
@@ -63,6 +71,20 @@
             headers: { "Content-Type": "application/json" },
             body: payload
         }).catch(function () { /* best effort */ });
+    }
+
+    function pad(n) {
+        return n < 10 ? "0" + n : String(n);
+    }
+
+    function formatCountdown(ms) {
+        if (ms <= 0) return "0:00";
+        var totalSec = Math.ceil(ms / 1000);
+        var hours = Math.floor(totalSec / 3600);
+        var min = Math.floor((totalSec % 3600) / 60);
+        var sec = totalSec % 60;
+        if (hours > 0) return hours + ":" + pad(min) + ":" + pad(sec);
+        return min + ":" + pad(sec);
     }
 
     function formatPercent(v) {
@@ -199,7 +221,7 @@
         fetch(metricsUrl(), { credentials: "same-origin" })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (data) {
-                if (!data) return;
+                if (!data || !sessionActive) return;
                 document.querySelectorAll("[data-hd-staff-row]").forEach(function (row) {
                     var hostname = row.getAttribute("data-hostname");
                     if (hostname && data[hostname]) applyMetric(row, data[hostname]);
@@ -209,14 +231,84 @@
             .catch(function () { /* ignore transient errors — next poll retries */ });
     }
 
-    function init() {
+    function getDurationMinutes() {
+        var select = document.querySelector("[data-hd-live-duration]");
+        if (!select) return DEFAULT_DURATION_MIN;
+        var minutes = parseInt(select.value, 10);
+        if (isNaN(minutes) || minutes < 1) return DEFAULT_DURATION_MIN;
+        return Math.min(minutes, MAX_DURATION_MIN);
+    }
+
+    function updateSessionUi() {
+        var idleEl = document.querySelector("[data-hd-live-idle]");
+        var activeEl = document.querySelector("[data-hd-live-active]");
+        if (!idleEl || !activeEl) return;
+
+        if (sessionActive) {
+            idleEl.hidden = true;
+            activeEl.hidden = false;
+        } else {
+            idleEl.hidden = false;
+            activeEl.hidden = true;
+        }
+    }
+
+    function tickCountdown() {
+        if (!sessionActive || !sessionEndsAt) return;
+
+        var remaining = sessionEndsAt - Date.now();
+        var countdownEl = document.querySelector("[data-hd-live-countdown]");
+        if (countdownEl) countdownEl.textContent = formatCountdown(remaining);
+
+        if (remaining <= 0) stopSession(true);
+    }
+
+    function clearSessionTimers() {
+        if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    }
+
+    function stopSession(fromTimer) {
+        if (!sessionActive) return;
+
+        sessionActive = false;
+        sessionEndsAt = null;
+        clearSessionTimers();
+        sendLeave();
+        updateSessionUi();
+    }
+
+    function startSession() {
+        if (sessionActive) return;
+
+        var durationMin = getDurationMinutes();
+        sessionActive = true;
+        sessionEndsAt = Date.now() + durationMin * 60 * 1000;
+
+        updateSessionUi();
+        tickCountdown();
+
         sendHeartbeat();
         pollMetrics();
-        setInterval(sendHeartbeat, HEARTBEAT_MS);
-        setInterval(pollMetrics, POLL_MS);
+        heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_MS);
+        pollTimer = setInterval(pollMetrics, POLL_MS);
+        countdownTimer = setInterval(tickCountdown, COUNTDOWN_TICK_MS);
+    }
 
-        document.addEventListener("pagehide", sendLeave);
-        window.addEventListener("beforeunload", sendLeave);
+    function init() {
+        updateSessionUi();
+
+        var startBtn = document.querySelector("[data-hd-live-start]");
+        var stopBtn = document.querySelector("[data-hd-live-stop]");
+        if (startBtn) startBtn.addEventListener("click", startSession);
+        if (stopBtn) stopBtn.addEventListener("click", function () { stopSession(false); });
+
+        function onUnload() {
+            if (sessionActive) sendLeave();
+        }
+        document.addEventListener("pagehide", onUnload);
+        window.addEventListener("beforeunload", onUnload);
     }
 
     if (document.readyState === "loading") {

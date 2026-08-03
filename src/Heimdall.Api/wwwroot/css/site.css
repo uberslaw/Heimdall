@@ -1,3 +1,9 @@
+/* --- Base font tokens (overridable per theme / custom theme) --- */
+:root {
+  --hd-font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --hd-font-heading: "IBM Plex Serif", Georgia, serif;
+}
+
 /* --- Theme: Original Recipe (preserved POC look) --- */
 html[data-theme="original"] {
   --hd-bg: #0f1419;
@@ -116,11 +122,72 @@ html[data-theme="cosmic"] body {
     var(--hd-bg);
 }
 
-html[data-theme="original"] .hd-brand-cosmic {
-  display: none;
+/* --- Theme: Dark Slate (flat, graphite/steel — calm high-contrast alternative) --- */
+html[data-theme="dark-slate"] {
+  --hd-bg: #12151a;
+  --hd-panel: #1a1f27;
+  --hd-panel-2: #20262f;
+  --hd-border: #2f3742;
+  --hd-text: #e5e9ee;
+  --hd-muted: #8b95a3;
+  --hd-accent: #5b8fd4;
+  --hd-accent-dim: #3f6ba3;
+  --hd-accent-secondary: #9aa5b4;
+  --hd-warn: #d4a017;
+  --hd-local: #7ea8e0;
+  --hd-rdp: #6fc9a8;
+  --hd-link-hover: #8fb8ea;
+  --hd-header-bg: rgba(18, 21, 26, 0.9);
+  --hd-util-bar-bg: #232a34;
+  --hd-btn-primary-text: #0c1420;
+  --hd-btn-primary-hover: #8fb8ea;
+  --hd-focus-ring: rgba(91, 143, 212, 0.25);
+  --hd-code: #c7d0da;
 }
 
-html[data-theme="cosmic"] .hd-brand-text {
+html[data-theme="dark-slate"] body {
+  background:
+    radial-gradient(1100px 550px at 12% -10%, #1c2733 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, #1a1f27 0%, transparent 45%),
+    var(--hd-bg);
+}
+
+/* --- Theme: Light Clean (bright, flat — teal accent keeps it on-brand, no purple-on-white cliché) --- */
+html[data-theme="light-clean"] {
+  --hd-bg: #f4f6f8;
+  --hd-panel: #ffffff;
+  --hd-panel-2: #eef1f4;
+  --hd-border: #d8dee4;
+  --hd-text: #1c2530;
+  --hd-muted: #5b6b7a;
+  --hd-accent: #178a72;
+  --hd-accent-dim: #106152;
+  --hd-accent-secondary: #3f6690;
+  --hd-warn: #a97511;
+  --hd-local: #3f6690;
+  --hd-rdp: #178a72;
+  --hd-link-hover: #0f6b58;
+  --hd-header-bg: rgba(255, 255, 255, 0.9);
+  --hd-util-bar-bg: #e4e9ed;
+  --hd-btn-primary-text: #ffffff;
+  --hd-btn-primary-hover: #0f6b58;
+  --hd-focus-ring: rgba(23, 138, 114, 0.2);
+  --hd-code: #33424f;
+}
+
+html[data-theme="light-clean"] body {
+  background:
+    radial-gradient(1100px 550px at 10% -10%, #e7f1ee 0%, transparent 55%),
+    var(--hd-bg);
+}
+
+html[data-theme="light-clean"] .hd-header {
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04), 0 4px 16px rgba(28, 37, 48, 0.06);
+}
+
+/* Brand logo: text wordmark by default, swap to the Cosmic lockup only for the cosmic-based look
+   (including custom themes whose base preset is cosmic — see _Layout data-theme resolution). */
+.hd-brand-cosmic {
   display: none;
 }
 
@@ -143,6 +210,10 @@ html[data-theme="cosmic"] .hd-brand-cosmic {
   overflow: visible;
 }
 
+html[data-theme="cosmic"] .hd-brand-text {
+  display: none;
+}
+
 html[data-theme="cosmic"] .hd-header {
   border-bottom-color: var(--hd-glass-rim-dim);
   box-shadow: 0 1px 0 var(--hd-glass-shine), 0 8px 24px rgba(0, 0, 0, 0.35);
@@ -157,12 +228,12 @@ html[data-theme="cosmic"] .form-select {
 
 html, body {
   color: var(--hd-text);
-  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-family: var(--hd-font-body);
   min-height: 100%;
 }
 
 h1, h2, .hd-brand {
-  font-family: "IBM Plex Serif", Georgia, serif;
+  font-family: var(--hd-font-heading);
 }
 
 a { color: var(--hd-accent); text-decoration: none; }
@@ -634,6 +705,11 @@ html[data-theme="cosmic"] .util-bar > span {
   box-shadow: 0 0 0 0.2rem var(--hd-focus-ring);
 }
 
+.btn-hd,
+.btn-ghost {
+  border-radius: 999px;
+}
+
 .btn-hd {
   background: linear-gradient(135deg, var(--hd-accent), var(--hd-accent-dim));
   border: none;
@@ -658,7 +734,6 @@ html[data-theme="cosmic"] .util-bar > span {
 }
 
 html[data-theme="cosmic"] .btn-hd {
-  border-radius: 999px;
   border: 1px solid var(--hd-gold-light);
   background: linear-gradient(180deg, var(--hd-gold-light) 0%, var(--hd-gold) 42%, var(--hd-gold-dim) 100%);
   box-shadow:
@@ -686,7 +761,6 @@ html[data-theme="cosmic"] .btn-hd:hover {
 }
 
 html[data-theme="cosmic"] .btn-ghost {
-  border-radius: 999px;
   border: 1px solid var(--hd-silver-rim);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -706,6 +780,171 @@ html[data-theme="cosmic"] .btn-ghost:hover {
 .btn-sm {
   padding: 0.2rem 0.55rem;
   font-size: 0.8rem;
+}
+
+/* --- Unified button system: 2 sizes × 4 purposeful colours, one consistent pill shape.
+   Prefer these (hd-btn hd-btn-{gold|silver|rose|black} [hd-btn-sm]) for new/updated UI —
+   btn-hd/btn-ghost above stay for now to avoid a site-wide rewrite in one pass. --- */
+.hd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1.3rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-weight: 600;
+  font-size: 0.88rem;
+  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.08s ease, box-shadow 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.hd-btn:hover {
+  text-decoration: none;
+}
+
+.hd-btn:active {
+  transform: translateY(1px);
+}
+
+.hd-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--hd-focus-ring);
+}
+
+.hd-btn:disabled,
+.hd-btn.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.hd-btn-sm {
+  padding: 0.3rem 0.9rem;
+  font-size: 0.76rem;
+}
+
+/* Button colour taxonomy (purpose → colour):
+   Gold  — Primary: big commits (Analyze, Approve All, Import CSV, …). Multiple golds OK per card.
+   Silver — Secondary: Choose file, Edit, Apply, Save, Upload, Export, Move, Request Inventory.
+   Black — Nav chrome only (cross-page links).
+   Rose  — Destructive / stop: Cancel, Dismiss, Remove, Clear, Flush, Backfill.
+   Keep neighbouring buttons the same size (both default or both hd-btn-sm). Prefer ≤2-word labels. */
+
+/* Gold — primary / big actions. Picks up theme gold vars when set; else champagne gold. */
+.hd-btn-gold {
+  background: linear-gradient(180deg, var(--hd-gold-light, #f0dfa0) 0%, var(--hd-gold, #d4b86a) 45%, var(--hd-gold-dim, #a88838) 100%);
+  border-color: var(--hd-gold-light, #f0dfa0);
+  color: var(--hd-btn-primary-text, #1a1408);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18),
+    0 2px 10px var(--hd-gold-glow, rgba(212, 184, 106, 0.32));
+}
+
+.hd-btn-gold:hover {
+  background: linear-gradient(180deg, var(--hd-btn-primary-hover, #ecd898) 0%, var(--hd-gold, #d4b86a) 50%, var(--hd-gold-dim, #a88838) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 3px 14px var(--hd-gold-glow, rgba(212, 184, 106, 0.4));
+}
+
+/* Silver — secondary actions (deliberately gunmetal, not a bright/platinum silver). */
+/* Silver / gunmetal — secondary actions. */
+.hd-btn-silver {
+  background: linear-gradient(180deg, #b7bec6 0%, #838c96 45%, #565e66 100%);
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #14171a;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18),
+    0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.hd-btn-silver:hover {
+  background: linear-gradient(180deg, #c7ccd2 0%, #929aa3 50%, #626a72 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 3px 12px rgba(0, 0, 0, 0.35);
+}
+
+/* Rose gold — tertiary / alternate-accent actions (less frequent utility actions). */
+/* Rose — destructive / stop / clear / flush. */
+.hd-btn-rose {
+  background: linear-gradient(180deg, #f0c9c0 0%, #d69a8c 45%, #a96f60 100%);
+  border-color: rgba(255, 255, 255, 0.32);
+  color: #2c130d;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.16),
+    0 2px 8px rgba(169, 111, 96, 0.32);
+}
+
+.hd-btn-rose:hover {
+  background: linear-gradient(180deg, #f6d8d0 0%, #e0ab9d 50%, #b57f6f 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 3px 12px rgba(169, 111, 96, 0.4);
+}
+
+/* Black — dark translucent charcoal fill, thin light border, white text (matches the existing
+   header nav pill look — Applications / Remote / Admin — now reusable anywhere). */
+/* Black — navigation chrome only. */
+.hd-btn-black {
+  background: rgba(14, 16, 20, 0.55);
+  border-color: rgba(255, 255, 255, 0.28);
+  color: #f3f5f8;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.hd-btn-black:hover {
+  background: rgba(24, 27, 33, 0.75);
+  border-color: rgba(255, 255, 255, 0.48);
+  color: #ffffff;
+}
+
+/* File picker — label + visually hidden input; pairs with hd-btn-silver "Choose file". */
+.hd-file-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.hd-file-picker-label {
+  margin-bottom: 0;
+  cursor: pointer;
+}
+
+.hd-file-picker-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.hd-file-picker-name {
+  color: var(--hd-muted);
+  font-size: 0.82rem;
+  max-width: min(100%, 28rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hd-file-picker-name.is-chosen {
+  color: var(--hd-text);
 }
 
 /* Machine hierarchy tree */
@@ -997,7 +1236,7 @@ table.hd-sortable th.sorted-desc::after {
 }
 
 .hd-section-title {
-  font-family: "IBM Plex Serif", Georgia, serif;
+  font-family: var(--hd-font-heading);
   font-size: 1.15rem;
   font-weight: 600;
   margin: 0 0 0.85rem;
@@ -1005,6 +1244,10 @@ table.hd-sortable th.sorted-desc::after {
 
 .hd-row-highlight td {
   background: rgba(212, 160, 23, 0.06);
+}
+
+.hd-row-muted td {
+  opacity: 0.55;
 }
 
 .hd-meta-line {
@@ -1087,6 +1330,63 @@ table.hd-sortable th.sorted-desc::after {
   margin-top: 0.15rem;
 }
 
+/* Discovery page */
+.hd-discovery-location-cell {
+  min-width: 12rem;
+}
+
+.hd-discovery-exe code {
+  font-size: 0.88rem;
+}
+
+.hd-discovery-path {
+  margin-top: 0.2rem;
+  word-break: break-all;
+}
+
+.hd-discovery-version-col {
+  max-width: 5.5rem;
+  width: 5.5rem;
+}
+
+.hd-discovery-version-text {
+  display: inline-block;
+  max-width: 5.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.hd-discovery-version-input {
+  max-width: 5.5rem;
+}
+
+.hd-discovery-cat-col,
+.hd-discovery-subcat-col {
+  max-width: 6rem;
+  width: 6rem;
+}
+
+.hd-discovery-actions-col {
+  width: 5.5rem;
+  white-space: nowrap;
+}
+
+.hd-discovery-desc-cell {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.65rem !important;
+  border-top: none !important;
+}
+
+.hd-discovery-main + .hd-discovery-desc td {
+  border-top: none;
+}
+
+.hd-discovery-desc .hd-discovery-read:empty {
+  display: none;
+}
+
 /* Process include/exclude lists */
 .hd-process-list {
   background: var(--hd-panel-2);
@@ -1164,14 +1464,18 @@ table.hd-sortable th.sorted-desc::after {
   table-layout: fixed;
 }
 
-.hd-remote-table .hd-col-status { width: 7%; }
+.hd-remote-table .hd-col-status { width: 8%; }
 .hd-remote-table .hd-col-machine { width: 16%; }
 .hd-remote-table .hd-col-ip { width: 11%; }
 .hd-remote-table .hd-col-contact { width: 13%; }
-.hd-remote-table .hd-col-ping { width: 14%; }
+.hd-remote-table .hd-col-ping { width: 12%; }
 .hd-remote-table .hd-col-rds { width: 10%; }
-.hd-remote-table .hd-col-rdp { width: 14%; }
-.hd-remote-table .hd-col-actions { width: 15%; }
+.hd-remote-table .hd-col-rdp { width: 13%; }
+.hd-remote-table .hd-col-actions { width: 17%; }
+
+.hd-remote-table th {
+  text-align: center;
+}
 
 .hd-remote-table th,
 .hd-remote-table td {
@@ -1196,25 +1500,18 @@ table.hd-sortable th.sorted-desc::after {
   font-size: 0.72rem;
 }
 
-.hd-remote-table .hd-remote-contact,
 .hd-remote-table .hd-remote-ip {
   font-size: 0.85rem;
   white-space: nowrap;
 }
 
+.hd-remote-table th.hd-th-contact,
+.hd-remote-table .hd-remote-contact {
+  text-align: center;
+}
+
 .hd-cell-ping {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem 0.5rem;
-}
-
-.hd-cell-ping .hd-ping-when {
-  flex: 1 1 100%;
-}
-
-.hd-cell-ping .hd-ping-form {
-  flex: 0 0 auto;
+  text-align: center;
 }
 
 .hd-cell-actions {
@@ -1228,7 +1525,54 @@ table.hd-sortable th.sorted-desc::after {
   min-width: 0;
 }
 
-.hd-cell-actions .btn {
+.hd-status-badge {
+  display: inline-block;
+  white-space: nowrap;
+  min-width: 3.6rem;
+  text-align: center;
+}
+
+.hd-status-badge .hd-status-short {
+  display: none;
+}
+
+.hd-ping-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: nowrap;
+}
+
+.hd-ping-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.hd-ping-ok {
+  color: var(--hd-rdp, #3db8a0);
+}
+
+.hd-ping-fail {
+  color: #e08080;
+}
+
+.hd-remote-rdp {
+  text-align: center;
+}
+
+.hd-btn-compact {
+  padding: 0.22rem 0.55rem;
+  font-size: 0.72rem;
+}
+
+.hd-cell-actions .hd-btn {
   width: 100%;
 }
 
@@ -1278,10 +1622,18 @@ table.hd-sortable th.sorted-desc::after {
   .hd-remote-table .hd-remote-contact {
     white-space: normal;
   }
+
+  .hd-status-badge .hd-status-full {
+    display: none;
+  }
+
+  .hd-status-badge .hd-status-short {
+    display: inline;
+  }
 }
 
 @media (max-width: 992px) {
-  .hd-cell-ping {
+  .hd-cell-ping .hd-ping-form {
     flex-direction: column;
     align-items: flex-start;
   }
@@ -1428,6 +1780,23 @@ table.hd-sortable th.sorted-desc::after {
   max-width: 12rem;
 }
 
+.hd-staff-live-bar {
+  flex-shrink: 0;
+}
+
+.hd-staff-live-duration {
+  width: auto;
+  min-width: 7rem;
+  max-width: 9rem;
+}
+
+.hd-staff-live-countdown {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
 .hd-machine-picker .hd-machine-checklist {
   max-height: 260px;
 }
@@ -1516,3 +1885,551 @@ table.hd-sortable th.sorted-desc::after {
 #session-drilldown-modal table.hd-table {
   font-size: 0.85rem;
 }
+
+/* --- Machine detail: applications grid --- */
+.hd-machine-apps {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) repeat(6, minmax(0, 1fr));
+  gap: 0;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.hd-machine-apps-head,
+.hd-machine-apps-row {
+  display: contents;
+}
+
+.hd-machine-apps-th,
+.hd-machine-apps-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0.15rem;
+  padding: 0.55rem 0.65rem;
+  border-bottom: 1px solid var(--hd-border);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.9rem;
+}
+
+.hd-machine-apps-th {
+  color: var(--hd-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.15);
+  user-select: none;
+}
+
+.hd-machine-apps-th.sorted-asc::after,
+.hd-machine-apps-th.sorted-desc::after {
+  content: " ▲";
+  font-size: 0.65rem;
+  opacity: 0.7;
+}
+
+.hd-machine-apps-th.sorted-desc::after {
+  content: " ▼";
+}
+
+.hd-machine-apps-cell--app[data-truncated="true"] {
+  cursor: pointer;
+}
+
+.hd-machine-apps-cell--app.is-expanded .hd-machine-apps-detail,
+.hd-machine-apps--expanded .hd-machine-apps-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-top: 0.25rem;
+  width: 100%;
+}
+
+.hd-machine-apps-cell--app.is-expanded .hd-machine-apps-detail[hidden],
+.hd-machine-apps--expanded .hd-machine-apps-detail[hidden] {
+  display: flex;
+}
+
+.hd-machine-apps-detail {
+  display: none;
+}
+
+.hd-machine-apps-fullname {
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.hd-machine-apps-path {
+  font-size: 0.78rem;
+  word-break: break-all;
+  line-height: 1.35;
+}
+
+.hd-machine-apps-meta {
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.hd-machine-apps-val {
+  line-height: 1.35;
+}
+
+.hd-machine-apps-link {
+  text-decoration: none;
+  color: inherit;
+  max-width: 100%;
+}
+
+.hd-machine-apps-link:hover .hd-machine-apps-name {
+  color: var(--hd-accent);
+}
+
+.hd-machine-apps--expanded .hd-machine-apps-cell {
+  white-space: normal;
+  word-break: break-word;
+  overflow: visible;
+}
+
+.hd-machine-apps--expanded .hd-machine-apps-name,
+.hd-machine-apps--expanded .hd-machine-apps-meta {
+  white-space: normal;
+  word-break: break-word;
+}
+
+.hd-app-list-assignments li {
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--hd-border);
+}
+
+.hd-app-list-assignments li:last-child {
+  border-bottom: none;
+}
+
+/* --- App Lists: Existing lists table (responsive, no horizontal scroll) --- */
+details.hd-panel[data-key="existing-lists"] {
+  overflow-x: visible;
+}
+
+.hd-existing-lists-wrap {
+  overflow-x: visible;
+  max-width: 100%;
+}
+
+.hd-existing-lists-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.hd-existing-lists-table .hd-existing-lists-col-check {
+  width: 2rem;
+}
+
+.hd-existing-lists-table .hd-existing-lists-col-apps,
+.hd-existing-lists-table .hd-existing-lists-col-scopes {
+  width: 3.25rem;
+  text-align: center;
+}
+
+.hd-existing-lists-table th.hd-existing-lists-col-apps,
+.hd-existing-lists-table th.hd-existing-lists-col-scopes {
+  text-align: center;
+}
+
+.hd-existing-lists-table .hd-existing-lists-col-actions {
+  width: 4.75rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.hd-existing-lists-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.hd-existing-lists-name-inner {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.hd-existing-lists-name-inner .badge-pill {
+  flex-shrink: 0;
+}
+
+.hd-existing-lists-name-inner .hd-existing-lists-truncate {
+  flex: 1 1 auto;
+}
+
+/* Edit: text pill by default; circular icon-only below 768px */
+.hd-btn-icon-round .hd-btn-icon {
+  display: none;
+  width: 0.95rem;
+  height: 0.95rem;
+  flex-shrink: 0;
+}
+
+.hd-existing-lists-export {
+  row-gap: 0.5rem;
+}
+
+.hd-existing-lists-export-format {
+  flex: 1 1 10rem;
+  min-width: 0;
+  max-width: 12.5rem;
+}
+
+@media (max-width: 1400px) {
+  .hd-existing-lists-table th,
+  .hd-existing-lists-table td {
+    padding: 0.5rem 0.45rem;
+  }
+}
+
+@media (max-width: 992px) {
+  .hd-existing-lists-table .hd-existing-lists-col-scopes {
+    display: none;
+  }
+
+  .hd-existing-lists-table .hd-existing-lists-col-actions {
+    width: 2.75rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .hd-existing-lists-table th,
+  .hd-existing-lists-table td {
+    padding: 0.45rem 0.35rem;
+    font-size: 0.85rem;
+  }
+
+  .hd-existing-lists-table .hd-existing-lists-col-actions {
+    width: 2.5rem;
+  }
+
+  .hd-existing-lists-table .hd-btn-icon-round {
+    padding: 0;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+  }
+
+  .hd-existing-lists-table .hd-btn-icon-round .hd-btn-icon {
+    display: block;
+  }
+
+  .hd-existing-lists-table .hd-btn-icon-round .hd-btn-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@media (max-width: 576px) {
+  .hd-existing-lists-table .hd-existing-lists-col-team {
+    display: none;
+  }
+
+  .hd-existing-lists-export-format {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 900px) {
+  .hd-machine-apps {
+    grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr));
+  }
+
+  .hd-machine-apps-head .hd-machine-apps-th:nth-child(n+5),
+  .hd-machine-apps-row .hd-machine-apps-cell:nth-child(n+5) {
+    display: none;
+  }
+}
+
+/* --- Theme page --- */
+.hd-theme-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 1rem;
+}
+
+.hd-theme-card {
+  position: relative;
+  border: 1px solid var(--hd-border);
+  border-radius: 10px;
+  padding: 1rem;
+  background: var(--hd-panel-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.hd-theme-card.is-active {
+  border-color: var(--hd-accent);
+  box-shadow: 0 0 0 1px var(--hd-accent);
+}
+
+.hd-theme-card-swatch {
+  height: 3.25rem;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: flex-end;
+  padding: 0.4rem;
+  gap: 0.35rem;
+  overflow: hidden;
+}
+
+.hd-theme-card-swatch-dot {
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  flex-shrink: 0;
+}
+
+.hd-theme-card h3 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.hd-theme-card p {
+  color: var(--hd-muted);
+  font-size: 0.82rem;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.hd-theme-card-badge {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+}
+
+.hd-theme-section {
+  margin-bottom: 2rem;
+}
+
+.hd-theme-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+
+.hd-custom-theme-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.hd-custom-theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--hd-border);
+  border-radius: 8px;
+  background: var(--hd-panel-2);
+}
+
+.hd-custom-theme-row.is-active {
+  border-color: var(--hd-accent);
+}
+
+.hd-custom-theme-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.hd-custom-theme-swatch {
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+}
+
+.hd-custom-theme-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.hd-theme-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 992px) {
+  .hd-theme-editor-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hd-theme-fieldset {
+  border: 1px solid var(--hd-border);
+  border-radius: 8px;
+  padding: 0.85rem 1rem 1rem;
+  margin: 0 0 1rem;
+}
+
+.hd-theme-fieldset legend {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hd-muted);
+  padding: 0 0.4rem;
+  width: auto;
+  float: none;
+}
+
+.hd-color-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.85rem 1rem;
+}
+
+.hd-color-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.hd-color-field label {
+  font-size: 0.82rem;
+  color: var(--hd-muted);
+}
+
+.hd-color-field-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hd-color-swatch-input {
+  width: 2.4rem;
+  height: 2.1rem;
+  padding: 0.15rem;
+  border: 1px solid var(--hd-border);
+  border-radius: 6px;
+  background: var(--hd-panel-2);
+  flex-shrink: 0;
+}
+
+.hd-color-hex-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85rem;
+  text-transform: lowercase;
+}
+
+.hd-opacity-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.2rem;
+}
+
+.hd-opacity-row input[type="range"] {
+  flex: 1 1 auto;
+}
+
+.hd-opacity-value {
+  font-size: 0.78rem;
+  color: var(--hd-muted);
+  min-width: 3ch;
+  text-align: right;
+}
+
+.hd-theme-preview {
+  position: sticky;
+  top: 5rem;
+  border: 1px solid var(--hd-border);
+  border-radius: 10px;
+  padding: 1.1rem;
+  background: var(--hd-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.hd-theme-preview-swatch {
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.hd-theme-preview-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.hd-theme-preview h4 {
+  font-family: var(--hd-font-heading, "IBM Plex Serif", serif);
+  font-size: 1.05rem;
+  margin: 0 0 0.25rem;
+}
+
+.hd-theme-preview .hd-panel {
+  padding: 0.75rem;
+}
+
+.hd-theme-preview table.hd-table {
+  font-size: 0.8rem;
+}
+
+.hd-theme-bg-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.hd-theme-bg-thumb {
+  width: 3.2rem;
+  height: 2.4rem;
+  border-radius: 6px;
+  border: 2px solid var(--hd-border);
+  background-size: cover;
+  background-position: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.hd-theme-bg-thumb.active {
+  border-color: var(--hd-accent);
+}
+
+.hd-theme-bg-thumb.hd-theme-bg-none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  color: var(--hd-muted);
+  background: var(--hd-panel-2);
+}
+

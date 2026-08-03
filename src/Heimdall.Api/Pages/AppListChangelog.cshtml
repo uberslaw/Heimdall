@@ -1,0 +1,96 @@
+@page
+@model AppListChangelogModel
+@{
+    ViewData["Title"] = "App list changelog";
+    var from = Model.TotalCount == 0 ? 0 : (Model.PageNumber - 1) * AppListChangelogModel.PageSize + 1;
+    var to = Model.TotalCount == 0 ? 0 : Math.Min(Model.PageNumber * AppListChangelogModel.PageSize, Model.TotalCount);
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+    <div>
+        <p class="hd-meta-line mb-1"><a asp-page="/AppLists">← App lists</a></p>
+        <h1 class="hd-title mb-1">App list changelog</h1>
+        <p class="hd-sub mb-0">
+            Create, upload, assign, approve, and import actions
+            @if (Model.TotalCount > 0)
+            {
+                <span>· showing @from–@to of @Model.TotalCount</span>
+            }
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        <a class="hd-btn hd-btn-black" asp-page="/AppLists">App lists</a>
+        <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="app-list-changelog" title="How the changelog works">Help</a>
+    </div>
+</div>
+
+<div class="hd-panel">
+    @if (Model.Logs.Count == 0)
+    {
+        <p class="text-secondary mb-0">No changes yet.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="hd-table hd-sortable mb-0" id="changelog-table">
+                <thead>
+                    <tr>
+                        <th data-sort="text" data-default-desc>When (UTC)</th>
+                        <th data-sort="text">Action</th>
+                        <th data-sort="text">List / host</th>
+                        <th data-sort="text">Detail</th>
+                        <th data-sort="text">Actor</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var log in Model.Logs)
+                {
+                    <tr>
+                        <td class="small text-nowrap" data-sort-value="@log.Utc.ToString("O")">@log.Utc.ToString("u")</td>
+                        <td data-sort-value="@log.Action"><code>@log.Action</code></td>
+                        <td class="small" data-sort-value="@(log.AppListName ?? log.MachineHostname ?? "")">
+                            @(log.AppListName ?? "—")
+                            @if (!string.IsNullOrEmpty(log.MachineHostname))
+                            {
+                                <div>@log.MachineHostname</div>
+                            }
+                            @if (log.Scope is not null)
+                            {
+                                <div class="text-secondary">@log.Scope:@(log.ScopeValue ?? "*")</div>
+                            }
+                        </td>
+                        <td class="small" data-sort-value="@log.Detail">@log.Detail</td>
+                        <td class="small" data-sort-value="@(log.Actor ?? "")">@(log.Actor ?? "—")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+
+        @if (Model.TotalPages > 1)
+        {
+            <nav class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3 pt-3 border-top border-secondary-subtle" aria-label="Changelog pages">
+                <span class="small text-secondary">Page @Model.PageNumber of @Model.TotalPages</span>
+                <div class="d-flex flex-wrap gap-2">
+                    @if (Model.PageNumber > 1)
+                    {
+                        <a class="hd-btn hd-btn-silver" asp-page="/AppListChangelog" asp-route-page="@(Model.PageNumber - 1)">← Previous</a>
+                    }
+                    @if (Model.PageNumber < Model.TotalPages)
+                    {
+                        <a class="hd-btn hd-btn-silver" asp-page="/AppListChangelog" asp-route-page="@(Model.PageNumber + 1)">Next →</a>
+                    }
+                </div>
+            </nav>
+        }
+    }
+</div>
+
+@section Scripts {
+<script src="~/js/hd-table.js" asp-append-version="true"></script>
+<script>
+(() => {
+  if (window.HeimdallTable) HeimdallTable.initSort(document);
+})();
+</script>
+}
