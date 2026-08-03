@@ -18,7 +18,8 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
         string? Description,
         string DisplayName);
 
-    public record CsvImportResult(int Updated, int Skipped, IReadOnlyList<string> Errors);
+    public record CsvImportResult(int Updated, int Skipped, IReadOnlyList<string> Errors,
+        IReadOnlyList<(string ProcessName, string? ExecutablePath, string? DisplayName)>? ImportedRows = null);
     public async Task<ProcessClassificationContext> BuildContextAsync(CancellationToken ct = default)
     {
         var assignments = await db.ProcessGroupAssignments.AsNoTracking().ToListAsync(ct);
@@ -112,6 +113,20 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
             $"Assigned {names.Count} process(es) to {ProcessClassification.GroupLabel(targetGroup)}: [{string.Join(", ", names)}]");
 
         return names.Count;
+    }
+
+    /// <summary>Public entry point used by ProcessCatalogService to log catalog events into the same change log.</summary>
+    public async Task AuditCatalogAsync(string action, string detail, string? hostname, CancellationToken ct = default)
+    {
+        db.AppListAuditLogs.Add(new AppListAuditLog
+        {
+            Utc = DateTimeOffset.UtcNow,
+            Action = action,
+            MachineHostname = hostname,
+            Detail = detail,
+            Actor = AppListService.ResolveActor()
+        });
+        await db.SaveChangesAsync(ct);
     }
 
     private async Task AuditAsync(string action, string detail, int? appListId = null, string? appListName = null,
@@ -286,6 +301,32 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
             .ToList();
     }
 
+    /// <summary>Build classification export rows for an arbitrary set of processes (e.g. a user selection), same schema as the full exports.</summary>
+    public async Task<IReadOnlyList<CsvExportRow>> BuildExportRowsForAsync(
+        IEnumerable<(string ProcessName, string? ExecutablePath, string? DisplayName)> items,
+        CancellationToken ct = default)
+    {
+        var ctx = await BuildContextAsync(ct);
+        var assignments = await db.ProcessGroupAssignments.AsNoTracking().ToDictionaryAsync(a => a.ProcessName, StringComparer.OrdinalIgnoreCase, ct);
+        var knownApps = await db.KnownApps.AsNoTracking().ToDictionaryAsync(k => k.ProcessName, StringComparer.OrdinalIgnoreCase, ct);
+        var soeApps = await db.SoeApps.AsNoTracking().ToDictionaryAsync(s => s.ProcessName, StringComparer.OrdinalIgnoreCase, ct);
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var rows = new List<CsvExportRow>();
+        foreach (var (rawName, path, displayName) in items)
+        {
+            var name = ConfigService.NormalizeProcessName(rawName);
+            if (name.Length == 0 || !seen.Add(name)) continue;
+            var row = ToExportRow(name, path, ctx, assignments, knownApps, soeApps);
+            rows.Add(displayName is null ? row : row with { DisplayName = row.DisplayName == name ? displayName : row.DisplayName });
+        }
+
+        return rows
+            .OrderBy(r => ProcessClassification.GroupSortOrder(r.Group))
+            .ThenBy(r => r.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     public static byte[] RenderCsv(IReadOnlyList<CsvExportRow> rows)
     {
         var sb = new StringBuilder();
@@ -300,6 +341,18 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
         }
         return Encoding.UTF8.GetBytes(sb.ToString());
     }
+
+    public static byte[] RenderJson(IReadOnlyList<CsvExportRow> rows) =>
+        Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(
+            rows.Select(r => new
+            {
+                processName = r.ProcessName,
+                executablePath = r.ExecutablePath,
+                group = r.Group.ToString(),
+                description = r.Description,
+                displayName = r.DisplayName
+            }),
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
 
     public async Task<CsvImportResult> ImportCsvAsync(Stream stream, CancellationToken ct = default)
     {
@@ -327,6 +380,7 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
         var skipped = 0;
         var errors = new List<string>();
         var rowNum = 1;
+        var importedRows = new List<(string ProcessName, string? ExecutablePath, string? DisplayName)>();
 
         string? line;
         while ((line = await reader.ReadLineAsync(ct)) is not null)
@@ -365,7 +419,8 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
 
             var description = NullIfEmpty(GetCol(cols, descIdx));
             var displayName = NullIfEmpty(GetCol(cols, dispIdx)) ?? processName;
-            _ = GetCol(cols, pathIdx); // path is informational for export round-trip; not persisted on assignment
+            var executablePath = NullIfEmpty(GetCol(cols, pathIdx)); // informational for export round-trip; not persisted on assignment, but feeds the catalog
+            importedRows.Add((processName, executablePath, displayName));
 
             var changed = false;
             if (assignmentMap.TryGetValue(processName, out var existing))
@@ -425,7 +480,7 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
                 $"CSV import: {updated} updated, {skipped} skipped, {errors.Count} error(s).");
         }
 
-        return new CsvImportResult(updated, skipped, errors);
+        return new CsvImportResult(updated, skipped, errors, importedRows);
     }
 
     public static bool TryParseGroup(string? value, out AppGroup group)

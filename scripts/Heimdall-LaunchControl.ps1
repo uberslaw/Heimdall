@@ -54,6 +54,11 @@ $script:RemoteLogTargetsFile = Join-Path $env:LOCALAPPDATA "Heimdall\remote-log-
 $script:LastInstallSettingsFile = Join-Path $env:LOCALAPPDATA "Heimdall\last-install-settings.json"
 $script:DiagnosticsDropFile = Join-Path $env:LOCALAPPDATA "Heimdall\diagnostics-drop.json"
 $script:RemoteLogTargetsMax = 15
+# Push client pack: remembered hosts + named groups (separate from RemoteLogTargets, which is
+# keyed by UNC log path). See Get-PushHosts / Get-PushGroups.
+$script:PushHostsFile = Join-Path $env:LOCALAPPDATA "Heimdall\push-hosts.json"
+$script:PushGroupsFile = Join-Path $env:LOCALAPPDATA "Heimdall\push-groups.json"
+$script:PushHostsMax = 300
 $script:AgentInstallDir = Join-Path ${env:ProgramFiles} "Heimdall\Agent"
 $script:AgentAppSettingsPath = Join-Path $script:AgentInstallDir "appsettings.json"
 $script:LogPath = $null
@@ -1061,6 +1066,194 @@ function Remove-RemoteLogTarget {
     Write-HeimdallLog "Removed remote log target: $hostNorm" -Level INFO
 }
 
+# --- Push client pack: remembered hosts + named groups ---
+# Two small JSON stores under %LOCALAPPDATA%\Heimdall (per-user, matches RemoteLogTargets pattern):
+#   push-hosts.json  -> [ { host, lastUsed, lastResult } ]                 (flat, de-duplicated by host)
+#   push-groups.json -> [ { name, hosts: [hostA, hostB, ...] } ]           (hosts reference push-hosts entries)
+# Groups only store hostnames (strings); a host can belong to zero, one, or many groups.
+
+function ConvertTo-PushHostList {
+    <# Parses a comma / semicolon / newline separated block of text into a distinct, trimmed host list. #>
+    param([string]$RawText)
+    if ([string]::IsNullOrWhiteSpace($RawText)) { return @() }
+    $parts = $RawText -split '[,;\r\n]+'
+    $result = New-Object System.Collections.Generic.List[string]
+    $seen = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($p in $parts) {
+        $h = $p.Trim().TrimEnd('\')
+        if ([string]::IsNullOrWhiteSpace($h)) { continue }
+        if ($h -match '^\\\\') {
+            $h = $h -replace '^\\\\([^\\]+).*$', '$1'
+        }
+        if ($seen.Add($h)) {
+            [void]$result.Add($h)
+        }
+    }
+    return @($result)
+}
+
+function Get-PushHosts {
+    $path = $script:PushHostsFile
+    if (-not (Test-Path $path)) { return @() }
+    try {
+        $raw = Get-Content -Raw -Path $path -Encoding UTF8
+        if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
+        $items = $raw | ConvertFrom-Json
+        if ($null -eq $items) { return @() }
+        return @($items)
+    }
+    catch {
+        Write-HeimdallLog "Could not read push hosts: $($_.Exception.Message)" -Level WARN
+        return @()
+    }
+}
+
+function Save-PushHosts {
+    param([array]$Hosts)
+    $path = $script:PushHostsFile
+    $dir = Split-Path -Parent $path
+    if (-not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $json = if ($Hosts.Count -eq 0) { "[]" } else { $Hosts | ConvertTo-Json -Depth 3 }
+    $utf8Bom = New-Object System.Text.UTF8Encoding $true
+    [System.IO.File]::WriteAllText($path, $json, $utf8Bom)
+}
+
+function Add-PushHost {
+    <# Remembers a host (and optional last push result) for reuse across sessions — does not touch group membership. #>
+    param(
+        [Parameter(Mandatory)][string]$TargetHost,
+        [string]$LastResult
+    )
+    $hostNorm = $TargetHost.Trim().TrimEnd('\')
+    if ([string]::IsNullOrWhiteSpace($hostNorm)) { return }
+    $existing = @(Get-PushHosts)
+    $filtered = @($existing | Where-Object { $_.host -ne $hostNorm })
+    $entry = [pscustomobject]@{
+        host       = $hostNorm
+        lastUsed   = (Get-Date -Format "yyyy-MM-ddTHH:mm:ss")
+        lastResult = if ($LastResult) { $LastResult } else { "" }
+    }
+    $updated = @($entry) + $filtered
+    if ($updated.Count -gt $script:PushHostsMax) {
+        $updated = $updated[0..($script:PushHostsMax - 1)]
+    }
+    Save-PushHosts -Hosts $updated
+}
+
+function Remove-PushHost {
+    param([Parameter(Mandatory)][string]$TargetHost)
+    $hostNorm = $TargetHost.Trim()
+    $existing = @(Get-PushHosts)
+    $updated = @($existing | Where-Object { $_.host -ne $hostNorm })
+    Save-PushHosts -Hosts $updated
+    # Also drop from any group membership so groups don't reference a forgotten host.
+    foreach ($g in (Get-PushGroups)) {
+        Remove-HostsFromPushGroup -GroupName $g.name -HostsToRemove @($hostNorm) | Out-Null
+    }
+    Write-HeimdallLog "Forgot push host: $hostNorm" -Level INFO
+}
+
+function Get-PushGroups {
+    $path = $script:PushGroupsFile
+    if (-not (Test-Path $path)) { return @() }
+    try {
+        $raw = Get-Content -Raw -Path $path -Encoding UTF8
+        if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
+        $items = $raw | ConvertFrom-Json
+        if ($null -eq $items) { return @() }
+        $normalized = @()
+        foreach ($g in @($items)) {
+            $normalized += [pscustomobject]@{
+                name  = [string]$g.name
+                hosts = @($g.hosts)
+            }
+        }
+        return @($normalized | Sort-Object -Property name)
+    }
+    catch {
+        Write-HeimdallLog "Could not read push groups: $($_.Exception.Message)" -Level WARN
+        return @()
+    }
+}
+
+function Save-PushGroups {
+    param([array]$Groups)
+    $path = $script:PushGroupsFile
+    $dir = Split-Path -Parent $path
+    if (-not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $json = if ($Groups.Count -eq 0) { "[]" } else { $Groups | ConvertTo-Json -Depth 4 }
+    $utf8Bom = New-Object System.Text.UTF8Encoding $true
+    [System.IO.File]::WriteAllText($path, $json, $utf8Bom)
+}
+
+function Add-PushGroup {
+    param([Parameter(Mandatory)][string]$Name)
+    $nameNorm = $Name.Trim()
+    if ([string]::IsNullOrWhiteSpace($nameNorm)) { return $false }
+    $existing = @(Get-PushGroups)
+    if ($existing | Where-Object { $_.name -eq $nameNorm }) {
+        return $false
+    }
+    $updated = $existing + [pscustomobject]@{ name = $nameNorm; hosts = @() }
+    Save-PushGroups -Groups $updated
+    Write-HeimdallLog "Created push group: $nameNorm" -Level INFO
+    return $true
+}
+
+function Remove-PushGroup {
+    param([Parameter(Mandatory)][string]$Name)
+    $nameNorm = $Name.Trim()
+    $existing = @(Get-PushGroups)
+    $updated = @($existing | Where-Object { $_.name -ne $nameNorm })
+    Save-PushGroups -Groups $updated
+    Write-HeimdallLog "Deleted push group: $nameNorm" -Level INFO
+}
+
+function Set-PushGroupMembers {
+    <# Replaces a group's member host list wholesale (used by the Manage groups dialog). #>
+    param(
+        [Parameter(Mandatory)][string]$GroupName,
+        [string[]]$Hosts
+    )
+    $nameNorm = $GroupName.Trim()
+    $existing = @(Get-PushGroups)
+    $updated = @()
+    foreach ($g in $existing) {
+        if ($g.name -eq $nameNorm) {
+            $updated += [pscustomobject]@{ name = $g.name; hosts = @($Hosts | Select-Object -Unique) }
+        }
+        else {
+            $updated += $g
+        }
+    }
+    Save-PushGroups -Groups $updated
+}
+
+function Remove-HostsFromPushGroup {
+    param(
+        [Parameter(Mandatory)][string]$GroupName,
+        [Parameter(Mandatory)][string[]]$HostsToRemove
+    )
+    $existing = @(Get-PushGroups)
+    $group = $existing | Where-Object { $_.name -eq $GroupName }
+    if (-not $group) { return }
+    $remaining = @($group.hosts | Where-Object { $HostsToRemove -notcontains $_ })
+    Set-PushGroupMembers -GroupName $GroupName -Hosts $remaining
+}
+
+function Get-PushGroupsForHost {
+    param([Parameter(Mandatory)][string]$TargetHost)
+    $names = @()
+    foreach ($g in (Get-PushGroups)) {
+        if (@($g.hosts) -contains $TargetHost) { $names += $g.name }
+    }
+    return $names
+}
+
 function Resolve-RemoteLogsUncPath {
     param([Parameter(Mandatory)][string]$HostOrIp)
     $inputText = $HostOrIp.Trim().TrimEnd('\')
@@ -1224,13 +1417,272 @@ function Get-LocalClientPackFolderForPush {
     return $null
 }
 
+function Push-ClientPackToSingleHost {
+    <#
+    Copies (or opens, if no local pack) the client pack to one remote admin share. Pure logic — no
+    MessageBox/dialogs — so both the single- and multi-host paths in Push-ClientPackToMachine share it.
+    Returns: Host, Reachable, Copied, OpenPath, DropFolder, Message.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$HostInput,
+        [string]$LocalPack
+    )
+    $hostNorm = $HostInput.Trim().TrimEnd('\')
+    if ($hostNorm -match '^\\\\') {
+        $hostNorm = $hostNorm -replace '^\\\\([^\\]+).*$', '$1'
+    }
+
+    $adminRoot = "\\$hostNorm\C$"
+    $dropRoot = "\\$hostNorm\C$\Temp"
+    $dropFolder = "\\$hostNorm\C$\Temp\Heimdall-Client"
+
+    Write-HeimdallLog "Push target: $hostNorm adminRoot=$adminRoot" -Level INFO
+    if (-not (Test-Path -LiteralPath $adminRoot)) {
+        Write-HeimdallLog "Admin share unreachable: $adminRoot" -Level ERROR
+        return [pscustomobject]@{
+            Host       = $hostNorm
+            Reachable  = $false
+            Copied     = $false
+            OpenPath   = $null
+            DropFolder = $dropFolder
+            Message    = "Cannot reach $adminRoot (check hostname/IP, admin rights on that PC, SMB/port 445, firewall allows C$)."
+        }
+    }
+
+    if ($LocalPack) {
+        try {
+            if (-not (Test-Path -LiteralPath $dropRoot)) {
+                New-Item -ItemType Directory -Path $dropRoot -Force | Out-Null
+            }
+            if (-not (Test-Path -LiteralPath $dropFolder)) {
+                New-Item -ItemType Directory -Path $dropFolder -Force | Out-Null
+            }
+            Write-HeimdallLog "Copying pack from $LocalPack to $dropFolder" -Level STEP
+            Set-UiStatus "Copying Heimdall-Client to $hostNorm ..."
+            $robolog = Join-Path $env:TEMP ("heimdall-push-" + ($hostNorm -replace '[\\/:*?"<>|]', '-') + "-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".log")
+            $p = Start-Process -FilePath "robocopy.exe" -ArgumentList @(
+                $LocalPack,
+                $dropFolder,
+                "/E", "/R:1", "/W:2", "/NFL", "/NDL", "/NJH", "/NJS", "/NP",
+                "/LOG:$robolog"
+            ) -Wait -PassThru -NoNewWindow
+            # robocopy: exit codes 0-7 are success / with differences
+            if ($p.ExitCode -ge 8) {
+                throw "robocopy exit $($p.ExitCode). Log: $robolog"
+            }
+            $remoteExe = Join-Path $dropFolder "payload\Heimdall.Agent.exe"
+            if (-not (Test-Path -LiteralPath $remoteExe)) {
+                throw "Copy finished but payload\Heimdall.Agent.exe missing at $remoteExe"
+            }
+            Write-HeimdallLog "Push copy OK for $hostNorm (robocopy exit $($p.ExitCode)). Log: $robolog" -Level OK
+            Add-RemoteLogTarget -TargetHost $hostNorm -UncPath ("\\$hostNorm\C$\ProgramData\Heimdall\logs")
+            return [pscustomobject]@{
+                Host       = $hostNorm
+                Reachable  = $true
+                Copied     = $true
+                OpenPath   = $dropFolder
+                DropFolder = $dropFolder
+                Message    = "Copied to $dropFolder — run Install.lnk on $hostNorm."
+            }
+        }
+        catch {
+            Write-HeimdallLog "Push copy failed for $hostNorm : $($_.Exception.Message)" -Level ERROR
+            $openFallback = if (Test-Path -LiteralPath $dropRoot) { $dropRoot } else { $adminRoot }
+            return [pscustomobject]@{
+                Host       = $hostNorm
+                Reachable  = $true
+                Copied     = $false
+                OpenPath   = $openFallback
+                DropFolder = $dropFolder
+                Message    = "Copy failed: $($_.Exception.Message)"
+            }
+        }
+    }
+    else {
+        $openPath = $adminRoot
+        try {
+            if (-not (Test-Path -LiteralPath $dropRoot)) {
+                New-Item -ItemType Directory -Path $dropRoot -Force | Out-Null
+            }
+            $openPath = $dropRoot
+        }
+        catch {
+            $openPath = $adminRoot
+        }
+        Add-RemoteLogTarget -TargetHost $hostNorm -UncPath ("\\$hostNorm\C$\ProgramData\Heimdall\logs")
+        return [pscustomobject]@{
+            Host       = $hostNorm
+            Reachable  = $true
+            Copied     = $false
+            OpenPath   = $openPath
+            DropFolder = $dropFolder
+            Message    = "No local pack — opened $openPath for manual copy."
+        }
+    }
+}
+
+function Show-ManagePushGroupsDialog {
+    <# Create/rename/delete push groups and edit their member host list (freeform, newline/comma/semicolon). #>
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Manage push groups"
+    $form.StartPosition = "CenterParent"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.Width = 640
+    $form.Height = 460
+    $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+
+    $lblGroups = New-Object System.Windows.Forms.Label
+    $lblGroups.Text = "Groups:"
+    $lblGroups.Left = 16; $lblGroups.Top = 12; $lblGroups.Width = 180; $lblGroups.Height = 18
+    $form.Controls.Add($lblGroups)
+
+    $groupsBox = New-Object System.Windows.Forms.ListBox
+    $groupsBox.Left = 16; $groupsBox.Top = 32; $groupsBox.Width = 200; $groupsBox.Height = 300
+    $form.Controls.Add($groupsBox)
+
+    $newBtn = New-Object System.Windows.Forms.Button
+    $newBtn.Text = "New group..."
+    $newBtn.Left = 16; $newBtn.Top = 340; $newBtn.Width = 95; $newBtn.Height = 26
+    $form.Controls.Add($newBtn)
+
+    $renameBtn = New-Object System.Windows.Forms.Button
+    $renameBtn.Text = "Rename..."
+    $renameBtn.Left = 121; $renameBtn.Top = 340; $renameBtn.Width = 95; $renameBtn.Height = 26
+    $form.Controls.Add($renameBtn)
+
+    $deleteBtn = New-Object System.Windows.Forms.Button
+    $deleteBtn.Text = "Delete group"
+    $deleteBtn.Left = 16; $deleteBtn.Top = 372; $deleteBtn.Width = 200; $deleteBtn.Height = 26
+    $form.Controls.Add($deleteBtn)
+
+    $lblMembers = New-Object System.Windows.Forms.Label
+    $lblMembers.Text = "Members of selected group (one host per line — also accepts comma / semicolon separated):"
+    $lblMembers.Left = 232; $lblMembers.Top = 12; $lblMembers.Width = 380; $lblMembers.Height = 32
+    $form.Controls.Add($lblMembers)
+
+    $membersBox = New-Object System.Windows.Forms.TextBox
+    $membersBox.Left = 232; $membersBox.Top = 48; $membersBox.Width = 380; $membersBox.Height = 300
+    $membersBox.Multiline = $true
+    $membersBox.ScrollBars = "Vertical"
+    $membersBox.Enabled = $false
+    $form.Controls.Add($membersBox)
+
+    $saveMembersBtn = New-Object System.Windows.Forms.Button
+    $saveMembersBtn.Text = "Save members"
+    $saveMembersBtn.Left = 232; $saveMembersBtn.Top = 356; $saveMembersBtn.Width = 130; $saveMembersBtn.Height = 26
+    $saveMembersBtn.Enabled = $false
+    $form.Controls.Add($saveMembersBtn)
+
+    $closeBtn = New-Object System.Windows.Forms.Button
+    $closeBtn.Text = "Close"
+    $closeBtn.Left = 492; $closeBtn.Top = 380; $closeBtn.Width = 120; $closeBtn.Height = 30
+    $closeBtn.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.AcceptButton = $closeBtn
+    $form.Controls.Add($closeBtn)
+
+    function Update-PushGroupsBox {
+        param([string]$SelectName)
+        $groupsBox.Items.Clear()
+        $names = @((Get-PushGroups) | ForEach-Object { $_.name })
+        foreach ($n in $names) { [void]$groupsBox.Items.Add($n) }
+        if ($SelectName -and ($names -contains $SelectName)) {
+            $groupsBox.SelectedIndex = [array]::IndexOf($names, $SelectName)
+        }
+        elseif ($groupsBox.Items.Count -gt 0) {
+            $groupsBox.SelectedIndex = 0
+        }
+        else {
+            $membersBox.Text = ""
+            $membersBox.Enabled = $false
+            $saveMembersBtn.Enabled = $false
+        }
+    }
+    Update-PushGroupsBox
+
+    $groupsBox.Add_SelectedIndexChanged({
+        if ($groupsBox.SelectedIndex -lt 0) {
+            $membersBox.Text = ""
+            $membersBox.Enabled = $false
+            $saveMembersBtn.Enabled = $false
+            return
+        }
+        $name = [string]$groupsBox.SelectedItem
+        $g = (Get-PushGroups) | Where-Object { $_.name -eq $name }
+        $membersBox.Text = if ($g) { (@($g.hosts) -join "`r`n") } else { "" }
+        $membersBox.Enabled = $true
+        $saveMembersBtn.Enabled = $true
+    })
+
+    $newBtn.Add_Click({
+        $r = Show-InputForm -Title "New push group" -Prompt "Group name (e.g. Flood Modellers, Sydney lab):" -Fields ([ordered]@{ Name = "" }) -AcceptLabel "Create"
+        if ($r -and $r.Name) {
+            if (Add-PushGroup -Name $r.Name) {
+                Update-PushGroupsBox -SelectName $r.Name.Trim()
+            }
+            else {
+                [System.Windows.Forms.MessageBox]::Show("A group named `"$($r.Name.Trim())`" already exists.", "Group exists", "OK", "Warning") | Out-Null
+            }
+        }
+    })
+
+    $renameBtn.Add_Click({
+        if ($groupsBox.SelectedIndex -lt 0) { return }
+        $old = [string]$groupsBox.SelectedItem
+        $r = Show-InputForm -Title "Rename push group" -Prompt "New name for `"$old`":" -Fields ([ordered]@{ Name = $old }) -AcceptLabel "Rename"
+        if ($r -and $r.Name -and ($r.Name.Trim() -ne $old)) {
+            $existing = @(Get-PushGroups)
+            if ($existing | Where-Object { $_.name -eq $r.Name.Trim() }) {
+                [System.Windows.Forms.MessageBox]::Show("A group with that name already exists.", "Group exists", "OK", "Warning") | Out-Null
+                return
+            }
+            $updated = @($existing | ForEach-Object {
+                    if ($_.name -eq $old) { [pscustomobject]@{ name = $r.Name.Trim(); hosts = $_.hosts } } else { $_ }
+                })
+            Save-PushGroups -Groups $updated
+            Write-HeimdallLog "Renamed push group '$old' to '$($r.Name.Trim())'" -Level INFO
+            Update-PushGroupsBox -SelectName $r.Name.Trim()
+        }
+    })
+
+    $deleteBtn.Add_Click({
+        if ($groupsBox.SelectedIndex -lt 0) { return }
+        $name = [string]$groupsBox.SelectedItem
+        $confirm = [System.Windows.Forms.MessageBox]::Show(
+            "Delete group `"$name`"? Member hosts stay remembered individually - only the group is removed.",
+            "Delete group", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
+        if ($confirm -eq [System.Windows.Forms.DialogResult]::Yes) {
+            Remove-PushGroup -Name $name
+            Update-PushGroupsBox
+        }
+    })
+
+    $saveMembersBtn.Add_Click({
+        if ($groupsBox.SelectedIndex -lt 0) { return }
+        $name = [string]$groupsBox.SelectedItem
+        $hostsForGroup = ConvertTo-PushHostList -RawText $membersBox.Text
+        Set-PushGroupMembers -GroupName $name -Hosts $hostsForGroup
+        $known = @(Get-PushHosts) | ForEach-Object { $_.host }
+        foreach ($h in $hostsForGroup) {
+            if ($known -notcontains $h) {
+                Add-PushHost -TargetHost $h
+            }
+        }
+        Write-HeimdallLog "Saved $($hostsForGroup.Count) member(s) for push group '$name'" -Level OK
+        [System.Windows.Forms.MessageBox]::Show("Saved $($hostsForGroup.Count) member(s) for `"$name`".", "Group saved", "OK", "Information") | Out-Null
+    })
+
+    [void]$form.ShowDialog()
+}
+
 function Push-ClientPackToMachine {
-    Write-HeimdallLog "Push client pack to remote PC" -Level STEP
+    Write-HeimdallLog "Push client pack to remote PC(s)" -Level STEP
     Set-UiSteps @(
-        "[ ] 1. Choose target hostname",
-        "[ ] 2. Reach \\HOST\C$",
+        "[ ] 1. Choose target(s) — ad-hoc list, remembered hosts, and/or groups",
+        "[ ] 2. Reach \\HOST\C$ for each target",
         "[ ] 3. Copy Heimdall-Client (if pack ready)",
-        "[ ] 4. Open drop folder in Explorer"
+        "[ ] 4. Summarize results"
     )
     Set-UiStatus "Push client pack..."
 
@@ -1258,63 +1710,116 @@ function Push-ClientPackToMachine {
     }
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Push client pack to PC"
+    $form.Text = "Push client pack to PC(s)"
     $form.StartPosition = "CenterParent"
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
     $form.MinimizeBox = $false
-    $form.Width = 560
-    $form.Height = 240
+    $form.Width = 620
+    $form.Height = 620
     $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 
-    $lbl = New-Object System.Windows.Forms.Label
-    $lbl.Text = "Target machine name or IP (admin share C$ required):"
-    $lbl.Left = 16
-    $lbl.Top = 16
-    $lbl.Width = 520
-    $lbl.Height = 20
-    $form.Controls.Add($lbl)
+    $lblAdhoc = New-Object System.Windows.Forms.Label
+    $lblAdhoc.Text = "Ad-hoc hosts (paste a list — comma, semicolon, or newline separated):"
+    $lblAdhoc.Left = 16; $lblAdhoc.Top = 12; $lblAdhoc.Width = 580; $lblAdhoc.Height = 18
+    $form.Controls.Add($lblAdhoc)
 
-    $combo = New-Object System.Windows.Forms.ComboBox
-    $combo.Left = 16
-    $combo.Top = 42
-    $combo.Width = 520
-    $combo.DropDownStyle = "DropDown"
-    $combo.AutoCompleteMode = "SuggestAppend"
-    $combo.AutoCompleteSource = "ListItems"
-    foreach ($t in (Get-RemoteLogTargets)) {
-        [void]$combo.Items.Add($t.host)
-    }
-    if ($combo.Items.Count -gt 0) { $combo.SelectedIndex = 0 }
-    $form.Controls.Add($combo)
+    $adhocBox = New-Object System.Windows.Forms.TextBox
+    $adhocBox.Left = 16; $adhocBox.Top = 32; $adhocBox.Width = 580; $adhocBox.Height = 54
+    $adhocBox.Multiline = $true
+    $adhocBox.ScrollBars = "Vertical"
+    $adhocBox.AcceptsReturn = $true
+    $form.Controls.Add($adhocBox)
+
+    $lblGroups = New-Object System.Windows.Forms.Label
+    $lblGroups.Text = "Groups (check = push to ALL members of that group):"
+    $lblGroups.Left = 16; $lblGroups.Top = 94; $lblGroups.Width = 420; $lblGroups.Height = 18
+    $form.Controls.Add($lblGroups)
+
+    $manageBtn = New-Object System.Windows.Forms.Button
+    $manageBtn.Text = "Manage groups..."
+    $manageBtn.Left = 460; $manageBtn.Top = 90; $manageBtn.Width = 136; $manageBtn.Height = 24
+    $form.Controls.Add($manageBtn)
+
+    $groupsList = New-Object System.Windows.Forms.CheckedListBox
+    $groupsList.Left = 16; $groupsList.Top = 116; $groupsList.Width = 580; $groupsList.Height = 90
+    $groupsList.CheckOnClick = $true
+    $form.Controls.Add($groupsList)
+
+    $lblHosts = New-Object System.Windows.Forms.Label
+    $lblHosts.Text = "Remembered hosts (check individual targets — even within a checked group above):"
+    $lblHosts.Left = 16; $lblHosts.Top = 214; $lblHosts.Width = 500; $lblHosts.Height = 18
+    $form.Controls.Add($lblHosts)
+
+    $hostsList = New-Object System.Windows.Forms.CheckedListBox
+    $hostsList.Left = 16; $hostsList.Top = 236; $hostsList.Width = 580; $hostsList.Height = 190
+    $hostsList.CheckOnClick = $true
+    $form.Controls.Add($hostsList)
+
+    $forgetBtn = New-Object System.Windows.Forms.Button
+    $forgetBtn.Text = "Forget checked host(s)"
+    $forgetBtn.Left = 16; $forgetBtn.Top = 432; $forgetBtn.Width = 170; $forgetBtn.Height = 26
+    $form.Controls.Add($forgetBtn)
 
     $hint = New-Object System.Windows.Forms.Label
+    $hint.Left = 16; $hint.Top = 464; $hint.Width = 580; $hint.Height = 48
     if ($localPack) {
-        $hint.Text = "Copies the pack to \\HOST\C$\Temp\Heimdall-Client, then opens that folder. On the remote PC run Install.lnk."
+        $hint.Text = "Copies the pack to \\HOST\C$\Temp\Heimdall-Client on every selected target, then opens the drop folder(s) (capped at 5 Explorer windows). On each remote PC run Install.lnk."
     }
     else {
-        $hint.Text = "No local pack found yet — will open \\HOST\C$\Temp so you can paste Heimdall-Client manually."
+        $hint.Text = "No local pack found yet — will open \\HOST\C$\Temp on each target so you can paste Heimdall-Client manually."
     }
-    $hint.Left = 16
-    $hint.Top = 72
-    $hint.Width = 520
-    $hint.Height = 40
     $form.Controls.Add($hint)
 
-    $openBtn = New-Object System.Windows.Forms.Button
-    $openBtn.Text = if ($localPack) { "Push" } else { "Open C$" }
-    $openBtn.Left = 350
-    $openBtn.Top = 130
-    $openBtn.Width = 90
-    $openBtn.DialogResult = [System.Windows.Forms.DialogResult]::OK
-    $form.AcceptButton = $openBtn
-    $form.Controls.Add($openBtn)
+    function Update-PushDialogLists {
+        $groupsList.Items.Clear()
+        foreach ($g in (Get-PushGroups)) {
+            $count = @($g.hosts).Count
+            [void]$groupsList.Items.Add("$($g.name)  ($count host$(if ($count -ne 1) { 's' }))")
+        }
+        $hostsList.Items.Clear()
+        foreach ($h in (Get-PushHosts)) {
+            $groupNames = @(Get-PushGroupsForHost -TargetHost $h.host)
+            $label = if ($groupNames.Count -gt 0) { "$($h.host)  [$($groupNames -join ', ')]" } else { [string]$h.host }
+            [void]$hostsList.Items.Add($label)
+        }
+    }
+    Update-PushDialogLists
+
+    $manageBtn.Add_Click({
+        Show-ManagePushGroupsDialog
+        Update-PushDialogLists
+    })
+
+    $forgetBtn.Add_Click({
+        $allHostsNow = @(Get-PushHosts)
+        $toForget = @()
+        foreach ($i in $hostsList.CheckedIndices) {
+            if ($i -lt $allHostsNow.Count) { $toForget += $allHostsNow[$i].host }
+        }
+        if ($toForget.Count -eq 0) {
+            [System.Windows.Forms.MessageBox]::Show("Check one or more remembered hosts first.", "Nothing selected", "OK", "Information") | Out-Null
+            return
+        }
+        $confirm = [System.Windows.Forms.MessageBox]::Show(
+            "Forget $($toForget.Count) remembered host(s)? (Ad-hoc pushes still work — this just removes them from the remembered list / groups.)`r`n`r`n" + ($toForget -join "`r`n"),
+            "Forget hosts", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
+        if ($confirm -eq [System.Windows.Forms.DialogResult]::Yes) {
+            foreach ($h in $toForget) { Remove-PushHost -TargetHost $h }
+            Update-PushDialogLists
+        }
+    })
+
+    $pushBtn = New-Object System.Windows.Forms.Button
+    $pushBtn.Text = if ($localPack) { "Push" } else { "Open C$" }
+    $pushBtn.Left = 410; $pushBtn.Top = 522; $pushBtn.Width = 90; $pushBtn.Height = 30
+    $pushBtn.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.AcceptButton = $pushBtn
+    $form.Controls.Add($pushBtn)
 
     $cancelBtn = New-Object System.Windows.Forms.Button
     $cancelBtn.Text = "Cancel"
-    $cancelBtn.Left = 450
-    $cancelBtn.Top = 130
-    $cancelBtn.Width = 90
+    $cancelBtn.Left = 506; $cancelBtn.Top = 522; $cancelBtn.Width = 90; $cancelBtn.Height = 30
     $cancelBtn.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
     $form.CancelButton = $cancelBtn
     $form.Controls.Add($cancelBtn)
@@ -1325,116 +1830,103 @@ function Push-ClientPackToMachine {
         return
     }
 
-    $hostInput = $combo.Text.Trim().TrimEnd('\')
-    if ([string]::IsNullOrWhiteSpace($hostInput)) {
+    # Resolve final target list: ad-hoc text + checked group members + checked individual hosts, deduped.
+    $targets = New-Object System.Collections.Generic.List[string]
+    $seenTargets = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    function Add-PushTargetToList([string]$CandidateHost) {
+        $norm = $CandidateHost.Trim().TrimEnd('\')
+        if ([string]::IsNullOrWhiteSpace($norm)) { return }
+        if ($seenTargets.Add($norm)) { [void]$targets.Add($norm) }
+    }
+
+    foreach ($h in (ConvertTo-PushHostList -RawText $adhocBox.Text)) { Add-PushTargetToList $h }
+
+    $allGroupsNow = @(Get-PushGroups)
+    foreach ($i in $groupsList.CheckedIndices) {
+        if ($i -lt $allGroupsNow.Count) {
+            foreach ($h in @($allGroupsNow[$i].hosts)) { Add-PushTargetToList $h }
+        }
+    }
+
+    $allHostsNow = @(Get-PushHosts)
+    foreach ($i in $hostsList.CheckedIndices) {
+        if ($i -lt $allHostsNow.Count) { Add-PushTargetToList $allHostsNow[$i].host }
+    }
+
+    if ($targets.Count -eq 0) {
+        Write-HeimdallLog "Push cancelled: no targets selected." -Level WARN
         [System.Windows.Forms.MessageBox]::Show(
-            "Enter a machine name or IP address.",
-            "Missing input",
-            "OK",
-            "Warning") | Out-Null
+            "Enter at least one ad-hoc host, or check a group / remembered host.",
+            "No targets selected", "OK", "Warning") | Out-Null
         return
     }
-    if ($hostInput -match '^\\\\') {
-        $hostInput = $hostInput -replace '^\\\\([^\\]+).*$', '$1'
-    }
 
-    Update-UiStep 0 "[OK] 1. Target=$hostInput"
-    $adminRoot = "\\$hostInput\C$"
-    $dropRoot = "\\$hostInput\C$\Temp"
-    $dropFolder = "\\$hostInput\C$\Temp\Heimdall-Client"
+    Update-UiStep 0 "[OK] 1. $($targets.Count) target(s) selected"
 
-    Write-HeimdallLog "Push target: $hostInput adminRoot=$adminRoot" -Level INFO
-    if (-not (Test-Path -LiteralPath $adminRoot)) {
-        Update-UiStep 1 "[X] 2. Cannot reach $adminRoot"
-        Write-HeimdallLog "Admin share unreachable: $adminRoot" -Level ERROR
-        [System.Windows.Forms.MessageBox]::Show(
-            "Cannot reach:`r`n$adminRoot`r`n`r`nCheck:`r`n- Hostname/IP is correct`r`n- You have admin rights on that PC`r`n- SMB / File and Printer Sharing (port 445) allowed`r`n- Firewall allows admin shares (C$)",
-            "C$ unreachable",
-            "OK",
-            "Error") | Out-Null
-        return
-    }
-    Update-UiStep 1 "[OK] 2. Reached $adminRoot"
-
-    $openPath = $adminRoot
-    if ($localPack) {
-        try {
-            if (-not (Test-Path -LiteralPath $dropRoot)) {
-                New-Item -ItemType Directory -Path $dropRoot -Force | Out-Null
-            }
-            if (-not (Test-Path -LiteralPath $dropFolder)) {
-                New-Item -ItemType Directory -Path $dropFolder -Force | Out-Null
-            }
-            Write-HeimdallLog "Copying pack from $localPack to $dropFolder" -Level STEP
-            Update-UiStep 2 "[...] 3. Copying pack..."
-            Set-UiStatus "Copying Heimdall-Client to $hostInput ..."
-            $robolog = Join-Path $env:TEMP ("heimdall-push-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".log")
-            $p = Start-Process -FilePath "robocopy.exe" -ArgumentList @(
-                $localPack,
-                $dropFolder,
-                "/E", "/R:1", "/W:2", "/NFL", "/NDL", "/NJH", "/NJS", "/NP",
-                "/LOG:$robolog"
-            ) -Wait -PassThru -NoNewWindow
-            # robocopy: exit codes 0-7 are success / with differences
-            if ($p.ExitCode -ge 8) {
-                throw "robocopy exit $($p.ExitCode). Log: $robolog"
-            }
-            $remoteExe = Join-Path $dropFolder "payload\Heimdall.Agent.exe"
-            if (-not (Test-Path -LiteralPath $remoteExe)) {
-                throw "Copy finished but payload\Heimdall.Agent.exe missing at $remoteExe"
-            }
-            Update-UiStep 2 "[OK] 3. Copied to $dropFolder"
-            Write-HeimdallLog "Push copy OK (robocopy exit $($p.ExitCode)). Log: $robolog" -Level OK
-            $openPath = $dropFolder
-        }
-        catch {
-            Update-UiStep 2 "[X] 3. Copy failed"
-            Write-HeimdallLog "Push copy failed: $($_.Exception.Message)" -Level ERROR
-            $openFallback = if (Test-Path -LiteralPath $dropRoot) { $dropRoot } else { $adminRoot }
-            [System.Windows.Forms.MessageBox]::Show(
-                "Could not copy the pack:`r`n$($_.Exception.Message)`r`n`r`nOpening $openFallback so you can paste manually.",
-                "Push copy failed",
-                "OK",
-                "Warning") | Out-Null
-            $openPath = $openFallback
-        }
-    }
-    else {
-        try {
-            if (-not (Test-Path -LiteralPath $dropRoot)) {
-                New-Item -ItemType Directory -Path $dropRoot -Force | Out-Null
-            }
-            $openPath = $dropRoot
-            Update-UiStep 2 "[!] 3. No local pack — open Temp only"
-        }
-        catch {
-            $openPath = $adminRoot
-            Update-UiStep 2 "[!] 3. Open C$ root"
+    if ($targets.Count -gt 1) {
+        $preview = ($targets | Select-Object -First 15) -join "`r`n"
+        if ($targets.Count -gt 15) { $preview += "`r`n... and $($targets.Count - 15) more" }
+        $confirm = [System.Windows.Forms.MessageBox]::Show(
+            "Push client pack to $($targets.Count) machine(s)?`r`n`r`n$preview",
+            "Confirm multi-host push",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            [System.Windows.Forms.MessageBoxIcon]::Question)
+        if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) {
+            Write-HeimdallLog "Multi-host push cancelled at confirmation ($($targets.Count) targets)." -Level WARN
+            return
         }
     }
 
-    try {
-        Start-Process explorer.exe $openPath
-        Add-RemoteLogTarget -TargetHost $hostInput -UncPath ("\\$hostInput\C$\ProgramData\Heimdall\logs")
-        Update-UiStep 3 "[OK] 4. Opened $openPath"
-        Set-UiStatus "Opened: $openPath"
-        Write-HeimdallLog "Opened Explorer: $openPath" -Level OK
-        $msg = if ($localPack -and (Test-Path -LiteralPath (Join-Path $dropFolder "Install.lnk"))) {
-            "Client pack pushed.`r`n`r`n$dropFolder`r`n`r`nOn $hostInput (as admin), double-click Install.lnk.`r`n`r`nExplorer is open on the drop folder."
-        }
-        else {
-            "Opened:`r`n$openPath`r`n`r`nPaste or finish copying Heimdall-Client there, then on $hostInput run Install.lnk."
-        }
-        [System.Windows.Forms.MessageBox]::Show($msg, "Push client pack", "OK", "Information") | Out-Null
+    Write-HeimdallLog "Pushing client pack to $($targets.Count) target(s): $($targets -join ', ')" -Level STEP
+    $results = New-Object System.Collections.Generic.List[object]
+    $idx = 0
+    foreach ($t in $targets) {
+        $idx++
+        Set-UiStatus "Pushing to $t ($idx of $($targets.Count))..."
+        $r = Push-ClientPackToSingleHost -HostInput $t -LocalPack $localPack
+        [void]$results.Add($r)
+        $lastResult = if (-not $r.Reachable) { "Unreachable" } elseif ($r.Copied) { "Copied OK" } else { "Reachable, not copied" }
+        Add-PushHost -TargetHost $r.Host -LastResult $lastResult
     }
-    catch {
-        Write-HeimdallLog "Failed to open Explorer for $openPath : $($_.Exception.Message)" -Level ERROR
-        [System.Windows.Forms.MessageBox]::Show(
-            "Explorer failed to open:`r`n$openPath`r`n`r`n$($_.Exception.Message)",
-            "Push error",
-            "OK",
-            "Error") | Out-Null
+    Update-UiStep 1 "[OK] 2. Reach-checked $($targets.Count) target(s)"
+    Update-UiStep 2 "[OK] 3. Copy attempted on $($targets.Count) target(s) — see summary"
+
+    $copiedCount = @($results | Where-Object { $_.Copied }).Count
+    $unreachable = @($results | Where-Object { -not $_.Reachable })
+    $reachableNoCopy = @($results | Where-Object { $_.Reachable -and -not $_.Copied })
+
+    $summaryLines = New-Object System.Collections.Generic.List[string]
+    $summaryLines.Add("Pushed to $($targets.Count) target(s): $copiedCount copied OK, $($reachableNoCopy.Count) reachable only, $($unreachable.Count) unreachable.")
+    foreach ($r in $results) {
+        $tag = if ($r.Copied) { "OK" } elseif ($r.Reachable) { "OPEN" } else { "FAIL" }
+        $summaryLines.Add("[$tag] $($r.Host): $($r.Message)")
     }
+    Update-UiStep 3 "[OK] 4. $copiedCount copied / $($unreachable.Count) unreachable"
+    Set-UiStatus "Push complete: $copiedCount copied, $($unreachable.Count) unreachable"
+
+    $opened = 0
+    foreach ($r in $results) {
+        if ($opened -ge 5) { break }
+        if ($r.OpenPath) {
+            try {
+                Start-Process explorer.exe $r.OpenPath
+                $opened++
+            }
+            catch {
+                Write-HeimdallLog "Failed to open Explorer for $($r.OpenPath): $($_.Exception.Message)" -Level WARN
+            }
+        }
+    }
+    if (@($results | Where-Object { $_.OpenPath }).Count -gt $opened) {
+        Write-HeimdallLog "Opened Explorer for $opened target(s) (capped at 5) — see summary/log for the rest." -Level INFO
+    }
+
+    Write-HeimdallLog ($summaryLines -join " | ") -Level $(if ($unreachable.Count -eq 0) { "OK" } else { "WARN" })
+    [System.Windows.Forms.MessageBox]::Show(
+        ($summaryLines -join "`r`n") + "`r`n`r`nLog: $($script:LogPath)",
+        "Push client pack — summary",
+        "OK",
+        $(if ($unreachable.Count -eq 0) { "Information" } else { "Warning" })) | Out-Null
 }
 
 function Get-DefaultRemoteApiHost {
@@ -2001,6 +2493,87 @@ function Start-GuidedApiInstall {
     }
 }
 
+function Get-BuiltAgentProductVersion {
+    <#
+    Reads the ProductVersion Win32 resource straight off the just-published Heimdall.Agent.exe — this is
+    exactly what Worker.cs reports as AgentVersion on heartbeat (AssemblyInformationalVersionAttribute,
+    e.g. "0.1.0+<gitsha>"), so it is the most accurate "what did we actually build" value. Falls back to
+    VERSION.json's productVersion (Directory.Build.props core version only, no build metadata) if the exe
+    can't be read.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$PackFolder
+    )
+    $exe = Join-Path $PackFolder "payload\Heimdall.Agent.exe"
+    if (Test-Path -LiteralPath $exe) {
+        try {
+            $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
+            if (-not [string]::IsNullOrWhiteSpace($info.ProductVersion)) {
+                return $info.ProductVersion.Trim()
+            }
+        }
+        catch {
+            Write-HeimdallLog "Could not read ProductVersion from $exe : $($_.Exception.Message)" -Level WARN
+        }
+    }
+    $verFile = Join-Path $PackFolder "VERSION.json"
+    if (Test-Path -LiteralPath $verFile) {
+        try {
+            $ver = (Get-Content -Raw -Path $verFile | ConvertFrom-Json).productVersion
+            if (-not [string]::IsNullOrWhiteSpace($ver)) { return [string]$ver }
+        }
+        catch {
+            Write-HeimdallLog "Could not parse $verFile : $($_.Exception.Message)" -Level WARN
+        }
+    }
+    return $null
+}
+
+function Publish-ClientVersionToApi {
+    <#
+    Best-effort: tells the API "this is the current published client version" (see Clients page /
+    PublishedVersionService). Never blocks or fails the pack — a skip here just means the Clients page
+    keeps its previous baseline (or stays unset) until someone sets it manually.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Version,
+        [string]$ApiUrl,
+        [string]$ApiKey
+    )
+
+    if (-not $ApiUrl) {
+        $settings = Read-AgentAppSettingsFromDisk
+        if ($settings.Ok -and -not [string]::IsNullOrWhiteSpace($settings.ApiBaseUrl)) {
+            $ApiUrl = $settings.ApiBaseUrl
+            if (-not $ApiKey) { $ApiKey = $settings.ApiKey }
+        }
+    }
+    if (-not $ApiUrl) {
+        $last = Get-LastInstallSettings
+        if ($last -and $last.apiUrl) { $ApiUrl = [string]$last.apiUrl }
+    }
+    if (-not $ApiKey) { $ApiKey = "heimdall-poc-key" }
+
+    if ([string]::IsNullOrWhiteSpace($ApiUrl)) {
+        Write-HeimdallLog "Skipped publishing client version to API (no known API URL yet). Set it manually on the Clients page once the API is known." -Level WARN
+        return [pscustomobject]@{ Ok = $false; Uri = $null; Error = "No API URL known" }
+    }
+
+    $base = Normalize-ApiUrl $ApiUrl
+    $uri = "$base/api/admin/published-version"
+    try {
+        $headers = @{ "X-Heimdall-Key" = $ApiKey }
+        $body = @{ version = $Version; setBy = "Launch Control @ $env:COMPUTERNAME" } | ConvertTo-Json
+        Invoke-RestMethod -Uri $uri -Headers $headers -Method Post -Body $body -ContentType "application/json" -TimeoutSec 15 | Out-Null
+        Write-HeimdallLog "Published client version '$Version' to API ($uri)" -Level OK
+        return [pscustomobject]@{ Ok = $true; Uri = $uri; Error = $null }
+    }
+    catch {
+        Write-HeimdallLog "Could not publish client version to API ($uri): $($_.Exception.Message)" -Level WARN
+        return [pscustomobject]@{ Ok = $false; Uri = $uri; Error = $_.Exception.Message }
+    }
+}
+
 function Start-GuidedPack {
     param(
         [switch]$OfferInstallAfter
@@ -2062,17 +2635,33 @@ function Start-GuidedPack {
         }
         Update-UiStep 3 "[OK] 4. Pack ready: $out"
         Set-UiStatus "Client pack ready"
+
+        $builtVersion = Get-BuiltAgentProductVersion -PackFolder $out
+        $publishNote = ""
+        if ($builtVersion) {
+            $publishResult = Publish-ClientVersionToApi -Version $builtVersion
+            $publishNote = if ($publishResult.Ok) {
+                "`r`n`r`nPublished version $builtVersion to the API's Clients page ($($publishResult.Uri))."
+            }
+            else {
+                "`r`n`r`nCould not auto-publish version $builtVersion to the API ($($publishResult.Error)). Set it manually on the Clients page once the API URL is known."
+            }
+        }
+        else {
+            Write-HeimdallLog "Could not determine built agent version — skipped auto-publish." -Level WARN
+        }
+
         $installNow = [System.Windows.Forms.DialogResult]::No
         if ($OfferInstallAfter) {
             $installNow = [System.Windows.Forms.MessageBox]::Show(
-                "Client pack ready.`r`n`r`n$out`r`n`r`nCopy that ONE folder to other PCs, then run Install.lnk there.`r`n`r`nInstall the agent on THIS PC now?",
+                "Client pack ready.`r`n`r`n$out`r`n`r`nCopy that ONE folder to other PCs, then run Install.lnk there.$publishNote`r`n`r`nInstall the agent on THIS PC now?",
                 "Client pack ready",
                 [System.Windows.Forms.MessageBoxButtons]::YesNo,
                 [System.Windows.Forms.MessageBoxIcon]::Question)
         }
         else {
             [System.Windows.Forms.MessageBox]::Show(
-                "Client pack ready.`r`n`r`n$out`r`n`r`nCopy that ONE folder to other PCs, then double-click Install.lnk.`r`n`r`nLog: $($script:LogPath)",
+                "Client pack ready.`r`n`r`n$out`r`n`r`nCopy that ONE folder to other PCs, then double-click Install.lnk.$publishNote`r`n`r`nLog: $($script:LogPath)",
                 "Client pack ready", "OK", "Information") | Out-Null
         }
         Start-Process explorer.exe $out
@@ -2687,7 +3276,7 @@ function Show-LaunchControl {
 
     if ($script:IsPackedLayout) {
         $btnAgent = New-ActionButton "1. Install agent on this PC" 0 $true
-        $btnPush = New-ActionButton "2. Push client pack to PC..." 48 $true
+        $btnPush = New-ActionButton "2. Push client pack to PC(s)..." 48 $true
         $btnClientCheck = New-ActionButton "3. Client health check" 96 $true
         $btnLogs = New-ActionButton "4. Open logs folder" 144 $true
         $btnRemoteLogs = New-ActionButton "5. Open remote logs folder..." 192 $true
@@ -2702,7 +3291,7 @@ function Show-LaunchControl {
     else {
         $btnApi = New-ActionButton "1. Install API on this PC" 0 $true
         $btnPack = New-ActionButton "2. Create client pack" 48 $true
-        $btnPush = New-ActionButton "3. Push client pack to PC..." 96 $true
+        $btnPush = New-ActionButton "3. Push client pack to PC(s)..." 96 $true
         $btnAgent = New-ActionButton "4. Install agent on this PC" 144 $true
         $btnClientCheck = New-ActionButton "5. Client health check" 192 $true
         $btnLogs = New-ActionButton "6. Open logs folder" 240 $true

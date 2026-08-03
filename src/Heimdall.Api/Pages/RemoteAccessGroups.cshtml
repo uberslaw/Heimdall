@@ -5,7 +5,10 @@
     var editing = Model.EditingGroup;
 }
 
-<h1 class="hd-title">Remote Access Groups</h1>
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <h1 class="hd-title mb-1">Remote Access Groups</h1>
+    <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="remote-access-groups">Help</a>
+</div>
 <p class="hd-sub">
     Staff Access setup · who can see which machines on their Staff page, and which processes they can favourite.
     Staff sign in at <a asp-page="/StaffAccess">Staff Access</a> — their Windows login must match the email you register here (UPN or <code>user@domain</code>).

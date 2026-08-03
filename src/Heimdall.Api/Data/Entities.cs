@@ -227,6 +227,33 @@ public class ProcessGroupAssignment
     public DateTimeOffset UpdatedUtc { get; set; }
 }
 
+/// <summary>
+/// Central catalog of every unique process ever discovered, keyed by ProcessName + ExecutablePath
+/// (same name at a different path is a separate entry). Persists across lookups so the discovered
+/// universe of apps is never lost, and tracks Windows file-version metadata when available.
+/// </summary>
+public class ProcessCatalogEntry
+{
+    public int Id { get; set; }
+    public required string ProcessName { get; set; }
+    /// <summary>Empty string (not null) when path is unknown, so identity is stable for the unique index.</summary>
+    public string ExecutablePath { get; set; } = "";
+    public string? DisplayName { get; set; }
+    /// <summary>From Win32 FileVersionInfo on the agent, when the path was readable.</summary>
+    public string? FileVersion { get; set; }
+    public string? ProductVersion { get; set; }
+    public string? CompanyName { get; set; }
+    public string? FileDescription { get; set; }
+    public DateTimeOffset FirstSeenUtc { get; set; }
+    public DateTimeOffset LastSeenUtc { get; set; }
+    public int SeenCount { get; set; } = 1;
+    public string? FirstSeenHostname { get; set; }
+    public string? LastSeenHostname { get; set; }
+    /// <summary>Heuristic suggestion computed when first seen and not yet explicitly classified; see ProcessCatalogService.</summary>
+    public AppGroup? SuggestedGroup { get; set; }
+    public string? SuggestionReason { get; set; }
+}
+
 /// <summary>Performance metric threshold policy scoped to All / Region / Office / Group / Machine.</summary>
 public class MetricPolicy
 {

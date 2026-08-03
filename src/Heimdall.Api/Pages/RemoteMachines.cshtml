@@ -1,195 +1,198 @@
-@page
-@model RemoteMachinesModel
-@{
-    ViewData["Title"] = "Remote";
-}
-
-<h1 class="hd-title">Remote machines</h1>
-<p class="hd-sub">
-    RDP health · RDS service status · ping from API server · restart RDS via agent command queue
-</p>
-
-@if (TempData["Message"] is string msg)
-{
-    <div class="alert alert-success">@msg</div>
-}
-@if (TempData["Error"] is string err)
-{
-    <div class="alert alert-danger">@err</div>
-}
-
-<div class="hd-grid">
-    <div class="hd-stat">
-        <div class="label">Machines</div>
-        <div class="value">@Model.Rows.Count</div>
-    </div>
-    <div class="hd-stat">
-        <div class="label">Online (5m)</div>
-        <div class="value">@Model.OnlineCount</div>
-    </div>
-    <div class="hd-stat">
-        <div class="label">Offline</div>
-        <div class="value">@Model.OfflineCount</div>
-    </div>
-    <div class="hd-stat">
-        <div class="label">RDP accepting (last probe)</div>
-        <div class="value">@Model.RdpAcceptingCount</div>
-    </div>
-</div>
-
-<p class="text-secondary small mb-3">
-    <strong>Diagnostics:</strong> Ping uses ICMP from this API host (may be blocked by firewall). Click <strong>Ping</strong> to probe — results are not automatic.
-    RDS service status is reported by the agent on each heartbeat.
-    <strong>Restart RDS</strong> queues <code>RestartTermService</code> for the agent. A per-machine countdown estimates agent pickup (~config refresh interval, typically 300s).
-    When the agent acknowledges the restart (or TermService reports Running after the expected window), the API automatically runs an RDP test and updates the row.
-    RDP probe opens TCP 3389 from the API server and validates the RDP negotiation handshake (no WinRM required).
-</p>
-
-<div class="hd-panel hd-remote-panel">
-    <table class="hd-table hd-remote-table">
-        <colgroup>
-            <col class="hd-col-status" />
-            <col class="hd-col-machine" />
-            <col class="hd-col-ip" />
-            <col class="hd-col-contact" />
-            <col class="hd-col-ping" />
-            <col class="hd-col-rds" />
-            <col class="hd-col-rdp" />
-            <col class="hd-col-actions" />
-        </colgroup>
-        <thead>
-            <tr>
-                <th>Status</th>
-                <th>Machine</th>
-                <th class="hd-th-stacked"><span>IP</span><span>Address</span></th>
-                <th>Agent last contact</th>
-                <th>Ping</th>
-                <th class="hd-th-stacked"><span>RDS</span><span>Service</span></th>
-                <th>RDP status</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-        @if (Model.Rows.Count == 0)
-        {
-            <tr><td colspan="8">No agents reporting yet.</td></tr>
-        }
-        @foreach (var r in Model.Rows)
-        {
-            var restartActive = r.RestartProgress is not null
-                && RemoteMachineService.IsActiveRestartPhase(r.RestartProgress.Phase);
-            <tr data-hostname="@r.Hostname" @(restartActive ? Html.Raw("data-restart-poll=\"true\"") : null)>
-                <td>
-                    @if (r.IsOnline)
-                    {
-                        <span class="badge-pill badge-active">Online</span>
-                    }
-                    else
-                    {
-                        <span class="badge-pill badge-ended">Offline</span>
-                    }
-                </td>
-                <td class="hd-remote-machine">
-                    <a asp-page="/Machine" asp-route-hostname="@r.Hostname"><strong>@r.Hostname</strong></a>
-                    @if (RemoteMachinesModel.ShowRestartProgress(r))
-                    {
-                        <div class="hd-restart-progress">
-                            <span class="badge-pill hd-restart-badge @RemoteMachinesModel.RestartProgressBadgeClass(r)"
-                                  title="@r.RestartProgress?.Detail">
-                                @RemoteMachinesModel.RestartProgressLabel(r)
-                            </span>
-                            @if (r.ShowCountdown && r.CountdownUntilUtc is DateTimeOffset countdownUntil)
-                            {
-                                <div class="hd-restart-countdown" data-until="@countdownUntil.ToString("o")">
-                                    <span class="text-secondary small">Pickup in </span>
-                                    <span class="hd-countdown-value hd-countdown-digits">--:--</span>
-                                    <span class="hd-countdown-expired text-secondary small" hidden>Past expected pickup — still waiting</span>
-                                </div>
-                            }
-                            else if (r.RestartProgress?.LastEventUtc is DateTimeOffset restartUtc)
-                            {
-                                <span class="text-secondary small hd-restart-when">@RemoteMachinesModel.FormatContact(restartUtc)</span>
-                            }
-                        </div>
-                    }
-                </td>
-                <td class="hd-remote-ip">@(r.LastIp ?? "—")</td>
-                <td class="hd-remote-contact">@RemoteMachinesModel.FormatContact(r.LastSeenUtc)</td>
-                <td class="hd-cell-ping">
-                    @if (r.PingReachable is bool pingOk)
-                    {
-                        <span class="badge-pill @(pingOk ? "badge-active" : "badge-expired")" title="@r.PingDetail">
-                            @RemoteMachinesModel.FormatPingStatus(pingOk, r.PingDetail)
-                        </span>
-                        @if (r.LastPingUtc is DateTimeOffset pingUtc)
-                        {
-                            <span class="text-secondary small hd-ping-when">@RemoteMachinesModel.FormatContact(pingUtc)</span>
-                        }
-                    }
-                    else
-                    {
-                        <span class="text-secondary">Not probed</span>
-                    }
-                    <form method="post" asp-page-handler="Ping" class="hd-ping-form">
-                        <input type="hidden" name="hostname" value="@r.Hostname" />
-                        <button type="submit" class="btn btn-ghost btn-sm">Ping</button>
-                    </form>
-                </td>
-                <td>
-                    @if (!string.IsNullOrWhiteSpace(r.TermServiceStatus))
-                    {
-                        <span class="badge-pill @RemoteMachinesModel.TermServiceBadgeClass(r.TermServiceStatus)">@r.TermServiceStatus</span>
-                    }
-                    else
-                    {
-                        <span class="text-secondary">—</span>
-                    }
-                </td>
-                <td class="hd-remote-rdp">
-                    @if (RemoteMachinesModel.IsRdpTesting(r))
-                    {
-                        <span class="badge-pill badge-rdp">Testing RDP…</span>
-                    }
-                    else if (r.RdpResponding is bool rd)
-                    {
-                        <span class="badge-pill @RemoteMachinesModel.RdpBadgeClass(rd)" title="@r.RdpError">
-                            @(rd ? "Accepting" : "Not responding")
-                        </span>
-                        @if (r.LastRdpProbeUtc is DateTimeOffset probeUtc)
-                        {
-                            <div class="text-secondary small">@RemoteMachinesModel.FormatContact(probeUtc)</div>
-                        }
-                    }
-                    else
-                    {
-                        <span class="text-secondary">Not probed</span>
-                    }
-                </td>
-                <td class="hd-cell-actions">
-                    <form method="post" asp-page-handler="ProbeRdp" class="hd-action-form">
-                        <input type="hidden" name="hostname" value="@r.Hostname" />
-                        <button type="submit" class="btn btn-hd btn-sm">Test RDP</button>
-                    </form>
-                    <form method="post" asp-page-handler="RestartRds" class="hd-action-form"
-                          onsubmit="return confirm('Queue TermService restart on @r.Hostname? Active RDP sessions may disconnect.');">
-                        <input type="hidden" name="hostname" value="@r.Hostname" />
-                        @if (r.IsOnline)
-                        {
-                            <button type="submit" class="btn btn-ghost btn-sm">Restart RDS</button>
-                        }
-                        else
-                        {
-                            <button type="submit" class="btn btn-ghost btn-sm" disabled title="Agent must be online to receive command">Restart RDS</button>
-                        }
-                    </form>
-                </td>
-            </tr>
-        }
-        </tbody>
-    </table>
-</div>
-
-@section Scripts {
-    <script src="~/js/restart-countdown.js" asp-append-version="true"></script>
-}
+@page
+@model RemoteMachinesModel
+@{
+    ViewData["Title"] = "Remote";
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <h1 class="hd-title mb-1">Remote machines</h1>
+    <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="remote-machines">Help</a>
+</div>
+<p class="hd-sub">
+    RDP health · RDS service status · ping from API server · restart RDS via agent command queue
+</p>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<div class="hd-grid">
+    <div class="hd-stat">
+        <div class="label">Machines</div>
+        <div class="value">@Model.Rows.Count</div>
+    </div>
+    <div class="hd-stat">
+        <div class="label">Online (5m)</div>
+        <div class="value">@Model.OnlineCount</div>
+    </div>
+    <div class="hd-stat">
+        <div class="label">Offline</div>
+        <div class="value">@Model.OfflineCount</div>
+    </div>
+    <div class="hd-stat">
+        <div class="label">RDP accepting (last probe)</div>
+        <div class="value">@Model.RdpAcceptingCount</div>
+    </div>
+</div>
+
+<p class="text-secondary small mb-3">
+    <strong>Diagnostics:</strong> Ping uses ICMP from this API host (may be blocked by firewall). Click <strong>Ping</strong> to probe — results are not automatic.
+    RDS service status is reported by the agent on each heartbeat.
+    <strong>Restart RDS</strong> queues <code>RestartTermService</code> for the agent. A per-machine countdown estimates agent pickup (~config refresh interval, typically 300s).
+    When the agent acknowledges the restart (or TermService reports Running after the expected window), the API automatically runs an RDP test and updates the row.
+    RDP probe opens TCP 3389 from the API server and validates the RDP negotiation handshake (no WinRM required).
+</p>
+
+<div class="hd-panel hd-remote-panel">
+    <table class="hd-table hd-remote-table">
+        <colgroup>
+            <col class="hd-col-status" />
+            <col class="hd-col-machine" />
+            <col class="hd-col-ip" />
+            <col class="hd-col-contact" />
+            <col class="hd-col-ping" />
+            <col class="hd-col-rds" />
+            <col class="hd-col-rdp" />
+            <col class="hd-col-actions" />
+        </colgroup>
+        <thead>
+            <tr>
+                <th>Status</th>
+                <th>Machine</th>
+                <th class="hd-th-stacked"><span>IP</span><span>Address</span></th>
+                <th>Agent last contact</th>
+                <th>Ping</th>
+                <th class="hd-th-stacked"><span>RDS</span><span>Service</span></th>
+                <th>RDP status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+        @if (Model.Rows.Count == 0)
+        {
+            <tr><td colspan="8">No agents reporting yet.</td></tr>
+        }
+        @foreach (var r in Model.Rows)
+        {
+            var restartActive = r.RestartProgress is not null
+                && RemoteMachineService.IsActiveRestartPhase(r.RestartProgress.Phase);
+            <tr data-hostname="@r.Hostname" @(restartActive ? Html.Raw("data-restart-poll=\"true\"") : null)>
+                <td>
+                    @if (r.IsOnline)
+                    {
+                        <span class="badge-pill badge-active">Online</span>
+                    }
+                    else
+                    {
+                        <span class="badge-pill badge-ended">Offline</span>
+                    }
+                </td>
+                <td class="hd-remote-machine">
+                    <a asp-page="/Machine" asp-route-hostname="@r.Hostname"><strong>@r.Hostname</strong></a>
+                    @if (RemoteMachinesModel.ShowRestartProgress(r))
+                    {
+                        <div class="hd-restart-progress">
+                            <span class="badge-pill hd-restart-badge @RemoteMachinesModel.RestartProgressBadgeClass(r)"
+                                  title="@r.RestartProgress?.Detail">
+                                @RemoteMachinesModel.RestartProgressLabel(r)
+                            </span>
+                            @if (r.ShowCountdown && r.CountdownUntilUtc is DateTimeOffset countdownUntil)
+                            {
+                                <div class="hd-restart-countdown" data-until="@countdownUntil.ToString("o")">
+                                    <span class="text-secondary small">Pickup in </span>
+                                    <span class="hd-countdown-value hd-countdown-digits">--:--</span>
+                                    <span class="hd-countdown-expired text-secondary small" hidden>Past expected pickup — still waiting</span>
+                                </div>
+                            }
+                            else if (r.RestartProgress?.LastEventUtc is DateTimeOffset restartUtc)
+                            {
+                                <span class="text-secondary small hd-restart-when">@RemoteMachinesModel.FormatContact(restartUtc)</span>
+                            }
+                        </div>
+                    }
+                </td>
+                <td class="hd-remote-ip">@(r.LastIp ?? "—")</td>
+                <td class="hd-remote-contact">@RemoteMachinesModel.FormatContact(r.LastSeenUtc)</td>
+                <td class="hd-cell-ping">
+                    @if (r.PingReachable is bool pingOk)
+                    {
+                        <span class="badge-pill @(pingOk ? "badge-active" : "badge-expired")" title="@r.PingDetail">
+                            @RemoteMachinesModel.FormatPingStatus(pingOk, r.PingDetail)
+                        </span>
+                        @if (r.LastPingUtc is DateTimeOffset pingUtc)
+                        {
+                            <span class="text-secondary small hd-ping-when">@RemoteMachinesModel.FormatContact(pingUtc)</span>
+                        }
+                    }
+                    else
+                    {
+                        <span class="text-secondary">Not probed</span>
+                    }
+                    <form method="post" asp-page-handler="Ping" class="hd-ping-form">
+                        <input type="hidden" name="hostname" value="@r.Hostname" />
+                        <button type="submit" class="btn btn-ghost btn-sm">Ping</button>
+                    </form>
+                </td>
+                <td>
+                    @if (!string.IsNullOrWhiteSpace(r.TermServiceStatus))
+                    {
+                        <span class="badge-pill @RemoteMachinesModel.TermServiceBadgeClass(r.TermServiceStatus)">@r.TermServiceStatus</span>
+                    }
+                    else
+                    {
+                        <span class="text-secondary">—</span>
+                    }
+                </td>
+                <td class="hd-remote-rdp">
+                    @if (RemoteMachinesModel.IsRdpTesting(r))
+                    {
+                        <span class="badge-pill badge-rdp">Testing RDP…</span>
+                    }
+                    else if (r.RdpResponding is bool rd)
+                    {
+                        <span class="badge-pill @RemoteMachinesModel.RdpBadgeClass(rd)" title="@r.RdpError">
+                            @(rd ? "Accepting" : "Not responding")
+                        </span>
+                        @if (r.LastRdpProbeUtc is DateTimeOffset probeUtc)
+                        {
+                            <div class="text-secondary small">@RemoteMachinesModel.FormatContact(probeUtc)</div>
+                        }
+                    }
+                    else
+                    {
+                        <span class="text-secondary">Not probed</span>
+                    }
+                </td>
+                <td class="hd-cell-actions">
+                    <form method="post" asp-page-handler="ProbeRdp" class="hd-action-form">
+                        <input type="hidden" name="hostname" value="@r.Hostname" />
+                        <button type="submit" class="btn btn-hd btn-sm">Test RDP</button>
+                    </form>
+                    <form method="post" asp-page-handler="RestartRds" class="hd-action-form"
+                          onsubmit="return confirm('Queue TermService restart on @r.Hostname? Active RDP sessions may disconnect.');">
+                        <input type="hidden" name="hostname" value="@r.Hostname" />
+                        @if (r.IsOnline)
+                        {
+                            <button type="submit" class="btn btn-ghost btn-sm">Restart RDS</button>
+                        }
+                        else
+                        {
+                            <button type="submit" class="btn btn-ghost btn-sm" disabled title="Agent must be online to receive command">Restart RDS</button>
+                        }
+                    </form>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+@section Scripts {
+    <script src="~/js/restart-countdown.js" asp-append-version="true"></script>
+}
 

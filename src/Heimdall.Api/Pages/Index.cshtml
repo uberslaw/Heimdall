@@ -5,7 +5,10 @@
     var shortLabel = Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d";
 }
 
-<h1 class="hd-title">Machines</h1>
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <h1 class="hd-title mb-1">Machines</h1>
+    <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="machines">Help</a>
+</div>
 <p class="hd-sub">@Model.RangeLabel utilisation · who is on which box · local vs RDP</p>
 
 <form method="get" class="hd-panel mb-3" id="machines-filter-form">

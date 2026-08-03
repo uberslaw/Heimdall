@@ -12,6 +12,7 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<KnownApp> KnownApps => Set<KnownApp>();
     public DbSet<SoeApp> SoeApps => Set<SoeApp>();
     public DbSet<ProcessGroupAssignment> ProcessGroupAssignments => Set<ProcessGroupAssignment>();
+    public DbSet<ProcessCatalogEntry> ProcessCatalogEntries => Set<ProcessCatalogEntry>();
     public DbSet<MetricPolicy> MetricPolicies => Set<MetricPolicy>();
     public DbSet<Team> Teams => Set<Team>();
     public DbSet<PersonTeam> PersonTeams => Set<PersonTeam>();
@@ -86,6 +87,12 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
                 .WithMany(x => x.ProcessPauses)
                 .HasForeignKey(x => x.TrackingConfigId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ProcessCatalogEntry>(e =>
+        {
+            e.HasIndex(x => new { x.ProcessName, x.ExecutablePath }).IsUnique();
+            e.HasIndex(x => x.CompanyName);
         });
 
         modelBuilder.Entity<MetricPolicy>(e =>

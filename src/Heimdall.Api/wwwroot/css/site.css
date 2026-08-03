@@ -829,6 +829,103 @@ html[data-theme="cosmic"] .btn-ghost:hover {
   padding: 0.75rem 1rem;
 }
 
+/* Help page: anchor targets need breathing room under the sticky header. */
+.hd-help-section {
+  scroll-margin-top: 5.5rem;
+}
+
+/* Toasts: auto-dismissing confirmations, replacing sticky inline banners. */
+.hd-toast-region {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 1080;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: min(420px, calc(100vw - 2rem));
+}
+
+.hd-toast {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  font-size: 0.9rem;
+  animation: hd-toast-in 0.18s ease-out;
+}
+
+.hd-toast-success {
+  background: rgba(28, 46, 40, 0.96);
+  border: 1px solid rgba(61, 184, 160, 0.45);
+  color: #8fe0cf;
+}
+
+.hd-toast-error {
+  background: rgba(46, 28, 28, 0.96);
+  border: 1px solid rgba(200, 80, 80, 0.45);
+  color: #f0a0a0;
+}
+
+.hd-toast-close {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.7;
+  line-height: 1;
+  font-size: 1.1rem;
+  padding: 0;
+  cursor: pointer;
+}
+
+.hd-toast-close:hover {
+  opacity: 1;
+}
+
+.hd-toast-hide {
+  animation: hd-toast-out 0.3s ease-in forwards;
+}
+
+@keyframes hd-toast-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes hd-toast-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-6px); }
+}
+
+/* Collapsible <details> panels, collapsed by default; state remembered per-session via JS. */
+details.hd-collapsible > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+details.hd-collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.hd-collapsible > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 1rem;
+  margin-right: 0.35rem;
+  color: var(--hd-muted);
+  transition: transform 0.15s ease;
+}
+
+details.hd-collapsible[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+details.hd-collapsible > summary:hover::before {
+  color: var(--hd-accent);
+}
+
 .hd-stats-tabs {
   display: flex;
   flex-wrap: wrap;

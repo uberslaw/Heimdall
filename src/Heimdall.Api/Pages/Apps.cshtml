@@ -12,6 +12,7 @@
     <div class="d-flex gap-2">
         <a class="btn btn-hd" asp-page="/TrackSoftware">Track Software</a>
         <a class="btn btn-ghost" asp-page="/AppLists">App lists</a>
+        <a class="btn btn-ghost" asp-page="/Help" asp-fragment="applications">Help</a>
     </div>
 </div>
 
@@ -71,6 +72,7 @@
             <tr>
                 <th>Process</th>
                 <th>Users</th>
+                <th>Avg # processes open</th>
                 <th>Runs</th>
                 <th>Total time</th>
                 <th>Last seen</th>
@@ -79,7 +81,7 @@
         <tbody>
         @if (Model.Apps.Count == 0)
         {
-            <tr><td colspan="5">No tracked application usage yet. Use <strong>Track Software</strong> or enable apps under Config.</td></tr>
+            <tr><td colspan="6">No tracked application usage yet. Use <strong>Track Software</strong> or enable apps under Config.</td></tr>
         }
         @foreach (var a in Model.Apps)
         {
@@ -94,6 +96,7 @@
                     }
                 </td>
                 <td>@a.UniqueUsers</td>
+                <td>@ConcurrentDisplay.Render(a.AvgConcurrentProcesses)</td>
                 <td>@a.RunCount</td>
                 <td>@DurationDisplay.Render(a.TotalDuration)</td>
                 <td>@a.LastSeenUtc.ToLocalTime().ToString("g")</td>
@@ -101,4 +104,9 @@
         }
         </tbody>
     </table>
+    <p class="text-secondary small mt-3 mb-0">
+        <strong>Total time</strong> is wall-clock time with at least one instance open (overlapping runs are not double-counted).
+        <strong>Avg # processes open</strong> is the time-weighted average concurrent instance count.
+        <strong>Runs</strong> counts distinct process lifetimes (one per PID).
+    </p>
 </div>

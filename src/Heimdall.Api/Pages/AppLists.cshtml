@@ -15,36 +15,85 @@
     <div class="d-flex gap-2">
         <a class="btn btn-ghost" asp-page="/TrackSoftware">Track Software</a>
         <a class="btn btn-ghost" asp-page="/Apps">Applications</a>
+        <a class="btn btn-ghost" asp-page="/Help" asp-fragment="app-lists" title="How App lists works">Help</a>
     </div>
 </div>
 
-@if (TempData["Message"] is string msg)
-{
-    <div class="alert alert-success">@msg</div>
-}
-@if (TempData["Error"] is string err)
-{
-    <div class="alert alert-danger">@err</div>
-}
-
-<div class="hd-panel mb-3">
-    <p class="mb-2 small text-secondary">
-        <strong>Pre-approval:</strong> agents still track existing Config includes, known apps enabled by default, and any already-assigned app lists.
-        Analysis proposals are <em>not</em> tracked until you Approve all, Approve selected, or Apply team app list.
-        <strong>Core Windows</strong> and <strong>SOE</strong> processes are classified but excluded from proposals by default; only <strong>Specialization</strong> apps are offered for approval.
-        Presence exceptions (winlogon, mstsc, RDP client) remain in Core Windows but are not proposed as trackable apps.
-        <strong>Team path</strong> replaces machine auto-discovered lists with that team schema only.
-    </p>
-    <p class="mb-0 small text-secondary">
-        <strong>CSV upload:</strong> header <code>ProcessName</code> or <code>DisplayName,ProcessName</code>; optional <code>Team</code>, <code>ListName</code> columns for bulk create.
-        JSON: array of <code>{"processName","displayName?","team?","listName?"}</code>.
-    </p>
+<div id="hd-toast-region" class="hd-toast-region">
+    @if (TempData["Message"] is string msg)
+    {
+        <div class="hd-toast hd-toast-success" role="status" data-autodismiss="5000">
+            <span>@msg</span>
+            <button type="button" class="hd-toast-close" aria-label="Dismiss">&times;</button>
+        </div>
+    }
+    @if (TempData["Error"] is string err)
+    {
+        <div class="hd-toast hd-toast-error" role="alert" data-autodismiss="5000">
+            <span>@err</span>
+            <button type="button" class="hd-toast-close" aria-label="Dismiss">&times;</button>
+        </div>
+    }
 </div>
 
 <div class="row g-4">
     <div class="col-lg-5">
-        <div class="hd-panel mb-4">
-            <h2 class="h5 mb-3">@(Model.EditId is null ? "Create app list" : $"Edit list #{Model.EditId}")</h2>
+        <details class="hd-panel mb-4 hd-collapsible" data-key="existing-lists">
+            <summary class="h5 mb-3">Existing lists <span class="text-secondary small">(@Model.Lists.Count)</span></summary>
+            @if (Model.Lists.Count == 0)
+            {
+                <p class="text-secondary mb-0">No app lists yet.</p>
+            }
+            else
+            {
+                <form method="post" asp-page-handler="ExportSelectedLists" id="lists-export-form">
+                    <div class="table-responsive">
+                        <table class="hd-table mb-2">
+                            <thead>
+                                <tr>
+                                    <th style="width:2rem"><input class="form-check-input" type="checkbox" id="lists-select-all" title="Select all" /></th>
+                                    <th>Name</th>
+                                    <th>Team</th>
+                                    <th>Apps</th>
+                                    <th>Scopes</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (var l in Model.Lists)
+                            {
+                                <tr>
+                                    <td><input class="form-check-input lists-row-check" type="checkbox" name="SelectedListIds" value="@l.Id" /></td>
+                                    <td>
+                                        <strong>@l.Name</strong>
+                                        @if (l.IsAutoDiscovered)
+                                        {
+                                            <span class="badge-pill badge-ended ms-1">auto</span>
+                                        }
+                                    </td>
+                                    <td>@(l.TeamName ?? "—")</td>
+                                    <td>@l.EntryCount</td>
+                                    <td>@l.AssignmentCount</td>
+                                    <td><a class="btn btn-ghost btn-sm" asp-page-handler="Edit" asp-route-id="@l.Id">Edit</a></td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        <select class="form-select form-select-sm" name="format" style="max-width:200px">
+                            <option value="csv">App list CSV</option>
+                            <option value="json">App list JSON</option>
+                            <option value="classification-csv">Classification CSV</option>
+                        </select>
+                        <button type="submit" class="btn btn-ghost btn-sm">Export selected</button>
+                    </div>
+                </form>
+            }
+        </details>
+
+        <details class="hd-panel mb-4 hd-collapsible" data-key="create-list" open="@(Model.EditId is not null)">
+            <summary class="h5 mb-3">@(Model.EditId is null ? "Create app list" : $"Edit list #{Model.EditId}")</summary>
             <form method="post" asp-page-handler="SaveList">
                 <input type="hidden" asp-for="EditId" />
                 <div class="mb-3">
@@ -75,10 +124,15 @@
                     <a class="btn btn-ghost" asp-page="/AppLists">Cancel</a>
                 }
             </form>
-        </div>
+        </details>
 
-        <div class="hd-panel mb-4">
-            <h2 class="h5 mb-3">Upload CSV / JSON</h2>
+        <details class="hd-panel mb-4 hd-collapsible" data-key="upload">
+            <summary class="h5 mb-3">Upload CSV / JSON</summary>
+            <p class="mb-2 small text-secondary">
+                Header <code>ProcessName</code> or <code>DisplayName,ProcessName</code>; optional <code>Team</code>, <code>ListName</code> columns for bulk create.
+                JSON: array of <code>{"processName","displayName?","team?","listName?"}</code>.
+                Tip: the <strong>Export selected</strong> buttons on Existing lists / Machine inventory / Proposals below produce files in this exact format, ready to re-import.
+            </p>
             <form method="post" asp-page-handler="Upload" enctype="multipart/form-data">
                 <div class="mb-3">
                     <label class="form-label">Default team (if column omitted)</label>
@@ -95,52 +149,12 @@
                 </div>
                 <button type="submit" class="btn btn-ghost">Upload</button>
             </form>
-        </div>
-
-        <div class="hd-panel">
-            <h2 class="h5 mb-3">Existing lists</h2>
-            @if (Model.Lists.Count == 0)
-            {
-                <p class="text-secondary mb-0">No app lists yet.</p>
-            }
-            else
-            {
-                <table class="hd-table">
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Team</th>
-                            <th>Apps</th>
-                            <th>Scopes</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    @foreach (var l in Model.Lists)
-                    {
-                        <tr>
-                            <td>
-                                <strong>@l.Name</strong>
-                                @if (l.IsAutoDiscovered)
-                                {
-                                    <span class="badge-pill badge-ended ms-1">auto</span>
-                                }
-                            </td>
-                            <td>@(l.TeamName ?? "—")</td>
-                            <td>@l.EntryCount</td>
-                            <td>@l.AssignmentCount</td>
-                            <td><a class="btn btn-ghost btn-sm" asp-page-handler="Edit" asp-route-id="@l.Id">Edit</a></td>
-                        </tr>
-                    }
-                    </tbody>
-                </table>
-            }
-        </div>
+        </details>
     </div>
 
     <div class="col-lg-7">
-        <div class="hd-panel mb-4">
-            <h2 class="h5 mb-3">Apply list to scope</h2>
+        <details class="hd-panel mb-4 hd-collapsible" data-key="apply-scope">
+            <summary class="h5 mb-3">Apply list to scope</summary>
             <form method="post" asp-page-handler="Apply" id="apply-form">
                 <div class="mb-3">
                     <label class="form-label">App list</label>
@@ -163,32 +177,38 @@
                 <partial name="_MachineTree" model="Model.Tree" />
                 <button type="submit" class="btn btn-hd mt-3">Apply</button>
             </form>
-        </div>
+        </details>
 
-        <div class="hd-panel mb-4" id="machine-focus">
-            <h2 class="h5 mb-3">Machine lookup &amp; analysis</h2>
+        <details class="hd-panel mb-4 hd-collapsible" data-key="machine-focus" id="machine-focus" open="@(Model.Lookup is not null)">
+            <summary class="h5 mb-3">Machine lookup &amp; analysis</summary>
             <form method="post" class="row g-2 align-items-end mb-3" id="machine-lookup-form">
                 <div class="col-md-8">
                     <label class="form-label">Machine</label>
-                    <select class="form-select" asp-for="LookupHostname" required>
+                    <select class="form-select" asp-for="LookupHostname" required
+                            onchange="if(this.value){ window.location.href = '@Url.Page("/AppLists")?host=' + encodeURIComponent(this.value) + '#machine-focus'; }">
                         <option value="">— select —</option>
                         @foreach (var m in Model.AllMachines)
                         {
                             <option value="@m.Hostname">@m.Hostname</option>
                         }
                     </select>
+                    <p class="text-secondary small mb-0 mt-1">Selecting a machine reloads this section with its current status — no separate lookup step needed.</p>
                 </div>
                 <div class="col-md-4 d-flex flex-column gap-2">
-                    <button type="submit" formaction="?handler=Lookup" class="btn btn-ghost">Lookup</button>
                     <button type="submit" formaction="?handler=Analyze" class="btn btn-hd">Analyze apps</button>
+                    <button type="submit" formaction="?handler=RequestInventory" class="btn btn-ghost">Request full inventory</button>
                 </div>
             </form>
-            <p class="text-secondary small mb-0">Pick a machine, then Lookup or Analyze. Analyze discovers specialization apps → Pending approval (Core Windows &amp; SOE excluded).</p>
+            <p class="text-secondary small mb-0">
+                Pick a machine, then <strong>Analyze apps</strong> (classify &amp; propose specialization apps) or <strong>Request full inventory</strong>
+                (agent uploads every running process — use when discovery shows only a handful of tracked apps).
+                Wait ~5 min for agent config refresh + ~1 min upload. Core Windows &amp; SOE are classified but excluded from proposals by default.
+            </p>
 
             @if (Model.Lookup is not null && Model.FocusHostname is not null)
             {
                 var status = Model.FocusStatus ?? AppAnalysisStatus.None;
-                <div class="mb-3">
+                <div class="mb-3 mt-3">
                     <strong>@Model.FocusHostname</strong>
                     @if (status == AppAnalysisStatus.PendingApproval)
                     {
@@ -231,13 +251,33 @@
                 <h3 class="h6">Merged processes currently tracked (from lists)</h3>
                 <p class="small font-monospace">@(Model.Lookup.MergedProcesses.Count == 0 ? "—" : string.Join(", ", Model.Lookup.MergedProcesses))</p>
 
+                @if (Model.FocusPendingInventory)
+                {
+                    <div class="alert alert-secondary py-2 small mb-3">
+                        <strong>Pending inventory</strong> — agent has been asked to upload all running processes.
+                        Expect ~5 min (config refresh) + ~1 min (upload). Re-select this machine above (or reload) to refresh.
+                    </div>
+                }
+
                 @if (Model.MachineInventory.Count > 0)
                 {
+                    var agentInventoryCount = Model.MachineInventory.Count(r => string.Equals(r.Source, "AgentInventory", StringComparison.OrdinalIgnoreCase));
+                    var runsOnlyInventory = agentInventoryCount == 0;
                     <hr />
-                    <h3 class="h6">Discovered inventory</h3>
+                    <h3 class="h6">Discovered inventory (@Model.MachineInventory.Count processes)</h3>
+                    @if (runsOnlyInventory)
+                    {
+                        <div class="alert alert-warning py-2 small mb-2">
+                            Showing @Model.MachineInventory.Count process(es) from <strong>tracked runs only</strong> (Config includes / known apps).
+                            For a full snapshot (~100+ processes), click <strong>Request full inventory</strong> above and wait for the agent upload.
+                            Toggle <em>Show Core Windows</em> / <em>Show SOE</em> below — many entries are hidden by default.
+                        </div>
+                    }
                     <p class="small text-secondary mb-2">
-                        Processes seen on this machine from agent runs. Grouped as Core Windows, SOE, or Specialization.
+                        Processes seen on this machine@(agentInventoryCount > 0 ? $" ({agentInventoryCount} from agent inventory snapshot)" : "").
+                        Grouped as Core Windows, SOE, or Specialization.
                         Select rows and move groups in bulk; user overrides persist in the database and win over static catalogs.
+                        Rows marked <span class="badge-pill badge-group-specialization">suggested</span> are new to the catalog with a heuristic classification hint — still needs your confirmation.
                     </p>
                     <form method="post" id="group-edit-form">
                         <input type="hidden" name="AnalyzeHostname" value="@Model.FocusHostname" />
@@ -263,6 +303,14 @@
                         <button type="submit" formaction="?handler=MoveToCoreWindows" class="btn btn-ghost btn-sm">Move to Core Windows</button>
                         <button type="submit" formaction="?handler=MoveToSoe" class="btn btn-ghost btn-sm">Move to SOE</button>
                         <button type="submit" formaction="?handler=MoveToSpecialization" class="btn btn-ghost btn-sm">Move to Specialization</button>
+                        <span class="vr"></span>
+                        <select class="form-select form-select-sm" name="format" style="max-width:200px">
+                            <option value="classification-csv">Classification CSV</option>
+                            <option value="classification-json">Classification JSON</option>
+                            <option value="applist-csv">App list CSV</option>
+                            <option value="applist-json">App list JSON</option>
+                        </select>
+                        <button type="submit" formaction="?handler=ExportSelectedInventory" class="btn btn-ghost btn-sm">Export selected</button>
                     </div>
                     <div class="table-responsive" style="max-height:22rem;overflow:auto">
                         <table class="hd-table hd-sortable mb-0" id="inventory-table">
@@ -301,7 +349,13 @@
                                         }
                                     </td>
                                     <td data-sort-value="@(row.ExecutablePath ?? "")" class="hd-process-path-cell">@(string.IsNullOrWhiteSpace(row.ExecutablePath) ? "—" : row.ExecutablePath)</td>
-                                    <td data-sort-value="@groupLabel"><span class="badge-pill badge-group-@row.Group.ToString().ToLowerInvariant()">@groupLabel</span></td>
+                                    <td data-sort-value="@groupLabel">
+                                        <span class="badge-pill badge-group-@row.Group.ToString().ToLowerInvariant()">@groupLabel</span>
+                                        @if (row.SuggestedGroup is not null)
+                                        {
+                                            <div class="text-secondary small mt-1" title="@row.SuggestionReason">suggested: @AppListsModel.GroupLabel(row.SuggestedGroup.Value)</div>
+                                        }
+                                    </td>
                                     <td data-sort-value="@statusLabel">@statusLabel</td>
                                     <td data-sort-value="@row.Source" class="small">@row.Source</td>
                                 </tr>
@@ -371,10 +425,19 @@
                             </tbody>
                         </table>
 
-                        <div class="d-flex flex-wrap gap-2 mb-3">
+                        <div class="d-flex flex-wrap gap-2 mb-2">
                             <button type="submit" formaction="?handler=ApproveAll" class="btn btn-hd">Approve all</button>
                             <button type="submit" formaction="?handler=ApproveSelected" class="btn btn-ghost">Approve selected</button>
                             <button type="submit" formaction="?handler=Dismiss" class="btn btn-ghost" onclick="return confirm('Ignore all proposed apps for this machine?');">Dismiss / Ignore</button>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+                            <select class="form-select form-select-sm" name="format" style="max-width:200px">
+                                <option value="classification-csv">Classification CSV</option>
+                                <option value="classification-json">Classification JSON</option>
+                                <option value="applist-csv">App list CSV</option>
+                                <option value="applist-json">App list JSON</option>
+                            </select>
+                            <button type="submit" formaction="?handler=ExportSelectedProposals" class="btn btn-ghost btn-sm">Export selected</button>
                         </div>
                         <p class="small text-secondary mb-2">
                             <strong>Approve all / selected</strong> → creates machine-scoped list “Discovered on @Model.FocusHostname” and tracks those apps.
@@ -418,10 +481,15 @@
                     </form>
                 }
             }
-        </div>
+        </details>
 
-        <div class="hd-panel mb-4" id="csv-classifications">
-            <h2 class="h5 mb-3">CSV classifications (AI-assisted)</h2>
+        <details class="hd-panel mb-4 hd-collapsible" data-key="csv-classifications" id="csv-classifications">
+            <summary class="h5 mb-3">CSV classifications (AI-assisted)</summary>
+            <p class="small mb-2">
+                <strong>Central catalog:</strong> @Model.CatalogTotalCount unique process(es) tracked (by name + path)
+                · <span class="@(Model.CatalogUnclassifiedCount > 0 ? "text-warning" : "text-secondary")">@Model.CatalogUnclassifiedCount awaiting classification</span>
+                · <a asp-page-handler="ExportCatalogCsv" class="small">export full catalog CSV</a>
+            </p>
             <p class="small text-secondary mb-3">
                 Export → fill <code>Description</code> in AI → Import to batch update groups and descriptions.
                 Header row: <code>@ProcessGroupService.CsvHeader</code>
@@ -452,10 +520,10 @@
                     Updates <code>ProcessGroupAssignment</code> by <code>ProcessName</code>. Group values: CoreWindows, Soe, Specialization (friendly names accepted). SOE rows sync SoeApps membership.
                 </p>
             </form>
-        </div>
+        </details>
 
-        <div class="hd-panel">
-            <h2 class="h5 mb-3">Change log</h2>
+        <details class="hd-panel hd-collapsible" data-key="changelog">
+            <summary class="h5 mb-3">Change log</summary>
             @if (Model.AuditLogs.Count == 0)
             {
                 <p class="text-secondary mb-0">No changes yet.</p>
@@ -498,7 +566,7 @@
                     </table>
                 </div>
             }
-        </div>
+        </details>
     </div>
 </div>
 
@@ -509,6 +577,36 @@
 (() => {
   const tree = document.getElementById('app-list-tree');
   if (tree && window.HeimdallTree) HeimdallTree.init(tree);
+
+  // Collapsible cards: collapsed by default (server-rendered), remembered per-browser-session.
+  document.querySelectorAll('details.hd-collapsible[data-key]').forEach((d) => {
+    const storeKey = 'hd-collapse:' + d.dataset.key;
+    try {
+      const stored = sessionStorage.getItem(storeKey);
+      if (stored !== null) d.open = stored === '1';
+    } catch (_) { /* storage unavailable */ }
+    d.addEventListener('toggle', () => {
+      try { sessionStorage.setItem(storeKey, d.open ? '1' : '0'); } catch (_) { /* ignore */ }
+    });
+  });
+
+  // Toasts: auto-dismiss after data-autodismiss ms, or on close-button click.
+  document.querySelectorAll('.hd-toast[data-autodismiss]').forEach((toast) => {
+    const dismiss = () => {
+      toast.classList.add('hd-toast-hide');
+      setTimeout(() => toast.remove(), 300);
+    };
+    const ms = parseInt(toast.dataset.autodismiss, 10) || 5000;
+    const timer = setTimeout(dismiss, ms);
+    toast.querySelector('.hd-toast-close')?.addEventListener('click', () => { clearTimeout(timer); dismiss(); });
+  });
+
+  const listsSelectAll = document.getElementById('lists-select-all');
+  if (listsSelectAll) {
+    listsSelectAll.addEventListener('change', () => {
+      document.querySelectorAll('.lists-row-check').forEach((cb) => { cb.checked = listsSelectAll.checked; });
+    });
+  }
 
   function applyInventoryVisibility() {
     const table = document.getElementById('inventory-table');

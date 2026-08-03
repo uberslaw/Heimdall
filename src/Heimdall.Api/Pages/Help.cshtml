@@ -1,0 +1,204 @@
+@page
+@model HelpModel
+@{
+    ViewData["Title"] = "Help";
+}
+
+<h1 class="hd-title">Help</h1>
+<p class="hd-sub mb-4">Quick, page-by-page guide to Heimdall. Every page has a <strong>Help</strong> link that jumps straight to its section here.</p>
+
+<nav class="hd-panel mb-4" aria-label="Help sections">
+    <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-ghost btn-sm" href="#machines">Machines</a>
+        <a class="btn btn-ghost btn-sm" href="#applications">Applications</a>
+        <a class="btn btn-ghost btn-sm" href="#app-lists">App lists</a>
+        <a class="btn btn-ghost btn-sm" href="#track-software">Track Software</a>
+        <a class="btn btn-ghost btn-sm" href="#socratize">Socratize</a>
+        <a class="btn btn-ghost btn-sm" href="#sessions">Sessions</a>
+        <a class="btn btn-ghost btn-sm" href="#remote-machines">Remote Machines</a>
+        <a class="btn btn-ghost btn-sm" href="#staff-access">Staff Access</a>
+        <a class="btn btn-ghost btn-sm" href="#remote-access-groups">Remote Access Groups</a>
+        <a class="btn btn-ghost btn-sm" href="#tracking-config">Tracking config</a>
+        <a class="btn btn-ghost btn-sm" href="#teams">Teams</a>
+        <a class="btn btn-ghost btn-sm" href="#utilization">Utilization criteria</a>
+        <a class="btn btn-ghost btn-sm" href="#cost">Cost</a>
+        <a class="btn btn-ghost btn-sm" href="#stats">Stats</a>
+        <a class="btn btn-ghost btn-sm" href="#clients">Clients</a>
+        <a class="btn btn-ghost btn-sm" href="#admin-preferences">Theme &amp; database mode</a>
+    </div>
+</nav>
+
+<section id="machines" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Machines</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> the landing page — who's logged in where, local vs RDP, and daily utilisation per host.</p>
+    <ol class="small mb-0">
+        <li>Use the region/office tree on the left (or the search box) to narrow down to a machine, group, region or office.</li>
+        <li>The date-range control at the top changes the utilisation window for every stat on the page.</li>
+        <li>Click a machine's hostname to open its <a asp-page="/Machine">machine detail</a> page (sessions, apps used, metrics).</li>
+        <li>Badges show <span class="badge-pill badge-rdp">RDP</span> / <span class="badge-pill badge-local">Local</span> session type and whether a machine is currently in use.</li>
+    </ol>
+</section>
+
+<section id="applications" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Applications</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> tracked non-Windows processes across the fleet, with usage over the selected date range.</p>
+    <ol class="small mb-0">
+        <li>Sort/filter the table to find an application by name, group, or usage.</li>
+        <li>Click an application to open its detail page — which machines and users run it, and how often.</li>
+        <li>To change <em>what</em> counts as an application (vs. Core Windows / SOE noise), use <a asp-page="/AppLists" asp-fragment="app-lists">App lists</a>.</li>
+    </ol>
+</section>
+
+<section id="app-lists" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">App lists</h2>
+    <p class="text-secondary small mb-2">
+        <strong>Purpose:</strong> named schemas of processes (e.g. a team's toolset) that can be applied globally, or scoped to a region, office, or machine.
+        Discovering apps on a machine never auto-tracks them — you approve first.
+    </p>
+    <ol class="small">
+        <li><strong>Existing lists</strong> — browse, edit, or select several and <em>Export selected</em> (App list CSV/JSON, or Classification CSV for the AI workflow below).</li>
+        <li><strong>Create app list</strong> — name it, optionally link a team, and paste process names (one per line, or <code>DisplayName,ProcessName</code>).</li>
+        <li><strong>Upload CSV / JSON</strong> — bulk-create/update lists from a file; the same shape the Export selected buttons produce, so round-tripping just works.</li>
+        <li><strong>Apply list to scope</strong> — pick a list and tick All machines, or specific regions/offices/machines in the tree.</li>
+        <li>
+            <strong>Machine lookup &amp; analysis</strong> — pick a machine, then:
+            <ul>
+                <li><em>Analyze apps</em> — classifies everything already seen (Core Windows / SOE / Specialization) and proposes new Specialization apps for approval.</li>
+                <li><em>Request full inventory</em> — asks the agent to upload every running process on its next cycle (~5 min config refresh + ~1 min upload); use this when Analyze only shows a handful of apps.</li>
+                <li>Selecting a different machine from the dropdown reloads this section automatically — there's no separate "look up" step.</li>
+                <li>Tick rows in the inventory/proposals tables and use <em>Export selected</em> to pull just those processes out as CSV/JSON.</li>
+                <li>Rows tagged <span class="badge-pill badge-group-specialization">suggested</span> are new to the process catalog with a heuristic classification hint (same install folder or publisher as something already classified) — always double-check before approving.</li>
+            </ul>
+        </li>
+        <li><strong>CSV classifications (AI-assisted)</strong> — export processes (all, for one machine, or your selection above), have an AI fill in <code>Description</code> and correct <code>Group</code>, then import to batch-update. The <strong>central catalog</strong> summary here shows how many unique processes (by name + path) have ever been seen, and how many still need classifying.</li>
+        <li><strong>Change log</strong> — every create/upload/approve/import action is recorded here, so the toast messages that pop up (and auto-dismiss after ~5s) aren't the only record.</li>
+    </ol>
+    <p class="small text-secondary mb-0">All cards on this page are collapsible and start collapsed — click a heading to expand it; your open/closed choices are remembered for the browser session.</p>
+</section>
+
+<section id="track-software" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Track Software</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> a fast path to start tracking one specific process name without building a full app list.</p>
+    <ol class="small mb-0">
+        <li>Enter the process name (and an optional friendly title).</li>
+        <li>Choose the scope — all machines, or specific regions/offices/machines.</li>
+        <li>Submit; the process is added to Config's include list for that scope so usage starts appearing in Applications/Stats.</li>
+    </ol>
+</section>
+
+<section id="socratize" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Socratize</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> a one-machine cost-justification brief — probes sessions, local vs. RDP time, utilisation, apps, and team, then gives a verdict.</p>
+    <ol class="small mb-0">
+        <li>Pick (or search for) a machine.</li>
+        <li>Review the generated brief — utilisation score, busy metrics, apps in use, and a keep/investigate/retire-style verdict.</li>
+        <li>The verdict's thresholds come from <a asp-page="/Utilization" asp-fragment="utilization">Utilization criteria</a> — tune those if verdicts feel off.</li>
+    </ol>
+</section>
+
+<section id="sessions" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Sessions</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> local and inbound-RDP logons, with active vs. disconnected time per session.</p>
+    <ol class="small mb-0">
+        <li>Filter by machine, user, or date range.</li>
+        <li>Expand a session to drill into which apps were used and for how long during it.</li>
+    </ol>
+</section>
+
+<section id="remote-machines" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Remote Machines</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> RDP/RDS health at a glance — service status, reachability, and a way to restart RDS remotely.</p>
+    <ol class="small mb-0">
+        <li>Review per-machine RDP health, ping, and Terminal Services status (refreshed by the agent, plus on-demand from the API server).</li>
+        <li>Use <em>Restart RDS</em> to queue a remote restart command for the agent to pick up; progress shows inline.</li>
+    </ol>
+</section>
+
+<section id="staff-access" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Staff Access</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> a restricted, read-mostly view for non-admin staff to check live metrics on the machines they're allowed to see.</p>
+    <ol class="small mb-0">
+        <li>Staff sign in with their Windows/AD identity — access is limited to machines in a <a asp-page="/RemoteAccessGroups" asp-fragment="remote-access-groups">Remote Access Group</a> their email belongs to.</li>
+        <li>They can optionally favourite specific processes to prioritise in their live view.</li>
+        <li>If someone can't see a machine, check they're a member (by email) of a group that includes it.</li>
+    </ol>
+</section>
+
+<section id="remote-access-groups" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Remote Access Groups</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> admin setup for <a asp-page="/StaffAccess" asp-fragment="staff-access">Staff Access</a> — who can see which machines, and which processes they can favourite.</p>
+    <ol class="small mb-0">
+        <li>Create a group, add staff by email (must match their Windows UPN or <code>user@domain</code> login).</li>
+        <li>Assign machines to the group — only those machines are visible to its members.</li>
+        <li>Optionally curate a favourite-process shortlist and toggle "favourites only" mode for the group.</li>
+    </ol>
+</section>
+
+<section id="tracking-config" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Tracking config</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> the underlying scoped rules for sampling, include/exclude process lists, known apps, and metric thresholds that everything else builds on.</p>
+    <ol class="small mb-0">
+        <li>Configs are scoped (All / Region / Office / Group / Machine) with priority — more specific scopes win.</li>
+        <li>Include/exclude lists control which processes the agent samples at all; <a asp-page="/AppLists" asp-fragment="app-lists">App lists</a> and <a asp-page="/TrackSoftware" asp-fragment="track-software">Track Software</a> both write into this.</li>
+        <li>Sample/upload/refresh intervals here control agent chattiness — raise them on constrained networks.</li>
+        <li>See <a asp-page="/Utilization" asp-fragment="utilization">Utilization criteria</a> for the scoring weights that consume this data.</li>
+    </ol>
+</section>
+
+<section id="teams" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Teams</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> who belongs to which part of the business, so app lists and license-cost reporting can be attributed to a team.</p>
+    <ol class="small mb-0">
+        <li>Create teams (optionally nested under a parent team) and a short code.</li>
+        <li>Add members by username — CSV import is supported for bulk setup.</li>
+        <li>Link a team to an <a asp-page="/AppLists" asp-fragment="app-lists">app list</a> so "Apply team list" on a machine can track exactly that team's toolset.</li>
+    </ol>
+</section>
+
+<section id="utilization" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Utilization criteria</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> the global weights and targets that produce the <a asp-page="/Socratize" asp-fragment="socratize">Socratize</a> verdict (and utilisation scoring elsewhere).</p>
+    <ol class="small mb-0">
+        <li>Weights (users, daily utilisation, busy metrics, app value) must add to 100% — the page shows a running total.</li>
+        <li>Ideal targets (min users, ideal daily %, working hours/day) define what "good" looks like before scoring kicks in.</li>
+        <li>High/Adequate/Mixed thresholds decide which verdict bucket a machine lands in.</li>
+    </ol>
+</section>
+
+<section id="cost" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Cost</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> hardware purchase cost, warranty, support hours, and inventory/reimage identity per machine — the input side of cost-justification.</p>
+    <ol class="small mb-0">
+        <li>Edit a row to record purchase cost/currency, warranty dates, and hardware specs (or let the agent auto-fill what it can detect).</li>
+        <li>Support hourly rate feeds into the <a asp-page="/Socratize" asp-fragment="socratize">Socratize</a> brief's cost-per-hour comparison.</li>
+        <li>Reimage identity fields help distinguish a genuinely new machine from the same box after a reimage.</li>
+    </ol>
+</section>
+
+<section id="stats" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Stats</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> usage analytics by machine scope (region/office/group/machine) in filterable, sortable tables — the reporting rollup.</p>
+    <ol class="small mb-0">
+        <li>Pick a scope tab and date range; tables cover utilisation, app usage, and session counts for that scope.</li>
+        <li>Click column headers to sort; use the filter box to narrow rows by name.</li>
+    </ol>
+</section>
+
+<section id="clients" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Clients (agent versions)</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> the agent build reported per host (from its last heartbeat) vs. the currently published client pack version — a fleet-upgrade view.</p>
+    <ol class="small mb-0">
+        <li>Hosts behind the published version are flagged so you know who still needs to pick up an upgrade.</li>
+        <li>Agents self-update from the published client pack on their normal refresh cycle — no manual push needed once it's published.</li>
+    </ol>
+</section>
+
+<section id="admin-preferences" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Admin menu: Theme &amp; database mode</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> personal display preferences and the sandbox/live data toggle, both in the top-right <strong>Admin</strong> menu.</p>
+    <ol class="small mb-0">
+        <li><strong>Theme</strong> — switch between "Original Recipe" and "Cosmic" styling; Cosmic also unlocks a gold-accent variant picker. Both are remembered via cookie.</li>
+        <li><strong>Database mode</strong> — <em>Live</em> shows real agent data; <em>Sandbox (DEV)</em> is an isolated demo/test database. Agent ingest always writes to Live regardless of which mode you're browsing — don't confuse a quiet Sandbox view with agents being down.</li>
+        <li>A <span class="hd-dev-badge" style="font-size:0.7rem;padding:0.1rem 0.4rem;">DEV</span>-style badge in the header means you're currently viewing the sandbox, not production data.</li>
+    </ol>
+</section>

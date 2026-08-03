@@ -14,4 +14,9 @@ public sealed class DiscoveredProcessDto
     public required string ProcessName { get; init; }
     public string? DisplayName { get; init; }
     public string? ExecutablePath { get; init; }
+    /// <summary>Win32 FileVersionInfo fields, captured by the agent when the executable path is readable. Null if unavailable.</summary>
+    public string? FileVersion { get; init; }
+    public string? ProductVersion { get; init; }
+    public string? CompanyName { get; init; }
+    public string? FileDescription { get; init; }
 }

@@ -7,13 +7,15 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Pages;
 
-public class AppListsModel(HeimdallDbContext db, AppListService appLists, ProcessGroupService processGroups) : PageModel
+public class AppListsModel(HeimdallDbContext db, AppListService appLists, ProcessGroupService processGroups, ProcessCatalogService catalog) : PageModel
 {
     public List<AppListRow> Lists { get; private set; } = [];
     public List<Team> Teams { get; private set; } = [];
     public List<AppListAuditLog> AuditLogs { get; private set; } = [];
     public IReadOnlyList<MachineHierarchy.RegionNode> Tree { get; private set; } = [];
     public List<Machine> AllMachines { get; private set; } = [];
+    public int CatalogTotalCount { get; private set; }
+    public int CatalogUnclassifiedCount { get; private set; }
 
     public AppListService.MachineAppListsView? Lookup { get; private set; }
     public AppListService.AnalysisResult? Analysis { get; private set; }
@@ -24,6 +26,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     public int AutoDiscoveredEntryCount { get; private set; }
     public string? FocusHostname { get; private set; }
     public AppAnalysisStatus? FocusStatus { get; private set; }
+    public bool FocusPendingInventory { get; private set; }
 
     [BindProperty] public int? EditId { get; set; }
     [BindProperty] public string ListName { get; set; } = "";
@@ -45,6 +48,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     [BindProperty] public int? DefaultUploadTeamId { get; set; }
     [BindProperty] public IFormFile? UploadFile { get; set; }
     [BindProperty] public IFormFile? ClassificationCsvFile { get; set; }
+    [BindProperty] public List<int> SelectedListIds { get; set; } = [];
 
     public async Task OnGetAsync(string? host = null, string? section = null)
     {
@@ -126,26 +130,6 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         return RedirectToPage(new { section = "apply" });
     }
 
-    public async Task<IActionResult> OnPostLookupAsync()
-    {
-        await LoadAsync();
-        if (string.IsNullOrWhiteSpace(LookupHostname))
-        {
-            TempData["Error"] = "Pick a machine.";
-            return Page();
-        }
-        FocusHostname = LookupHostname.Trim();
-        try
-        {
-            await LoadFocusAsync(FocusHostname);
-        }
-        catch (Exception ex)
-        {
-            TempData["Error"] = $"Lookup failed for {FocusHostname}: {ex.Message}";
-        }
-        return Page();
-    }
-
     public async Task<IActionResult> OnPostAnalyzeAsync()
     {
         await LoadAsync();
@@ -163,13 +147,43 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
             Analysis = await appLists.AnalyzeMachineAsync(host, null, requestAgentInventoryIfEmpty: true, HttpContext.RequestAborted);
             await LoadFocusAsync(host);
 
-            TempData["Message"] = Analysis.queuedForAgent
-                ? $"Analysis queued for {host}. Agent will upload process inventory on next cycle; then approve here."
-                : $"Analysis ready for {host}: {Analysis.Proposals.Count} app(s) pending approval — nothing new is tracked until you approve.";
+            var catalogNote = Analysis.NewCatalogCount > 0
+                ? $" {Analysis.NewCatalogCount} new process(es) added to the catalog and flagged for classification."
+                : "";
+            TempData["Message"] = (Analysis.queuedForAgent
+                ? $"Analysis queued for {host}. Agent will upload process inventory on next cycle (~5 min config refresh + ~1 min upload); then approve here."
+                : $"Analysis ready for {host}: {Analysis.Proposals.Count} app(s) pending approval — nothing new is tracked until you approve. If inventory looks incomplete, use Request full inventory.")
+                + catalogNote;
         }
         catch (Exception ex)
         {
             TempData["Error"] = $"Analyze failed for {host}: {ex.Message}";
+        }
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostRequestInventoryAsync()
+    {
+        await LoadAsync();
+        var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            TempData["Error"] = "Pick a machine.";
+            return Page();
+        }
+
+        FocusHostname = host;
+        LookupHostname = host;
+        try
+        {
+            await appLists.RequestAgentInventoryAsync(host, HttpContext.RequestAborted);
+            await LoadFocusAsync(host);
+            TempData["Message"] =
+                $"Full inventory requested for {host}. Agent picks this up on next config refresh (~5 min), then uploads (~1 min). Re-select {host} above (or reload the page) once the Pending inventory badge clears.";
+        }
+        catch (Exception ex)
+        {
+            TempData["Error"] = $"Inventory request failed for {host}: {ex.Message}";
         }
         return Page();
     }
@@ -291,6 +305,134 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         return File(bytes, "text/csv; charset=utf-8", "heimdall-classified-processes.csv");
     }
 
+    public async Task<IActionResult> OnGetExportCatalogCsvAsync()
+    {
+        var entries = await catalog.GetAllAsync(HttpContext.RequestAborted);
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("ProcessName,ExecutablePath,DisplayName,FileVersion,ProductVersion,CompanyName,FileDescription,SeenCount,FirstSeenUtc,LastSeenUtc,FirstSeenHost,LastSeenHost,SuggestedGroup,SuggestionReason");
+        foreach (var e in entries)
+        {
+            sb.AppendLine(string.Join(",",
+                CsvCell(e.ProcessName), CsvCell(e.ExecutablePath), CsvCell(e.DisplayName ?? ""),
+                CsvCell(e.FileVersion ?? ""), CsvCell(e.ProductVersion ?? ""), CsvCell(e.CompanyName ?? ""), CsvCell(e.FileDescription ?? ""),
+                e.SeenCount.ToString(), CsvCell(e.FirstSeenUtc.ToString("u")), CsvCell(e.LastSeenUtc.ToString("u")),
+                CsvCell(e.FirstSeenHostname ?? ""), CsvCell(e.LastSeenHostname ?? ""),
+                CsvCell(e.SuggestedGroup?.ToString() ?? ""), CsvCell(e.SuggestionReason ?? "")));
+        }
+        return File(System.Text.Encoding.UTF8.GetBytes(sb.ToString()), "text/csv; charset=utf-8", "heimdall-process-catalog.csv");
+    }
+
+    private static string CsvCell(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        return value.Contains(',') || value.Contains('"') || value.Contains('\n')
+            ? $"\"{value.Replace("\"", "\"\"")}\""
+            : value;
+    }
+
+    /// <summary>Export checked rows from the machine inventory table. format: applist-csv | applist-json | classification-csv | classification-json.</summary>
+    public async Task<IActionResult> OnPostExportSelectedInventoryAsync(string? format)
+    {
+        var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
+        if (string.IsNullOrWhiteSpace(host) || SelectedGroupProcesses.Count == 0)
+        {
+            TempData["Error"] = "Select at least one process in the inventory table to export.";
+            return RedirectToPage(new { host });
+        }
+
+        var inventory = await appLists.GetMachineInventoryAsync(host, HttpContext.RequestAborted);
+        var selected = inventory.Where(r => SelectedGroupProcesses.Contains(r.ProcessName, StringComparer.OrdinalIgnoreCase)).ToList();
+        if (selected.Count == 0)
+        {
+            TempData["Error"] = "No matching processes found to export.";
+            return RedirectToPage(new { host });
+        }
+
+        return await BuildSelectionExportAsync(
+            selected.Select(r => (r.ProcessName, r.ExecutablePath, (string?)r.DisplayName)).ToList(),
+            $"Exported from {host}", $"heimdall-inventory-{SafeFileToken(host)}", format);
+    }
+
+    /// <summary>Export checked rows from the pending-approval proposals table. format: applist-csv | applist-json | classification-csv | classification-json.</summary>
+    public async Task<IActionResult> OnPostExportSelectedProposalsAsync(string? format)
+    {
+        var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
+        if (string.IsNullOrWhiteSpace(host) || SelectedProcesses.Count == 0)
+        {
+            TempData["Error"] = "Select at least one proposed app to export.";
+            return RedirectToPage(new { host });
+        }
+
+        var lookup = await appLists.GetEffectiveForHostAsync(host, HttpContext.RequestAborted);
+        var selected = lookup.PendingProposals.Where(p => SelectedProcesses.Contains(p.ProcessName, StringComparer.OrdinalIgnoreCase)).ToList();
+        if (selected.Count == 0)
+        {
+            TempData["Error"] = "No matching proposals found to export.";
+            return RedirectToPage(new { host });
+        }
+
+        return await BuildSelectionExportAsync(
+            selected.Select(p => (p.ProcessName, p.ExecutablePath, (string?)p.DisplayName)).ToList(),
+            $"Discovered on {host}", $"heimdall-proposals-{SafeFileToken(host)}", format);
+    }
+
+    /// <summary>Export checked rows from Existing lists. format: csv | json | classification-csv.</summary>
+    public async Task<IActionResult> OnPostExportSelectedListsAsync(string? format)
+    {
+        if (SelectedListIds.Count == 0)
+        {
+            TempData["Error"] = "Select at least one app list to export.";
+            return RedirectToPage(new { section = "lists" });
+        }
+
+        var lists = await db.AppLists.AsNoTracking().Include(l => l.Entries)
+            .Where(l => SelectedListIds.Contains(l.Id))
+            .ToListAsync(HttpContext.RequestAborted);
+        if (lists.Count == 0)
+        {
+            TempData["Error"] = "Selected app lists not found.";
+            return RedirectToPage(new { section = "lists" });
+        }
+
+        var rows = lists.SelectMany(l => l.Entries.Select(e => (ListName: l.Name, e.ProcessName, e.DisplayName))).ToList();
+        if (string.Equals(format, "classification-csv", StringComparison.OrdinalIgnoreCase))
+        {
+            var exportRows = await processGroups.BuildExportRowsForAsync(
+                rows.Select(r => (r.ProcessName, (string?)null, r.DisplayName)), HttpContext.RequestAborted);
+            return File(ProcessGroupService.RenderCsv(exportRows), "text/csv; charset=utf-8", "heimdall-lists-classification.csv");
+        }
+        if (string.Equals(format, "json", StringComparison.OrdinalIgnoreCase))
+            return File(AppListService.RenderUploadJson(rows), "application/json", "heimdall-lists-export.json");
+
+        return File(AppListService.RenderUploadCsv(rows), "text/csv; charset=utf-8", "heimdall-lists-export.csv");
+    }
+
+    private async Task<IActionResult> BuildSelectionExportAsync(
+        IReadOnlyList<(string ProcessName, string? ExecutablePath, string? DisplayName)> selected,
+        string listName,
+        string fileBaseName,
+        string? format)
+    {
+        switch (format)
+        {
+            case "classification-json":
+                return File(ProcessGroupService.RenderJson(await processGroups.BuildExportRowsForAsync(selected, HttpContext.RequestAborted)),
+                    "application/json", $"{fileBaseName}.json");
+            case "applist-json":
+                return File(AppListService.RenderUploadJson(selected.Select(s => (s.ProcessName, s.DisplayName)), listName),
+                    "application/json", $"{fileBaseName}-applist.json");
+            case "applist-csv":
+                return File(AppListService.RenderUploadCsv(selected.Select(s => (s.ProcessName, s.DisplayName)), listName),
+                    "text/csv; charset=utf-8", $"{fileBaseName}-applist.csv");
+            default:
+                return File(ProcessGroupService.RenderCsv(await processGroups.BuildExportRowsForAsync(selected, HttpContext.RequestAborted)),
+                    "text/csv; charset=utf-8", $"{fileBaseName}.csv");
+        }
+    }
+
+    private static string SafeFileToken(string value) =>
+        string.Concat(value.Where(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_'));
+
     public async Task<IActionResult> OnPostImportClassificationsAsync()
     {
         await LoadAsync();
@@ -323,7 +465,18 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
             return RedirectToPage(string.IsNullOrWhiteSpace(host) ? null : new { host });
         }
 
+        var newCatalogCount = 0;
+        if (result.ImportedRows is { Count: > 0 })
+        {
+            var catalogResult = await catalog.UpsertAsync(
+                result.ImportedRows.Select(r => new ProcessCatalogService.CatalogItem(r.ProcessName, r.ExecutablePath, r.DisplayName)),
+                null, "classification CSV import", HttpContext.RequestAborted);
+            newCatalogCount = catalogResult.NewCount;
+        }
+
         var summary = $"Import complete: {result.Updated} updated, {result.Skipped} skipped.";
+        if (newCatalogCount > 0)
+            summary += $" {newCatalogCount} new process(es) added to the catalog.";
         if (result.Errors.Count > 0)
         {
             var preview = string.Join("; ", result.Errors.Take(5));
@@ -382,6 +535,9 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         FocusStatus = Lookup.AnalysisStatus;
         AnalyzeHostname = hostname;
 
+        var machine = await db.Machines.AsNoTracking().FirstOrDefaultAsync(m => m.Hostname == hostname, HttpContext.RequestAborted);
+        FocusPendingInventory = machine?.PendingAppAnalysis == true;
+
         var discoveredList = await db.AppLists.AsNoTracking()
             .Include(a => a.Entries)
             .FirstOrDefaultAsync(a => a.Name == $"Discovered on {hostname}" && a.IsAutoDiscovered, HttpContext.RequestAborted);
@@ -417,6 +573,9 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
             .OrderByDescending(a => a.Utc)
             .Take(100)
             .ToList();
+
+        CatalogTotalCount = await catalog.CountAsync(HttpContext.RequestAborted);
+        CatalogUnclassifiedCount = await catalog.CountNeedingClassificationAsync(HttpContext.RequestAborted);
     }
 
     private List<(ConfigScope Scope, string? ScopeValue)> BuildScopes()

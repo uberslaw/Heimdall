@@ -9,7 +9,10 @@
         : (editing ? ConfigModel.FormatScope(Model.SamplingScope, null) : "New scoped config");
 }
 
-<h1 class="hd-title">Tracking config</h1>
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <h1 class="hd-title mb-1">Tracking config</h1>
+    <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="tracking-config">Help</a>
+</div>
 <p class="hd-sub">Scoped sampling, include/exclude process lists, known apps, and metric thresholds · <a asp-page="/Utilization">Utilization criteria</a></p>
 
 @if (TempData["Message"] is string msg)

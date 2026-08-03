@@ -15,6 +15,8 @@
         <a asp-page="/Stats" asp-route-ScopeKind="Machine" asp-route-ScopeValue="@d.Hostname" asp-route-Days="@Model.RangeDays">Open in Stats</a>
         <span> · </span>
         <a asp-page="/Socratize" asp-route-Host="@d.Hostname">Socratize</a>
+        <span> · </span>
+        <a asp-page="/AppLists" asp-route-host="@d.Hostname">Analyze apps</a>
     }
 </p>
 
@@ -159,6 +161,7 @@ else if (d is not null)
                     <tr>
                         <th data-sort="text">Application</th>
                         <th data-sort="num" data-default-desc>Time open</th>
+                        <th data-sort="num">Avg # processes open</th>
                         <th data-sort="num">Runs</th>
                         <th data-sort="num">Users</th>
                         <th data-sort="num">Share</th>
@@ -183,6 +186,7 @@ else if (d is not null)
                             }
                         </td>
                         <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
+                        <td data-sort-value="@a.AvgConcurrentProcesses.ToString("0.###")">@ConcurrentDisplay.Render(a.AvgConcurrentProcesses)</td>
                         <td data-sort-value="@a.RunCount">@a.RunCount</td>
                         <td data-sort-value="@a.UniqueUsers">@a.UniqueUsers</td>
                         <td data-sort-value="@share">@share.ToString("0")%</td>

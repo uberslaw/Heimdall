@@ -6,7 +6,7 @@ using Heimdall.Shared.Contracts;
 using Microsoft.EntityFrameworkCore;
 namespace Heimdall.Api.Services;
 
-public sealed class AppListService(HeimdallDbContext db, ProcessGroupService processGroups)
+public sealed class AppListService(HeimdallDbContext db, ProcessGroupService processGroups, ProcessCatalogService catalog)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -103,6 +103,10 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
 
         await db.SaveChangesAsync(ct);
 
+        await catalog.UpsertAsync(
+            list.Entries.Select(e => new ProcessCatalogService.CatalogItem(e.ProcessName, null, e.DisplayName)),
+            null, id is null ? $"list “{list.Name}” created" : $"list “{list.Name}” updated", ct);
+
         var newDetail = SummarizeList(list);
         await AuditAsync(
             id is null ? "created" : "updated",
@@ -110,6 +114,47 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
             list.Id, list.Name, actor: ResolveActor(), ct: ct);
 
         return list;
+    }
+
+    /// <summary>Render a process selection in the same CSV shape the Upload box accepts, for round-tripping back in.</summary>
+    public static byte[] RenderUploadCsv(IEnumerable<(string ProcessName, string? DisplayName)> processes, string listName)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("ListName,ProcessName,DisplayName");
+        foreach (var (proc, display) in processes)
+            sb.AppendLine($"{CsvEscape(listName)},{CsvEscape(proc)},{CsvEscape(display ?? "")}");
+        return Encoding.UTF8.GetBytes(sb.ToString());
+    }
+
+    /// <summary>Render a process selection in the same JSON shape the Upload box accepts, for round-tripping back in.</summary>
+    public static byte[] RenderUploadJson(IEnumerable<(string ProcessName, string? DisplayName)> processes, string listName)
+    {
+        var payload = processes.Select(p => new { processName = p.ProcessName, displayName = p.DisplayName, listName });
+        return Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    /// <summary>Multi-list variant (e.g. exporting several selected app lists' entries at once).</summary>
+    public static byte[] RenderUploadCsv(IEnumerable<(string ListName, string ProcessName, string? DisplayName)> rows)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("ListName,ProcessName,DisplayName");
+        foreach (var (listName, proc, display) in rows)
+            sb.AppendLine($"{CsvEscape(listName)},{CsvEscape(proc)},{CsvEscape(display ?? "")}");
+        return Encoding.UTF8.GetBytes(sb.ToString());
+    }
+
+    public static byte[] RenderUploadJson(IEnumerable<(string ListName, string ProcessName, string? DisplayName)> rows)
+    {
+        var payload = rows.Select(r => new { processName = r.ProcessName, displayName = r.DisplayName, listName = r.ListName });
+        return Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private static string CsvEscape(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        return value.Contains(',') || value.Contains('"') || value.Contains('\n')
+            ? $"\"{value.Replace("\"", "\"\"")}\""
+            : value;
     }
 
     public async Task<(int ListsCreated, int EntriesAdded)> UploadCsvAsync(
@@ -247,6 +292,11 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         }
 
         await db.SaveChangesAsync(ct);
+
+        await catalog.UpsertAsync(
+            rows.Select(r => new ProcessCatalogService.CatalogItem(r.ProcessName, null, r.DisplayName)),
+            null, "CSV/JSON upload", ct);
+
         await AuditAsync("uploaded", $"Upload: {listsCreated} list(s), {entriesAdded} entr(y/ies)", ct: ct);
         return (listsCreated, entriesAdded);
     }
@@ -417,13 +467,19 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
                 var name = ConfigService.NormalizeProcessName(d.ProcessName);
                 if (name.Length == 0) continue;
                 var display = string.IsNullOrWhiteSpace(d.DisplayName) ? name : d.DisplayName.Trim();
-                MergeCandidate(candidates, name, display, d.ExecutablePath, "AgentInventory");
+                MergeCandidate(candidates, name, display, d.ExecutablePath, "AgentInventory",
+                    d.FileVersion, d.ProductVersion, d.CompanyName, d.FileDescription);
             }
         }
 
         machine.DiscoveredInventoryJson = JsonSerializer.Serialize(
             candidates.Values.Select(c => new InventorySnapshotRow(c.ProcessName, c.DisplayName, c.ExecutablePath, c.Source)).ToList(),
             JsonOptions);
+
+        var catalogResult = await catalog.UpsertAsync(
+            candidates.Values.Select(c => new ProcessCatalogService.CatalogItem(
+                c.ProcessName, c.ExecutablePath, c.DisplayName, c.FileVersion, c.ProductVersion, c.CompanyName, c.FileDescription)),
+            hostname, "machine analysis", ct);
 
         var proposals = candidates.Values
             .Select(c => ToProposedApp(c, ctx))
@@ -437,7 +493,7 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
             await AuditAsync("analyze-queued",
                 $"Analysis queued for {hostname}; waiting for agent process inventory.",
                 hostname: hostname, ct: ct);
-            return new AnalysisResult(hostname, [], AppAnalysisStatus.None, queuedForAgent: true);
+            return new AnalysisResult(hostname, [], AppAnalysisStatus.None, queuedForAgent: true, catalogResult.NewCount);
         }
 
         machine.AppsAnalyzedAt = DateTimeOffset.UtcNow;
@@ -449,7 +505,7 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         await AuditAsync("analyzed",
             $"Analysis for {hostname}: {proposals.Count} specialization app(s) pending approval (Core Windows and SOE excluded by default). Pre-approval tracking = existing config includes + known defaults + already-assigned app lists only.",
             hostname: hostname, ct: ct);
-        return new AnalysisResult(hostname, proposals, AppAnalysisStatus.PendingApproval, queuedForAgent: false);
+        return new AnalysisResult(hostname, proposals, AppAnalysisStatus.PendingApproval, queuedForAgent: false, catalogResult.NewCount);
     }
 
     public async Task ApproveAsync(
@@ -595,6 +651,19 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
             hostname: hostname, ct: ct);
     }
 
+    /// <summary>Ask the agent to upload a one-shot full process inventory on its next config/upload cycle.</summary>
+    public async Task RequestAgentInventoryAsync(string hostname, CancellationToken ct)
+    {
+        var machine = await db.Machines.FirstOrDefaultAsync(m => m.Hostname == hostname, ct)
+            ?? throw new InvalidOperationException($"Machine “{hostname}” not found.");
+
+        machine.PendingAppAnalysis = true;
+        await db.SaveChangesAsync(ct);
+        await AuditAsync("inventory-requested",
+            $"Requested full process inventory for {hostname}. Agent picks this up on next config refresh (~5 min), then uploads on next heartbeat (~1 min).",
+            hostname: hostname, ct: ct);
+    }
+
     public async Task<IReadOnlyList<ClassifiedProcessRow>> GetMachineInventoryAsync(string hostname, CancellationToken ct)
     {
         var machine = await db.Machines.AsNoTracking().FirstOrDefaultAsync(m => m.Hostname == hostname, ct);
@@ -628,11 +697,18 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         foreach (var p in proposals.Values)
             MergeCandidate(map, p.ProcessName, p.DisplayName, p.ExecutablePath, p.Source);
 
+        var catalogEntries = await catalog.GetForProcessNamesAsync(map.Keys, ct);
+        var suggestions = catalogEntries
+            .Where(e => e.SuggestedGroup is not null)
+            .GroupBy(e => e.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
         return map.Values
             .Select(c =>
             {
                 var row = ToProposedApp(c, ctx);
                 var status = ResolveInventoryStatus(row, tracked, proposals);
+                suggestions.TryGetValue(row.ProcessName, out var suggestion);
                 return new ClassifiedProcessRow(
                     row.ProcessName,
                     row.DisplayName,
@@ -641,7 +717,9 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
                     row.Group,
                     row.AllowForPresence,
                     row.ExcludedFromDefaultTracking,
-                    status);
+                    status,
+                    suggestion?.SuggestedGroup,
+                    suggestion?.SuggestionReason);
             })
             .OrderBy(r => ProcessClassification.GroupSortOrder(r.Group))
             .ThenBy(r => r.ProcessName, StringComparer.OrdinalIgnoreCase)
@@ -653,7 +731,11 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         string processName,
         string displayName,
         string? executablePath,
-        string source)
+        string source,
+        string? fileVersion = null,
+        string? productVersion = null,
+        string? companyName = null,
+        string? fileDescription = null)
     {
         if (map.TryGetValue(processName, out var existing))
         {
@@ -667,6 +749,10 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
             }
             if (string.Equals(source, "AgentInventory", StringComparison.OrdinalIgnoreCase))
                 existing.Source = source;
+            existing.FileVersion ??= fileVersion;
+            existing.ProductVersion ??= productVersion;
+            existing.CompanyName ??= companyName;
+            existing.FileDescription ??= fileDescription;
             return;
         }
 
@@ -675,7 +761,11 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
             ProcessName = processName,
             DisplayName = displayName,
             ExecutablePath = string.IsNullOrWhiteSpace(executablePath) ? null : executablePath.Trim(),
-            Source = source
+            Source = source,
+            FileVersion = fileVersion,
+            ProductVersion = productVersion,
+            CompanyName = companyName,
+            FileDescription = fileDescription
         };
     }
 
@@ -712,6 +802,10 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         public string DisplayName { get; set; } = "";
         public string? ExecutablePath { get; set; }
         public string Source { get; set; } = "ProcessRuns";
+        public string? FileVersion { get; set; }
+        public string? ProductVersion { get; set; }
+        public string? CompanyName { get; set; }
+        public string? FileDescription { get; set; }
     }
 
     public async Task QueueFirstSeenAnalysisAsync(Machine machine, CancellationToken ct)
@@ -857,9 +951,12 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         AppGroup Group,
         bool AllowForPresence,
         bool ExcludedFromDefaultTracking,
-        InventoryStatus Status);
+        InventoryStatus Status,
+        AppGroup? SuggestedGroup = null,
+        string? SuggestionReason = null);
 
-    public record AnalysisResult(string Hostname, IReadOnlyList<ProposedApp> Proposals, AppAnalysisStatus Status, bool queuedForAgent);    public record ActiveAppListInfo(int AppListId, string Name, string? TeamName, ConfigScope Scope, string? ScopeValue, bool IsAutoDiscovered, int EntryCount);
+    public record AnalysisResult(string Hostname, IReadOnlyList<ProposedApp> Proposals, AppAnalysisStatus Status, bool queuedForAgent, int NewCatalogCount = 0);
+    public record ActiveAppListInfo(int AppListId, string Name, string? TeamName, ConfigScope Scope, string? ScopeValue, bool IsAutoDiscovered, int EntryCount);
     public record MachineAppListsView(string Hostname, IReadOnlyList<ActiveAppListInfo> ActiveLists, IReadOnlyList<string> MergedProcesses, AppAnalysisStatus AnalysisStatus, IReadOnlyList<ProposedApp> PendingProposals);
     public record TeamAppListOption(int AppListId, string ListName, string? TeamName, int EntryCount, bool MatchesMachineUsers, IReadOnlyList<string> ProcessNames);
 }

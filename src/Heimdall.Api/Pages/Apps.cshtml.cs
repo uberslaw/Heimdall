@@ -1,4 +1,5 @@
 using Heimdall.Api.Data;
+using Heimdall.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
@@ -27,11 +28,12 @@ public class AppsModel(HeimdallDbContext db) : PageModel
             .Select(m => m.Hostname)
             .ToListAsync();
 
-        var since = DateTimeOffset.UtcNow.AddDays(-days);
+        var fromUtc = DateTimeOffset.UtcNow.AddDays(-days);
+        var toUtc = DateTimeOffset.UtcNow;
         // SQLite EF DateTimeOffset filters are unreliable; filter in memory for POC.
         var runs = (await db.ProcessRuns.AsNoTracking().ToListAsync())
-            .Where(r => r.StartedAtUtc >= since
-                        || (r.EndedAtUtc ?? r.LastSeenAtUtc) >= since)
+            .Where(r => r.StartedAtUtc < toUtc
+                        && (r.EndedAtUtc ?? r.LastSeenAtUtc) >= fromUtc)
             .ToList();
 
         var known = await db.KnownApps.AsNoTracking().ToListAsync();
@@ -41,19 +43,17 @@ public class AppsModel(HeimdallDbContext db) : PageModel
             .GroupBy(r => r.ProcessName, StringComparer.OrdinalIgnoreCase)
             .Select(g =>
             {
-                var seconds = g.Sum(r =>
-                {
-                    var end = r.EndedAtUtc ?? r.LastSeenAtUtc;
-                    return Math.Max(0, (end - r.StartedAtUtc).TotalSeconds);
-                });
+                var groupRuns = g.ToList();
+                var seconds = ProcessRunMetrics.UnionDurationSeconds(groupRuns, fromUtc, toUtc);
                 var processName = g.Key;
                 return new AppRow(
                     processName,
                     displayNames.GetValueOrDefault(processName, processName),
-                    g.Select(x => x.Username).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
-                    g.Count(),
+                    groupRuns.Select(x => x.Username).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                    ProcessRunMetrics.AvgConcurrentProcesses(groupRuns, fromUtc, toUtc),
+                    groupRuns.Count,
                     TimeSpan.FromSeconds(seconds),
-                    g.Max(x => x.LastSeenAtUtc)
+                    groupRuns.Max(x => x.LastSeenAtUtc)
                 );
             })
             .OrderByDescending(a => a.TotalDuration)
@@ -64,6 +64,7 @@ public class AppsModel(HeimdallDbContext db) : PageModel
         string ProcessName,
         string DisplayName,
         int UniqueUsers,
+        double AvgConcurrentProcesses,
         int RunCount,
         TimeSpan TotalDuration,
         DateTimeOffset LastSeenUtc);

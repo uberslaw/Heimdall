@@ -120,21 +120,31 @@ public sealed class ProcessCollector
                 {
                     if (string.IsNullOrWhiteSpace(existing.ExecutablePath) && !string.IsNullOrWhiteSpace(path))
                     {
+                        var version = TryGetVersionInfo(path);
                         map[name] = new DiscoveredProcessDto
                         {
                             ProcessName = existing.ProcessName,
                             DisplayName = existing.DisplayName,
-                            ExecutablePath = path
+                            ExecutablePath = path,
+                            FileVersion = version?.FileVersion,
+                            ProductVersion = version?.ProductVersion,
+                            CompanyName = version?.CompanyName,
+                            FileDescription = version?.FileDescription
                         };
                     }
                 }
                 else
                 {
+                    var version = TryGetVersionInfo(path);
                     map[name] = new DiscoveredProcessDto
                     {
                         ProcessName = name,
                         DisplayName = name,
-                        ExecutablePath = path
+                        ExecutablePath = path,
+                        FileVersion = version?.FileVersion,
+                        ProductVersion = version?.ProductVersion,
+                        CompanyName = version?.CompanyName,
+                        FileDescription = version?.FileDescription
                     };
                 }
             }
@@ -142,6 +152,21 @@ public sealed class ProcessCollector
             finally { process.Dispose(); }
         }
         return map.Values.OrderBy(p => p.ProcessName, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>Best-effort Win32 file version read; honest null fallback when the path is missing/inaccessible/unversioned.</summary>
+    [SupportedOSPlatform("windows")]
+    private static FileVersionInfo? TryGetVersionInfo(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        try
+        {
+            return FileVersionInfo.GetVersionInfo(path);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static DateTimeOffset? SafeStartTime(Process process)

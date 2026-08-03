@@ -38,6 +38,10 @@ else if (d is not null)
             <div class="value">@DurationDisplay.Render(d.TotalOpenSeconds)</div>
         </div>
         <div class="hd-stat">
+            <div class="label">Avg # processes open</div>
+            <div class="value">@ConcurrentDisplay.Render(d.AvgConcurrentProcesses)</div>
+        </div>
+        <div class="hd-stat">
             <div class="label">Runs</div>
             <div class="value">@d.RunCount</div>
         </div>
@@ -125,6 +129,7 @@ else if (d is not null)
                     <tr>
                         <th data-sort="text">Machine</th>
                         <th data-sort="num" data-default-desc>Time open</th>
+                        <th data-sort="num">Avg # processes open</th>
                         <th data-sort="num">Runs</th>
                         <th data-sort="num">Avg run</th>
                         <th data-sort="text">Last used</th>
@@ -140,6 +145,7 @@ else if (d is not null)
                             </a>
                         </td>
                         <td data-sort-value="@m.TotalOpenSeconds">@DurationDisplay.Render(m.TotalOpenSeconds)</td>
+                        <td data-sort-value="@m.AvgConcurrentProcesses.ToString("0.###")">@ConcurrentDisplay.Render(m.AvgConcurrentProcesses)</td>
                         <td data-sort-value="@m.RunCount">@m.RunCount</td>
                         <td data-sort-value="@m.AvgRunSeconds">@DurationDisplay.Render(m.AvgRunSeconds)</td>
                         <td data-sort-value="@m.LastUsedUtc.ToUnixTimeSeconds()">@m.LastUsedUtc.ToLocalTime().ToString("g")</td>
@@ -156,6 +162,7 @@ else if (d is not null)
                     <tr>
                         <th data-sort="text">User</th>
                         <th data-sort="num" data-default-desc>Time open</th>
+                        <th data-sort="num">Avg # processes open</th>
                         <th data-sort="num">Runs</th>
                         <th data-sort="num">Avg run</th>
                         <th data-sort="text">Last used</th>
@@ -167,6 +174,7 @@ else if (d is not null)
                     <tr>
                         <td><strong>@u.Username</strong></td>
                         <td data-sort-value="@u.TotalOpenSeconds">@DurationDisplay.Render(u.TotalOpenSeconds)</td>
+                        <td data-sort-value="@u.AvgConcurrentProcesses.ToString("0.###")">@ConcurrentDisplay.Render(u.AvgConcurrentProcesses)</td>
                         <td data-sort-value="@u.RunCount">@u.RunCount</td>
                         <td data-sort-value="@u.AvgRunSeconds">@DurationDisplay.Render(u.AvgRunSeconds)</td>
                         <td data-sort-value="@u.LastUsedUtc.ToUnixTimeSeconds()">@u.LastUsedUtc.ToLocalTime().ToString("g")</td>

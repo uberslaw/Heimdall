@@ -47,7 +47,7 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
             .ToList();
 
         var userRows = BuildUserRows(sessions);
-        var appRows = BuildAppRows(runs);
+        var appRows = BuildAppRows(runs, fromUtc, toUtc);
         var patternRows = BuildPatternRows(sessions, runs, patternAppFilter, minRuntimeMinutes, maxRuntimeMinutes);
         var appOptions = runs
             .Select(r => r.ProcessName)
@@ -338,8 +338,10 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
         }
 
         var runCount = runs.Count;
-        var totalSeconds = runs.Sum(RunDurationSeconds);
-        var avgRunSeconds = runCount == 0 ? 0 : totalSeconds / runCount;
+        var totalRunSeconds = ProcessRunMetrics.SumDurationSeconds(runs, fromUtc, toUtc);
+        var totalSeconds = ProcessRunMetrics.UnionDurationSeconds(runs, fromUtc, toUtc);
+        var avgConcurrent = ProcessRunMetrics.AvgConcurrentProcesses(runs, fromUtc, toUtc);
+        var avgRunSeconds = runCount == 0 ? 0 : totalRunSeconds / runCount;
         var lastUsed = runs.Count == 0
             ? (DateTimeOffset?)null
             : runs.Max(r => r.LastSeenAtUtc);
@@ -348,15 +350,18 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
             .GroupBy(r => r.MachineId)
             .Select(g =>
             {
+                var groupRuns = g.ToList();
                 var hostname = machineById.GetValueOrDefault(g.Key)?.Hostname ?? $"#{g.Key}";
-                var seconds = g.Sum(RunDurationSeconds);
-                var count = g.Count();
+                var unionSeconds = ProcessRunMetrics.UnionDurationSeconds(groupRuns, fromUtc, toUtc);
+                var sumSeconds = ProcessRunMetrics.SumDurationSeconds(groupRuns, fromUtc, toUtc);
+                var count = groupRuns.Count;
                 return new AppMachineUsageRow(
                     hostname,
                     count,
-                    seconds,
-                    count == 0 ? 0 : seconds / count,
-                    g.Max(r => r.LastSeenAtUtc));
+                    unionSeconds,
+                    ProcessRunMetrics.AvgConcurrentProcesses(groupRuns, fromUtc, toUtc),
+                    count == 0 ? 0 : sumSeconds / count,
+                    groupRuns.Max(r => r.LastSeenAtUtc));
             })
             .OrderByDescending(r => r.TotalOpenSeconds)
             .ToList();
@@ -365,14 +370,17 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
             .GroupBy(r => NormalizeUser(r.Username, null), StringComparer.OrdinalIgnoreCase)
             .Select(g =>
             {
-                var seconds = g.Sum(RunDurationSeconds);
-                var count = g.Count();
+                var groupRuns = g.ToList();
+                var unionSeconds = ProcessRunMetrics.UnionDurationSeconds(groupRuns, fromUtc, toUtc);
+                var sumSeconds = ProcessRunMetrics.SumDurationSeconds(groupRuns, fromUtc, toUtc);
+                var count = groupRuns.Count;
                 return new AppUserUsageRow(
                     g.Key,
                     count,
-                    seconds,
-                    count == 0 ? 0 : seconds / count,
-                    g.Max(r => r.LastSeenAtUtc));
+                    unionSeconds,
+                    ProcessRunMetrics.AvgConcurrentProcesses(groupRuns, fromUtc, toUtc),
+                    count == 0 ? 0 : sumSeconds / count,
+                    groupRuns.Max(r => r.LastSeenAtUtc));
             })
             .OrderByDescending(r => r.TotalOpenSeconds)
             .ToList();
@@ -382,6 +390,7 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
             DisplayName: displayNames.GetValueOrDefault(process, process),
             RunCount: runCount,
             TotalOpenSeconds: totalSeconds,
+            AvgConcurrentProcesses: avgConcurrent,
             UniqueUsers: userRows.Count,
             UniqueMachines: machineRows.Count,
             AvgRunSeconds: avgRunSeconds,
@@ -489,23 +498,29 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
             .ToList();
     }
 
-    private static List<AppStatRow> BuildAppRows(List<ProcessRun> runs)
+    private static List<AppStatRow> BuildAppRows(
+        List<ProcessRun> runs,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc)
     {
         return runs
             .GroupBy(r => r.ProcessName, StringComparer.OrdinalIgnoreCase)
             .Select(g =>
             {
-                var seconds = g.Sum(RunDurationSeconds);
-                var cpuPeaks = g.Where(r => r.PeakCpuPercent.HasValue).Select(r => r.PeakCpuPercent!.Value).ToList();
-                var gpuPeaks = g.Where(r => r.PeakGpuPercent.HasValue).Select(r => r.PeakGpuPercent!.Value).ToList();
-                var diskRead = g.Sum(r => r.DiskReadBytes ?? 0);
-                var diskWrite = g.Sum(r => r.DiskWriteBytes ?? 0);
-                var anyDisk = g.Any(r => r.DiskReadBytes.HasValue || r.DiskWriteBytes.HasValue);
+                var groupRuns = g.ToList();
+                var seconds = ProcessRunMetrics.UnionDurationSeconds(groupRuns, fromUtc, toUtc);
+                var avgConcurrent = ProcessRunMetrics.AvgConcurrentProcesses(groupRuns, fromUtc, toUtc);
+                var cpuPeaks = groupRuns.Where(r => r.PeakCpuPercent.HasValue).Select(r => r.PeakCpuPercent!.Value).ToList();
+                var gpuPeaks = groupRuns.Where(r => r.PeakGpuPercent.HasValue).Select(r => r.PeakGpuPercent!.Value).ToList();
+                var diskRead = groupRuns.Sum(r => r.DiskReadBytes ?? 0);
+                var diskWrite = groupRuns.Sum(r => r.DiskWriteBytes ?? 0);
+                var anyDisk = groupRuns.Any(r => r.DiskReadBytes.HasValue || r.DiskWriteBytes.HasValue);
 
                 return new AppStatRow(
                     ProcessName: g.Key,
-                    UniqueUsers: g.Select(x => x.Username).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
-                    RunCount: g.Count(),
+                    UniqueUsers: groupRuns.Select(x => x.Username).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                    RunCount: groupRuns.Count,
+                    AvgConcurrentProcesses: avgConcurrent,
                     TotalOpenSeconds: seconds,
                     PeakCpuPercent: cpuPeaks.Count == 0 ? null : cpuPeaks.Max(),
                     PeakGpuPercent: gpuPeaks.Count == 0 ? null : gpuPeaks.Max(),
@@ -582,11 +597,8 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
             .ToList();
     }
 
-    private static double RunDurationSeconds(ProcessRun r)
-    {
-        var end = r.EndedAtUtc ?? r.LastSeenAtUtc;
-        return Math.Max(0, (end - r.StartedAtUtc).TotalSeconds);
-    }
+    private static double RunDurationSeconds(ProcessRun r) =>
+        ProcessRunMetrics.RunDurationSeconds(r);
 
     private static double SessionOverlapSeconds(
         UserSession s, DateTimeOffset fromUtc, DateTimeOffset toUtc, DateTimeOffset now)
@@ -708,6 +720,7 @@ public sealed record AppStatRow(
     string ProcessName,
     int UniqueUsers,
     int RunCount,
+    double AvgConcurrentProcesses,
     double TotalOpenSeconds,
     double? PeakCpuPercent,
     double? PeakGpuPercent,
@@ -753,6 +766,7 @@ public sealed record ApplicationDetailSnapshot(
     string DisplayName,
     int RunCount,
     double TotalOpenSeconds,
+    double AvgConcurrentProcesses,
     int UniqueUsers,
     int UniqueMachines,
     double AvgRunSeconds,
@@ -767,6 +781,7 @@ public sealed record AppMachineUsageRow(
     string Hostname,
     int RunCount,
     double TotalOpenSeconds,
+    double AvgConcurrentProcesses,
     double AvgRunSeconds,
     DateTimeOffset LastUsedUtc);
 
@@ -774,6 +789,7 @@ public sealed record AppUserUsageRow(
     string Username,
     int RunCount,
     double TotalOpenSeconds,
+    double AvgConcurrentProcesses,
     double AvgRunSeconds,
     DateTimeOffset LastUsedUtc);
 

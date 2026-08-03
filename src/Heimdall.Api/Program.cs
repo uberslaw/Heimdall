@@ -33,6 +33,7 @@ builder.Services.AddDbContext<HeimdallDbContext>((serviceProvider, options) =>
 builder.Services.AddScoped<IngestService>();
 builder.Services.AddScoped<ConfigService>();
 builder.Services.AddScoped<ProcessGroupService>();
+builder.Services.AddScoped<ProcessCatalogService>();
 builder.Services.AddScoped<AppListService>();
 builder.Services.AddScoped<StatsQueryService>();
 builder.Services.AddScoped<SocratizeQueryService>();
@@ -40,6 +41,7 @@ builder.Services.AddScoped<RemoteMachineService>();
 builder.Services.AddScoped<RemoteAccessGroupService>();
 builder.Services.AddScoped<LiveSamplingService>();
 builder.Services.AddScoped<SessionDrilldownService>();
+builder.Services.AddScoped<PublishedVersionService>();
 
 var app = builder.Build();
 
@@ -156,6 +158,20 @@ app.MapGet("/api/config/{hostname}", async (string hostname, ConfigService confi
 
     var dto = await config.ResolveForHostAsync(hostname, request.HttpContext.RequestAborted);
     return Results.Ok(dto);
+});
+
+// --- Published client version (Clients page baseline; set by Launch Control "Create client pack" — best-effort —
+// or manually from the Clients admin page) ---
+
+app.MapPost("/api/admin/published-version", async (PublishedVersionDto dto, PublishedVersionService publishedVersion, HttpRequest request) =>
+{
+    if (!IsAuthorized(request))
+        return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(dto.Version))
+        return Results.BadRequest();
+
+    await publishedVersion.SetAsync(dto.Version.Trim(), dto.SetBy, request.HttpContext.RequestAborted);
+    return Results.Ok();
 });
 
 app.MapGet("/api/remote/{hostname}/restart-status", async (string hostname, RemoteMachineService remote, CancellationToken ct) =>

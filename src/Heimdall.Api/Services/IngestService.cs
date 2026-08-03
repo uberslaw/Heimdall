@@ -1205,6 +1205,27 @@ public static class SeedData
             )
             """);
         await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_MachineResourceMetrics_MachineId ON MachineResourceMetrics(MachineId)");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS ProcessCatalogEntries (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ProcessName TEXT NOT NULL,
+                ExecutablePath TEXT NOT NULL DEFAULT '',
+                DisplayName TEXT NULL,
+                FileVersion TEXT NULL,
+                ProductVersion TEXT NULL,
+                CompanyName TEXT NULL,
+                FileDescription TEXT NULL,
+                FirstSeenUtc TEXT NOT NULL,
+                LastSeenUtc TEXT NOT NULL,
+                SeenCount INTEGER NOT NULL DEFAULT 1,
+                FirstSeenHostname TEXT NULL,
+                LastSeenHostname TEXT NULL,
+                SuggestedGroup INTEGER NULL,
+                SuggestionReason TEXT NULL
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_ProcessCatalogEntries_Name_Path ON ProcessCatalogEntries(ProcessName, ExecutablePath)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_ProcessCatalogEntries_Company ON ProcessCatalogEntries(CompanyName)");
     }
 
     private static async Task<bool> HasSystemFlagAsync(HeimdallDbContext db, string key)
