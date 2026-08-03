@@ -19,6 +19,14 @@ public sealed class AgentConfigDto
 
     /// <summary>One-shot commands for the agent (e.g. RestartTermService). Cleared after heartbeat ack.</summary>
     public List<string> PendingCommands { get; init; } = [];
+
+    /// <summary>When true, agent runs the always-on 30s fleet sampler (Historical Dashboard enrollment).</summary>
+    public bool FleetSamplingEnabled { get; init; }
+
+    /// <summary>
+    /// Process name substrings used to detect TUFLOW (case-insensitive contains). Default: ["tuflow"].
+    /// </summary>
+    public List<string> FleetProcessNames { get; init; } = ["tuflow"];
 }
 
 public sealed class KnownAppDto

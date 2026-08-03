@@ -18,6 +18,7 @@
         <a class="btn btn-ghost btn-sm" href="#socratize">Socratize</a>
         <a class="btn btn-ghost btn-sm" href="#sessions">Sessions</a>
         <a class="btn btn-ghost btn-sm" href="#remote-machines">Remote Machines</a>
+        <a class="btn btn-ghost btn-sm" href="#historical-dashboard">Historical Dashboard</a>
         <a class="btn btn-ghost btn-sm" href="#staff-access">Staff Access</a>
         <a class="btn btn-ghost btn-sm" href="#remote-access-groups">Remote Access Groups</a>
         <a class="btn btn-ghost btn-sm" href="#tracking-config">Tracking config</a>
@@ -156,8 +157,28 @@
     <p class="text-secondary small mb-2"><strong>Purpose:</strong> RDP/RDS health at a glance — service status, reachability, and a way to restart RDS remotely.</p>
     <ol class="small mb-0">
         <li>Review per-machine RDP health, ping, and Terminal Services status (refreshed by the agent, plus on-demand from the API server).</li>
+        <li>Use <em>Connect</em> to download a small <code>.rdp</code> file for that hostname (opens with Windows Remote Desktop / mstsc). Browsers cannot run <code>mstsc /v:</code> directly.</li>
         <li>Use <em>Restart RDS</em> to queue a remote restart command for the agent to pick up; progress shows inline.</li>
     </ol>
+</section>
+
+<section id="historical-dashboard" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Historical Dashboard</h2>
+    <p class="text-secondary small mb-2">
+        <strong>Purpose:</strong> TUFLOW fleet POC — enroll a curated set of machines, collect always-on 30s resource snapshots, then review live gauges and historical totals/averages/rankings.
+    </p>
+    <ol class="small">
+        <li><strong>Enrollment</strong> — search by hostname or last-known IP and add machines. Only enrolled hosts get the 30s fleet sampler (independent of Staff Access live metrics).</li>
+        <li><strong>Live Fleet</strong> — current CPU/GPU/RAM/disk/network from the latest snapshot, TUFLOW status (Active / Idle / Not Running), today’s runtime/active/GPU hours. Auto-refreshes every 30s.</li>
+        <li><strong>Active vs Idle</strong> — while TUFLOW is running: Active if <em>TUFLOW process</em> GPU &gt; 5%, CPU &gt; 10%, or disk read/write &gt; 5 MB/s; otherwise Idle. Not Running when TUFLOW is not detected. Live gauges still show system-wide util.</li>
+        <li><strong>Historical Analytics</strong> — fleet summary cards, Totals (today / week / month / 30d / 3m / 6m / year) or Averages (daily / 7-day / monthly / all-time), plus rankings (GPU, CPU, RAM, disk I/O, most active).</li>
+        <li><strong>Machine detail</strong> — click a hostname for period summary cards and Chart.js time series (24h / 7d / 30d / 90d / 365d).</li>
+    </ol>
+    <p class="text-secondary small mb-0">
+        <strong>Retention:</strong> raw 30s samples are intended to be kept ~90 days by default.
+        Rough disk estimate: about <em>N × 2,880</em> rows per day (N = enrolled machines), so 10 hosts ≈ 28.8k rows/day.
+        Derived metrics use Σ (util%/100)×Δt for GPU/CPU hours, Σ (RAM GB)×Δt for GB-hours, and Σ (MB/s × Δt)/1024 for transfer GB.
+    </p>
 </section>
 
 <section id="staff-access" class="hd-panel mb-4 hd-help-section">

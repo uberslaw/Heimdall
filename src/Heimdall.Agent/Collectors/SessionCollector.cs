@@ -183,6 +183,30 @@ public sealed class SessionCollector
         }
     }
 
+    /// <summary>Primary interactive user (prefer Active session), for fleet snapshots.</summary>
+    public string? TryGetPrimaryInteractiveUsername()
+    {
+        lock (_gate)
+        {
+            var active = _sessions.Values
+                .Where(s => s.State == SessionState.Active && !string.IsNullOrWhiteSpace(s.Username))
+                .OrderBy(s => s.SessionId)
+                .FirstOrDefault();
+            if (active is not null)
+                return FormatUser(active.Domain, active.Username);
+
+            var any = _sessions.Values
+                .Where(s => s.State is SessionState.Active or SessionState.Disconnected
+                            && !string.IsNullOrWhiteSpace(s.Username))
+                .OrderBy(s => s.SessionId)
+                .FirstOrDefault();
+            return any is null ? null : FormatUser(any.Domain, any.Username);
+        }
+    }
+
+    private static string FormatUser(string? domain, string username) =>
+        string.IsNullOrWhiteSpace(domain) ? username : $"{domain}\\{username}";
+
     /// <summary>Resolve DOMAIN + username for a session (shared by process sampling).</summary>
     public static (string Username, string? Domain)? TryGetSessionUser(int sessionId)
     {

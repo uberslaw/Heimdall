@@ -74,6 +74,25 @@ public sealed class HeimdallApiClient(HttpClient http, IConfiguration config, IL
         }
     }
 
+    /// <summary>
+    /// Always-on fleet snapshot for Historical Dashboard enrollment. Like live samples, failures are
+    /// dropped (not queued) — the next 30s tick supersedes a missed point.
+    /// </summary>
+    public async Task<bool> ReportFleetSnapshotAsync(FleetSnapshotDto dto, CancellationToken ct)
+    {
+        try
+        {
+            ApplyKey();
+            using var response = await http.PostAsJsonAsync("/api/fleet/snapshot", dto, ct);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Fleet snapshot report failed (dropped)");
+            return false;
+        }
+    }
+
     private void ApplyKey()
     {
         var key = config["Heimdall:ApiKey"] ?? "heimdall-poc-key";

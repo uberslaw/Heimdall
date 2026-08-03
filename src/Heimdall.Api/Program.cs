@@ -42,6 +42,7 @@ builder.Services.AddScoped<RemoteAccessGroupService>();
 builder.Services.AddScoped<LiveSamplingService>();
 builder.Services.AddScoped<SessionDrilldownService>();
 builder.Services.AddScoped<PublishedVersionService>();
+builder.Services.AddScoped<FleetDashboardService>();
 
 var app = builder.Build();
 
@@ -224,6 +225,17 @@ app.MapPost("/api/resource-sampling/report", async (ResourceSampleReportDto dto,
         return Results.Unauthorized();
 
     var ok = await sampling.ReportSampleAsync(dto, ct);
+    return ok ? Results.Accepted() : Results.NotFound();
+});
+
+// --- Historical Dashboard fleet snapshots (always-on 30s for enrolled hosts) ---
+
+app.MapPost("/api/fleet/snapshot", async (FleetSnapshotDto dto, FleetDashboardService fleet, HttpRequest request, CancellationToken ct) =>
+{
+    if (!IsAuthorized(request))
+        return Results.Unauthorized();
+
+    var ok = await fleet.IngestSnapshotAsync(dto, ct);
     return ok ? Results.Accepted() : Results.NotFound();
 });
 

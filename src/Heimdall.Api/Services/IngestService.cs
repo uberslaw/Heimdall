@@ -480,9 +480,14 @@ public class ConfigService(HeimdallDbContext db)
             .OrderBy(p => p.ProcessName, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        var fleetSamplingEnabled = machine is not null
+            && await db.FleetDashboardMachines.AsNoTracking()
+                .AnyAsync(f => f.MachineId == machine.Id, ct);
+
         return new AgentConfigDto
         {
-            ConfigVersion = primary.Id * 1000 + primary.SampleIntervalSeconds + include.Count + thresholds.Count + pauseDtos.Count,
+            ConfigVersion = primary.Id * 1000 + primary.SampleIntervalSeconds + include.Count + thresholds.Count + pauseDtos.Count
+                + (fleetSamplingEnabled ? 17 : 0),
             SampleIntervalSeconds = primary.SampleIntervalSeconds,
             UploadIntervalSeconds = primary.UploadIntervalSeconds,
             ConfigRefreshSeconds = primary.ConfigRefreshSeconds,
@@ -498,7 +503,9 @@ public class ConfigService(HeimdallDbContext db)
             MetricThresholds = thresholds,
             ProcessPauses = pauseDtos,
             PendingAppAnalysis = machine?.PendingAppAnalysis == true,
-            PendingCommands = RemoteMachineService.DeserializeCommands(machine?.PendingCommandsJson)
+            PendingCommands = RemoteMachineService.DeserializeCommands(machine?.PendingCommandsJson),
+            FleetSamplingEnabled = fleetSamplingEnabled,
+            FleetProcessNames = ["tuflow"]
         };
     }
 
@@ -1340,6 +1347,39 @@ public static class SeedData
             )
             """);
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_CustomThemes_Name ON CustomThemes(Name)");
+
+        // Historical Dashboard (TUFLOW fleet POC)
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS FleetDashboardMachines (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MachineId INTEGER NOT NULL,
+                AddedUtc TEXT NOT NULL,
+                Notes TEXT NULL,
+                FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_FleetDashboardMachines_MachineId ON FleetDashboardMachines(MachineId)");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS FleetMetricSnapshots (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                SampledAtUtc TEXT NOT NULL,
+                MachineId INTEGER NOT NULL,
+                Username TEXT NULL,
+                TuflowRunning INTEGER NOT NULL DEFAULT 0,
+                CpuPercent REAL NULL,
+                GpuPercent REAL NULL,
+                GpuMemoryUsedMb REAL NULL,
+                RamUsedMb REAL NULL,
+                DiskReadMBps REAL NULL,
+                DiskWriteMBps REAL NULL,
+                NetworkInMBps REAL NULL,
+                NetworkOutMBps REAL NULL,
+                IsActive INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_FleetMetricSnapshots_Machine_Sampled ON FleetMetricSnapshots(MachineId, SampledAtUtc)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_FleetMetricSnapshots_Sampled ON FleetMetricSnapshots(SampledAtUtc)");
     }
 
     private static async Task<bool> HasSystemFlagAsync(HeimdallDbContext db, string key)

@@ -86,6 +86,7 @@
 
         var rdpCell = row.querySelector(".hd-remote-rdp");
         if (!rdpCell) return;
+        if (row.classList.contains("hd-remote-offline")) return;
 
         if (data.phase === "Verifying" || data.phase === "Acknowledged") {
             rdpCell.innerHTML =

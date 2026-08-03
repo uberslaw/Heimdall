@@ -29,7 +29,10 @@ public static class ResourceMetricsCollector
         double? RamTotalGb,
         double? DiskReadBytesPerSec,
         double? DiskWriteBytesPerSec,
-        IReadOnlyDictionary<string, ProcessUsage> ProcessesByName);
+        IReadOnlyDictionary<string, ProcessUsage> ProcessesByName,
+        double? GpuMemoryUsedMb = null,
+        double? NetworkInBytesPerSec = null,
+        double? NetworkOutBytesPerSec = null);
 
     public sealed record ProcessUsage(int ProcessId, double CpuPercent, double GpuPercent, double RamMb, double DiskReadBytesPerSec, double DiskWriteBytesPerSec);
 
@@ -46,8 +49,10 @@ public static class ResourceMetricsCollector
         var (cpuTotal, ramPercent, ramUsedGb, ramTotalGb) = TryCollectSystemCpuRam();
         var (diskRead, diskWrite) = TryCollectDiskTotals();
         var gpuTotal = gpuByProcess.Count == 0 ? (double?)null : gpuByProcess.Values.DefaultIfEmpty(0).Max();
+        var gpuMemMb = TryCollectGpuMemoryMb();
+        var (netIn, netOut) = TryCollectNetworkTotals();
 
-        return new Sample(cpuTotal, gpuTotal, ramPercent, ramUsedGb, ramTotalGb, diskRead, diskWrite, processes);
+        return new Sample(cpuTotal, gpuTotal, ramPercent, ramUsedGb, ramTotalGb, diskRead, diskWrite, processes, gpuMemMb, netIn, netOut);
     }
 
     public static List<TopProcessSampleDto> TopByCpu(Sample s, int count) =>
@@ -262,6 +267,103 @@ public static class ResourceMetricsCollector
                 obj.Dispose();
                 return (read, write);
             }
+        }
+        catch { /* leave null */ }
+
+        return (null, null);
+    }
+
+    /// <summary>
+    /// Best-effort GPU dedicated/local memory in use (MB). Tries GPU Adapter Memory perf counters first,
+    /// then WMI GPUPerformanceCounters; returns null when unavailable.
+    /// </summary>
+    private static double? TryCollectGpuMemoryMb()
+    {
+        try
+        {
+            if (PerformanceCounterCategory.Exists("GPU Adapter Memory"))
+            {
+                var category = new PerformanceCounterCategory("GPU Adapter Memory");
+                var instances = category.GetInstanceNames();
+                double total = 0;
+                var any = false;
+                foreach (var instance in instances)
+                {
+                    try
+                    {
+                        using var c = new PerformanceCounter("GPU Adapter Memory", "Dedicated Usage", instance, readOnly: true);
+                        SafeNextValue(c);
+                        Thread.Sleep(20);
+                        var bytes = SafeNextValue(c);
+                        if (bytes > 0)
+                        {
+                            total += bytes;
+                            any = true;
+                        }
+                    }
+                    catch { /* skip instance */ }
+                }
+                if (any)
+                    return Math.Round(total / (1024.0 * 1024.0), 1);
+            }
+        }
+        catch { /* fall through */ }
+
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT DedicatedUsage FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory");
+            double total = 0;
+            var any = false;
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                try
+                {
+                    var bytes = ToDouble(obj["DedicatedUsage"]);
+                    if (bytes > 0)
+                    {
+                        total += bytes;
+                        any = true;
+                    }
+                }
+                finally { obj.Dispose(); }
+            }
+            if (any)
+                return Math.Round(total / (1024.0 * 1024.0), 1);
+        }
+        catch { /* leave null */ }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Sum BytesReceived/SentPerSec across non-loopback NICs via Win32_PerfFormattedData_Tcpip_NetworkInterface.
+    /// </summary>
+    private static (double? InBytesPerSec, double? OutBytesPerSec) TryCollectNetworkTotals()
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT Name, BytesReceivedPersec, BytesSentPersec FROM Win32_PerfFormattedData_Tcpip_NetworkInterface");
+            double inbound = 0, outbound = 0;
+            var any = false;
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                try
+                {
+                    var name = obj["Name"]?.ToString() ?? "";
+                    if (name.Contains("Loopback", StringComparison.OrdinalIgnoreCase)
+                        || name.Contains("isatap", StringComparison.OrdinalIgnoreCase)
+                        || name.Contains("Teredo", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    inbound += ToDouble(obj["BytesReceivedPersec"]);
+                    outbound += ToDouble(obj["BytesSentPersec"]);
+                    any = true;
+                }
+                finally { obj.Dispose(); }
+            }
+            return any ? (inbound, outbound) : (null, null);
         }
         catch { /* leave null */ }
 

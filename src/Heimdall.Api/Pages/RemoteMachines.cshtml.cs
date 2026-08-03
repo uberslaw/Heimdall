@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.RegularExpressions;
 using Heimdall.Api.Services;
 using Heimdall.Shared.Contracts;
 using Microsoft.AspNetCore.Mvc;
@@ -7,6 +9,10 @@ namespace Heimdall.Api.Pages;
 
 public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
 {
+    private static readonly Regex SafeRdpTarget = new(
+        @"^(?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)*|\d{1,3}(?:\.\d{1,3}){3})$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     public IReadOnlyList<RemoteMachineService.RemoteMachineRow> Rows { get; private set; } = [];
     public int OnlineCount { get; private set; }
     public int OfflineCount { get; private set; }
@@ -22,6 +28,30 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
         HasActiveRestartOperations = Rows.Any(r =>
             r.RestartProgress is not null
             && RemoteMachineService.IsActiveRestartPhase(r.RestartProgress.Phase));
+    }
+
+    /// <summary>
+    /// Serves a tiny .rdp file for the row hostname so Windows opens mstsc
+    /// (browsers cannot invoke <c>mstsc /v:</c> directly).
+    /// </summary>
+    public IActionResult OnGetConnectRdp(string hostname)
+    {
+        if (string.IsNullOrWhiteSpace(hostname))
+            return BadRequest();
+
+        var host = hostname.Trim();
+        if (host.Length > 253 || !SafeRdpTarget.IsMatch(host))
+            return BadRequest();
+
+        // Minimal RDP file — equivalent to: mstsc /v:HOSTNAME
+        var content =
+            "full address:s:" + host + "\r\n" +
+            "prompt for credentials:i:1\r\n" +
+            "authentication level:i:2\r\n";
+
+        var fileName = SanitizeRdpFileName(host) + ".rdp";
+        var bytes = Encoding.ASCII.GetBytes(content);
+        return File(bytes, "application/x-rdp", fileName);
     }
 
     public async Task<IActionResult> OnPostPingAsync(string hostname, CancellationToken ct)
@@ -119,4 +149,18 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
 
     public static bool IsRdpTesting(RemoteMachineService.RemoteMachineRow row) =>
         row.RestartProgress?.Phase is RestartRdsPhases.Verifying or RestartRdsPhases.Acknowledged;
+
+    private static string SanitizeRdpFileName(string host)
+    {
+        var sb = new StringBuilder(host.Length);
+        foreach (var c in host)
+        {
+            if (char.IsAsciiLetterOrDigit(c) || c is '.' or '-')
+                sb.Append(c);
+            else
+                sb.Append('_');
+        }
+
+        return sb.Length == 0 ? "remote" : sb.ToString();
+    }
 }

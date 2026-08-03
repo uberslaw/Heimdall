@@ -1,0 +1,461 @@
+@page
+@model HistoricalDashboardModel
+@using Heimdall.Api.Services
+@{
+    ViewData["Title"] = "Historical Dashboard";
+    var tab = Model.Tab;
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+    <div>
+        <h1 class="hd-title mb-1">Historical Dashboard</h1>
+        <p class="hd-sub mb-0">TUFLOW fleet · 30s snapshots · live gauges · historical analytics</p>
+    </div>
+    <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="historical-dashboard">Help</a>
+</div>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<ul class="nav nav-pills gap-2 mb-3 flex-wrap">
+    <li class="nav-item">
+        <a class="hd-btn @(tab == "live" ? "hd-btn-gold" : "hd-btn-silver")" asp-page="/HistoricalDashboard" asp-route-tab="live">Live Fleet</a>
+    </li>
+    <li class="nav-item">
+        <a class="hd-btn @(tab == "historical" ? "hd-btn-gold" : "hd-btn-silver")" asp-page="/HistoricalDashboard" asp-route-tab="historical" asp-route-histMode="@Model.HistMode" asp-route-period="@Model.Period">Historical Analytics</a>
+    </li>
+    <li class="nav-item">
+        <a class="hd-btn @(tab == "enroll" ? "hd-btn-gold" : "hd-btn-silver")" asp-page="/HistoricalDashboard" asp-route-tab="enroll" asp-route-q="@Model.Q">Enrollment</a>
+    </li>
+</ul>
+
+@if (tab == "enroll")
+{
+    <div class="hd-panel mb-4">
+        <h2 class="h5 mb-2">Enroll machines</h2>
+        <p class="text-secondary small mb-3">
+            Only enrolled machines receive always-on 30s history. Search by hostname or last-known IP, then add.
+            Agents pick up enrollment on their next config refresh (typically within a few minutes).
+        </p>
+        <form method="get" class="row g-2 align-items-end mb-3">
+            <input type="hidden" name="tab" value="enroll" />
+            <div class="col-md-6">
+                <label class="form-label small" for="q">Search hostname or IP</label>
+                <input class="form-control" id="q" name="q" value="@Model.Q" placeholder="e.g. SYDDT1234 or 10.1.2.3" />
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="hd-btn hd-btn-gold">Search</button>
+            </div>
+        </form>
+
+        @if (!string.IsNullOrWhiteSpace(Model.Q))
+        {
+            if (Model.SearchHits.Count == 0)
+            {
+                <p class="text-secondary small">No machines matched “@Model.Q”.</p>
+            }
+            else
+            {
+                <table class="hd-table hd-sortable mb-3">
+                    <thead>
+                        <tr>
+                            <th data-sort="text">Hostname</th>
+                            <th data-sort="text">IP</th>
+                            <th data-sort="date">Last seen</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var hit in Model.SearchHits)
+                    {
+                        <tr>
+                            <td>@hit.Hostname</td>
+                            <td>@(hit.LastIp ?? "—")</td>
+                            <td data-sort-value="@hit.LastSeenUtc.ToUnixTimeSeconds()">@HistoricalDashboardModel.FormatContact(hit.LastSeenUtc)</td>
+                            <td>
+                                @if (hit.AlreadyEnrolled)
+                                {
+                                    <span class="badge-pill badge-active">Enrolled</span>
+                                }
+                                else
+                                {
+                                    <form method="post" asp-page-handler="Enroll" class="d-inline">
+                                        <input type="hidden" name="EnrollMachineId" value="@hit.MachineId" />
+                                        <input type="hidden" name="Q" value="@Model.Q" />
+                                        <button type="submit" class="hd-btn hd-btn-gold hd-btn-sm">Add</button>
+                                    </form>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        }
+    </div>
+
+    <div class="hd-panel">
+        <h2 class="h5 mb-2">Enrolled (@Model.Enrolled.Count)</h2>
+        @if (Model.Enrolled.Count == 0)
+        {
+            <p class="text-secondary mb-0">No machines enrolled yet. Search above to add hosts — empty enrollment means no 30s history is collected.</p>
+        }
+        else
+        {
+            <table class="hd-table hd-sortable">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Hostname</th>
+                        <th data-sort="text">IP</th>
+                        <th data-sort="date">Added</th>
+                        <th data-sort="date">Agent last seen</th>
+                        <th>Notes</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var e in Model.Enrolled)
+                {
+                    <tr>
+                        <td>
+                            <a asp-page="/HistoricalDashboardMachine" asp-route-id="@e.MachineId">@e.Hostname</a>
+                        </td>
+                        <td>@(e.LastIp ?? "—")</td>
+                        <td data-sort-value="@e.AddedUtc.ToUnixTimeSeconds()">@e.AddedUtc.ToLocalTime().ToString("g")</td>
+                        <td data-sort-value="@e.LastSeenUtc.ToUnixTimeSeconds()">@HistoricalDashboardModel.FormatContact(e.LastSeenUtc)</td>
+                        <td>@(e.Notes ?? "—")</td>
+                        <td>
+                            <form method="post" asp-page-handler="Unenroll" class="d-inline"
+                                  onsubmit="return confirm('Remove @e.Hostname from the dashboard? Snapshots are kept.');">
+                                <input type="hidden" name="UnenrollId" value="@e.EnrollmentId" />
+                                <button type="submit" class="hd-btn hd-btn-rose hd-btn-sm">Remove</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
+}
+else if (tab == "live")
+{
+    <div class="d-flex flex-wrap gap-2 align-items-end mb-3">
+        <form method="get" class="d-flex flex-wrap gap-2 align-items-end" id="live-filter-form">
+            <input type="hidden" name="tab" value="live" />
+            <div>
+                <label class="form-label small mb-1" for="live-q">Search</label>
+                <input class="form-control form-control-sm" id="live-q" name="q" value="@Model.Q" placeholder="User or machine" />
+            </div>
+            <div>
+                <label class="form-label small mb-1" for="statusFilter">Status</label>
+                <select class="form-select form-select-sm" id="statusFilter" name="statusFilter" onchange="this.form.submit()">
+                    @if (Model.StatusFilter == "all") { <option value="all" selected>All</option> } else { <option value="all">All</option> }
+                    @if (Model.StatusFilter == "active") { <option value="active" selected>Active</option> } else { <option value="active">Active</option> }
+                    @if (Model.StatusFilter == "idle") { <option value="idle" selected>Idle</option> } else { <option value="idle">Idle</option> }
+                    @if (Model.StatusFilter is "notrunning" or "not-running") { <option value="notrunning" selected>Not Running</option> } else { <option value="notrunning">Not Running</option> }
+                </select>
+            </div>
+            <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Apply</button>
+        </form>
+        <span class="text-secondary small ms-auto" id="live-refresh-hint">Auto-refresh every 30s</span>
+    </div>
+
+    var live = Model.LiveRows;
+    if (!string.IsNullOrWhiteSpace(Model.Q))
+    {
+        var q = Model.Q.Trim();
+        live = live.Where(r =>
+            r.Hostname.Contains(q, StringComparison.OrdinalIgnoreCase)
+            || (r.Username?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (r.LastIp?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
+    }
+
+    <div class="hd-panel hd-remote-panel">
+        @if (Model.Enrolled.Count == 0)
+        {
+            <p class="text-secondary mb-0">
+                No machines enrolled. Open the <a asp-page="/HistoricalDashboard" asp-route-tab="enroll">Enrollment</a> tab to add hosts by hostname or IP.
+            </p>
+        }
+        else
+        {
+            <table class="hd-table hd-remote-table hd-sortable" id="live-fleet-table">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Machine</th>
+                        <th data-sort="text">User</th>
+                        <th data-sort="text">TUFLOW</th>
+                        <th data-sort="text">Active / Idle</th>
+                        <th data-sort="num">GPU %</th>
+                        <th data-sort="num">CPU %</th>
+                        <th data-sort="num">GPU mem</th>
+                        <th data-sort="num">RAM GB</th>
+                        <th data-sort="num">Disk R MB/s</th>
+                        <th data-sort="num">Disk W MB/s</th>
+                        <th data-sort="num">Net In MB/s</th>
+                        <th data-sort="num">Net Out MB/s</th>
+                        <th data-sort="num" data-default-desc>Today runtime</th>
+                        <th data-sort="num">Today active</th>
+                        <th data-sort="num">Today GPU h</th>
+                        <th data-sort="date">Last check-in</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @if (live.Count == 0)
+                {
+                    <tr><td colspan="16">No rows match the current filter.</td></tr>
+                }
+                @foreach (var r in live)
+                {
+                    <tr>
+                        <td data-sort-value="@r.Hostname">
+                            <a asp-page="/HistoricalDashboardMachine" asp-route-id="@r.MachineId">@r.Hostname</a>
+                            @if (!string.IsNullOrWhiteSpace(r.LastIp))
+                            {
+                                <div class="text-secondary small">@r.LastIp</div>
+                            }
+                        </td>
+                        <td data-sort-value="@(r.Username ?? "")">@(r.Username ?? "—")</td>
+                        <td data-sort-value="@(r.TuflowRunning ? "Y" : "N")">@(r.TuflowRunning ? "Y" : "N")</td>
+                        <td data-sort-value="@HistoricalDashboardModel.ActiveIdleLabel(r.Status)">
+                            @if (r.Status is FleetDashboardService.FleetStatus.Active or FleetDashboardService.FleetStatus.Idle)
+                            {
+                                <span class="badge-pill @HistoricalDashboardModel.StatusBadgeClass(r.Status)">
+                                    @HistoricalDashboardModel.ActiveIdleLabel(r.Status)
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="text-secondary">—</span>
+                            }
+                        </td>
+                        <td data-sort-value="@(r.GpuPercent ?? -1)">@HistoricalDashboardModel.FormatGauge(r.GpuPercent)</td>
+                        <td data-sort-value="@(r.CpuPercent ?? -1)">@HistoricalDashboardModel.FormatGauge(r.CpuPercent)</td>
+                        <td data-sort-value="@(r.GpuMemoryUsedMb ?? -1)">@HistoricalDashboardModel.FormatMb(r.GpuMemoryUsedMb)</td>
+                        <td data-sort-value="@(r.RamUsedMb ?? -1)">@HistoricalDashboardModel.FormatRamGb(r.RamUsedMb)</td>
+                        <td data-sort-value="@(r.DiskReadMBps ?? -1)">@HistoricalDashboardModel.FormatMBps(r.DiskReadMBps)</td>
+                        <td data-sort-value="@(r.DiskWriteMBps ?? -1)">@HistoricalDashboardModel.FormatMBps(r.DiskWriteMBps)</td>
+                        <td data-sort-value="@(r.NetworkInMBps ?? -1)">@HistoricalDashboardModel.FormatMBps(r.NetworkInMBps)</td>
+                        <td data-sort-value="@(r.NetworkOutMBps ?? -1)">@HistoricalDashboardModel.FormatMBps(r.NetworkOutMBps)</td>
+                        <td data-sort-value="@r.TodayRuntimeHours">@HistoricalDashboardModel.FormatHours(r.TodayRuntimeHours) h</td>
+                        <td data-sort-value="@r.TodayActiveHours">@HistoricalDashboardModel.FormatHours(r.TodayActiveHours) h</td>
+                        <td data-sort-value="@r.TodayGpuHours">@HistoricalDashboardModel.FormatHours(r.TodayGpuHours)</td>
+                        <td data-sort-value="@(r.LastSampleUtc?.ToUnixTimeSeconds() ?? 0)">
+                            @HistoricalDashboardModel.FormatContact(r.LastSampleUtc ?? r.LastSeenUtc)
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    <script>
+        setTimeout(function () { location.reload(); }, 30000);
+    </script>
+}
+else
+{
+    <div class="d-flex flex-wrap gap-2 align-items-end mb-3">
+        <form method="get" class="d-flex flex-wrap gap-2 align-items-end">
+            <input type="hidden" name="tab" value="historical" />
+            <div>
+                <label class="form-label small mb-1" for="histMode">Mode</label>
+                <select class="form-select form-select-sm" id="histMode" name="histMode" onchange="this.form.submit()">
+                    @if (Model.HistMode != "averages") { <option value="totals" selected>Totals</option> } else { <option value="totals">Totals</option> }
+                    @if (Model.HistMode == "averages") { <option value="averages" selected>Averages</option> } else { <option value="averages">Averages</option> }
+                </select>
+            </div>
+            <div>
+                <label class="form-label small mb-1" for="period">Period</label>
+                <select class="form-select form-select-sm" id="period" name="period" onchange="this.form.submit()">
+                    @if (Model.IsAveragesMode)
+                    {
+                        if (Model.Period == "daily") { <option value="daily" selected>Daily</option> } else { <option value="daily">Daily</option> }
+                        if (Model.Period is "7d" or "7-day") { <option value="7d" selected>7-day</option> } else { <option value="7d">7-day</option> }
+                        if (Model.Period == "monthly") { <option value="monthly" selected>Monthly</option> } else { <option value="monthly">Monthly</option> }
+                        if (Model.Period is "all" or "all-time") { <option value="all" selected>All-time</option> } else { <option value="all">All-time</option> }
+                    }
+                    else
+                    {
+                        if (Model.Period == "today") { <option value="today" selected>Today</option> } else { <option value="today">Today</option> }
+                        if (Model.Period is "week" or "7d") { <option value="week" selected>Week</option> } else { <option value="week">Week</option> }
+                        if (Model.Period == "month") { <option value="month" selected>Month</option> } else { <option value="month">Month</option> }
+                        if (Model.Period == "30d") { <option value="30d" selected>30 days</option> } else { <option value="30d">30 days</option> }
+                        if (Model.Period is "3m" or "90d") { <option value="3m" selected>3 months</option> } else { <option value="3m">3 months</option> }
+                        if (Model.Period == "6m") { <option value="6m" selected>6 months</option> } else { <option value="6m">6 months</option> }
+                        if (Model.Period is "year" or "365d") { <option value="year" selected>Year</option> } else { <option value="year">Year</option> }
+                        if (Model.Period is "all" or "all-time") { <option value="all" selected>All-time</option> } else { <option value="all">All-time</option> }
+                    }
+                </select>
+            </div>
+        </form>
+        <span class="text-secondary small">@Model.PeriodLabel</span>
+    </div>
+
+    var s = Model.Summary;
+    var ranked = Model.PerMachine.Where(p => p.Metrics.SampleCount > 0).ToList();
+    var topGpu = ranked.OrderByDescending(p => p.Metrics.GpuHours).Take(5).ToList();
+    var topCpu = ranked.OrderByDescending(p => p.Metrics.CpuHours).Take(5).ToList();
+    var topRam = ranked.OrderByDescending(p => p.Metrics.RamGbHours).Take(5).ToList();
+    var topDisk = ranked.OrderByDescending(p => p.Metrics.DiskReadGb + p.Metrics.DiskWriteGb).Take(5).ToList();
+    var topActive = ranked.OrderByDescending(p => p.Metrics.ActiveRuntimeHours).Take(5).ToList();
+
+    <div class="hd-grid mb-4">
+        <div class="hd-stat"><div class="label">Total machines</div><div class="value">@Model.Enrolled.Count</div></div>
+        <div class="hd-stat"><div class="label">Machines active today</div><div class="value">@Model.MachinesActiveToday</div></div>
+        <div class="hd-stat"><div class="label">Runtime</div><div class="value">@HistoricalDashboardModel.FormatHours(s.RuntimeHours) h</div></div>
+        <div class="hd-stat"><div class="label">Active runtime</div><div class="value">@HistoricalDashboardModel.FormatHours(s.ActiveRuntimeHours) h</div></div>
+        <div class="hd-stat"><div class="label">Avg active / machine</div><div class="value">@HistoricalDashboardModel.FormatHours(Model.AvgActiveRuntimePerMachine) h</div></div>
+        <div class="hd-stat"><div class="label">Idle runtime</div><div class="value">@HistoricalDashboardModel.FormatHours(s.IdleRuntimeHours) h</div></div>
+        <div class="hd-stat"><div class="label">GPU hours</div><div class="value">@HistoricalDashboardModel.FormatHours(s.GpuHours)</div></div>
+        <div class="hd-stat"><div class="label">CPU hours</div><div class="value">@HistoricalDashboardModel.FormatHours(s.CpuHours)</div></div>
+        <div class="hd-stat"><div class="label">RAM GB-hours</div><div class="value">@HistoricalDashboardModel.FormatHours(s.RamGbHours)</div></div>
+        <div class="hd-stat"><div class="label">Total disk IO</div><div class="value">@((s.DiskReadGb + s.DiskWriteGb).ToString("0.##")) GB</div></div>
+        <div class="hd-stat"><div class="label">Total network</div><div class="value">@((s.NetworkInGb + s.NetworkOutGb).ToString("0.##")) GB</div></div>
+        <div class="hd-stat"><div class="label">Samples</div><div class="value">@s.SampleCount</div></div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="hd-panel h-100">
+                <h3 class="h6">Top GPU</h3>
+                @if (topGpu.Count == 0) { <p class="text-secondary small mb-0">No data yet.</p> }
+                else
+                {
+                    <ol class="small mb-0 ps-3">
+                    @foreach (var p in topGpu)
+                    {
+                        <li class="mb-1"><a asp-page="/HistoricalDashboardMachine" asp-route-id="@p.MachineId">@p.Hostname</a>
+                            <span class="text-secondary">— @HistoricalDashboardModel.FormatHours(p.Metrics.GpuHours) h</span></li>
+                    }
+                    </ol>
+                }
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="hd-panel h-100">
+                <h3 class="h6">Top CPU</h3>
+                @if (topCpu.Count == 0) { <p class="text-secondary small mb-0">No data yet.</p> }
+                else
+                {
+                    <ol class="small mb-0 ps-3">
+                    @foreach (var p in topCpu)
+                    {
+                        <li class="mb-1"><a asp-page="/HistoricalDashboardMachine" asp-route-id="@p.MachineId">@p.Hostname</a>
+                            <span class="text-secondary">— @HistoricalDashboardModel.FormatHours(p.Metrics.CpuHours) h</span></li>
+                    }
+                    </ol>
+                }
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="hd-panel h-100">
+                <h3 class="h6">Top RAM</h3>
+                @if (topRam.Count == 0) { <p class="text-secondary small mb-0">No data yet.</p> }
+                else
+                {
+                    <ol class="small mb-0 ps-3">
+                    @foreach (var p in topRam)
+                    {
+                        <li class="mb-1"><a asp-page="/HistoricalDashboardMachine" asp-route-id="@p.MachineId">@p.Hostname</a>
+                            <span class="text-secondary">— @HistoricalDashboardModel.FormatHours(p.Metrics.RamGbHours) GB·h</span></li>
+                    }
+                    </ol>
+                }
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="hd-panel h-100">
+                <h3 class="h6">Top Disk I/O</h3>
+                @if (topDisk.Count == 0) { <p class="text-secondary small mb-0">No data yet.</p> }
+                else
+                {
+                    <ol class="small mb-0 ps-3">
+                    @foreach (var p in topDisk)
+                    {
+                        <li class="mb-1"><a asp-page="/HistoricalDashboardMachine" asp-route-id="@p.MachineId">@p.Hostname</a>
+                            <span class="text-secondary">— @((p.Metrics.DiskReadGb + p.Metrics.DiskWriteGb).ToString("0.##")) GB</span></li>
+                    }
+                    </ol>
+                }
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="hd-panel h-100">
+                <h3 class="h6">Most Active</h3>
+                @if (topActive.Count == 0) { <p class="text-secondary small mb-0">No data yet.</p> }
+                else
+                {
+                    <ol class="small mb-0 ps-3">
+                    @foreach (var p in topActive)
+                    {
+                        <li class="mb-1"><a asp-page="/HistoricalDashboardMachine" asp-route-id="@p.MachineId">@p.Hostname</a>
+                            <span class="text-secondary">— @HistoricalDashboardModel.FormatHours(p.Metrics.ActiveRuntimeHours) h</span></li>
+                    }
+                    </ol>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="hd-panel">
+        <h2 class="h5 mb-2">Per machine</h2>
+        @if (Model.PerMachine.Count == 0)
+        {
+            <p class="text-secondary mb-0">No enrolled machines.</p>
+        }
+        else
+        {
+            <table class="hd-table hd-sortable">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Machine</th>
+                        <th data-sort="num" data-default-desc>Runtime</th>
+                        <th data-sort="num">Active</th>
+                        <th data-sort="num">GPU h</th>
+                        <th data-sort="num">CPU h</th>
+                        <th data-sort="num">RAM GB·h</th>
+                        <th data-sort="num">Disk GB</th>
+                        <th data-sort="num">Net GB</th>
+                        <th data-sort="num">Samples</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var p in Model.PerMachine)
+                {
+                    var m = p.Metrics;
+                    <tr>
+                        <td><a asp-page="/HistoricalDashboardMachine" asp-route-id="@p.MachineId">@p.Hostname</a></td>
+                        <td data-sort-value="@m.RuntimeHours">@HistoricalDashboardModel.FormatHours(m.RuntimeHours) h</td>
+                        <td data-sort-value="@m.ActiveRuntimeHours">@HistoricalDashboardModel.FormatHours(m.ActiveRuntimeHours) h</td>
+                        <td data-sort-value="@m.GpuHours">@HistoricalDashboardModel.FormatHours(m.GpuHours)</td>
+                        <td data-sort-value="@m.CpuHours">@HistoricalDashboardModel.FormatHours(m.CpuHours)</td>
+                        <td data-sort-value="@m.RamGbHours">@HistoricalDashboardModel.FormatHours(m.RamGbHours)</td>
+                        <td data-sort-value="@(m.DiskReadGb + m.DiskWriteGb)">@((m.DiskReadGb + m.DiskWriteGb).ToString("0.##"))</td>
+                        <td data-sort-value="@(m.NetworkInGb + m.NetworkOutGb)">@((m.NetworkInGb + m.NetworkOutGb).ToString("0.##"))</td>
+                        <td data-sort-value="@m.SampleCount">@m.SampleCount</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
+}
+
+@section Scripts {
+    <script src="~/js/hd-table.js" asp-append-version="true"></script>
+    <script>
+        if (window.HeimdallTable) {
+            HeimdallTable.initSort(document);
+            HeimdallTable.initTextFilter(document);
+        }
+    </script>
+}

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.Versioning;
 using Heimdall.Agent.Collectors;
@@ -37,6 +38,10 @@ public sealed class Worker(
     private const int CalibrationSampleCount = 10;
     private static readonly TimeSpan ResourceControlPollInterval = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ResourceSteadyStateInterval = TimeSpan.FromSeconds(10);
+
+    // Historical Dashboard fleet sampling — always-on while config says enrolled; independent of Staff live sampling.
+    private DateTimeOffset _nextFleetSample = DateTimeOffset.MinValue;
+    private static readonly TimeSpan FleetSampleInterval = TimeSpan.FromSeconds(30);
 
     [SupportedOSPlatform("windows")]
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -109,6 +114,7 @@ public sealed class Worker(
             }
 
             await RunResourceSamplingTickAsync(hostname, now, stoppingToken);
+            await RunFleetSamplingTickAsync(hostname, now, stoppingToken);
 
             await Task.Delay(1000, stoppingToken);
         }
@@ -384,6 +390,126 @@ public sealed class Worker(
             TopDiskWriteProcesses = ResourceMetricsCollector.TopByDiskWrite(latest, 3),
             FavoriteProcesses = ResourceMetricsCollector.ResolveFavorites(latest, favoriteNames)
         };
+    }
+
+    /// <summary>
+    /// Always-on 30s fleet sampler for Historical Dashboard enrollment. Gated by FleetSamplingEnabled
+    /// from config refresh — separate from viewer-triggered Staff live sampling.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private async Task RunFleetSamplingTickAsync(string hostname, DateTimeOffset now, CancellationToken ct)
+    {
+        if (!_config.FleetSamplingEnabled)
+        {
+            _nextFleetSample = DateTimeOffset.MinValue;
+            return;
+        }
+
+        if (now < _nextFleetSample)
+            return;
+
+        _nextFleetSample = now.Add(FleetSampleInterval);
+
+        ResourceMetricsCollector.Sample sample;
+        try
+        {
+            sample = ResourceMetricsCollector.Collect();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Fleet sampling collect failed for {Host}", hostname);
+            return;
+        }
+
+        var processNames = _config.FleetProcessNames is { Count: > 0 }
+            ? _config.FleetProcessNames
+            : ["tuflow"];
+        var tuflowRunning = IsFleetProcessRunning(sample, processNames);
+        var processUtil = AggregateFleetProcessUtil(sample, processNames);
+
+        static double? BytesToMBps(double? bytesPerSec) =>
+            bytesPerSec is null ? null : Math.Round(bytesPerSec.Value / (1024.0 * 1024.0), 3);
+
+        var dto = new FleetSnapshotDto
+        {
+            Hostname = hostname,
+            SampledAtUtc = DateTimeOffset.UtcNow,
+            Username = _sessions.TryGetPrimaryInteractiveUsername(),
+            TuflowRunning = tuflowRunning,
+            CpuPercent = sample.CpuPercent is null ? null : Math.Round(sample.CpuPercent.Value, 1),
+            GpuPercent = sample.GpuPercent is null ? null : Math.Round(sample.GpuPercent.Value, 1),
+            GpuMemoryUsedMb = sample.GpuMemoryUsedMb is null ? null : Math.Round(sample.GpuMemoryUsedMb.Value, 1),
+            RamUsedMb = sample.RamUsedGb is null ? null : Math.Round(sample.RamUsedGb.Value * 1024.0, 1),
+            DiskReadMBps = BytesToMBps(sample.DiskReadBytesPerSec),
+            DiskWriteMBps = BytesToMBps(sample.DiskWriteBytesPerSec),
+            NetworkInMBps = BytesToMBps(sample.NetworkInBytesPerSec),
+            NetworkOutMBps = BytesToMBps(sample.NetworkOutBytesPerSec),
+            ProcessCpuPercent = tuflowRunning ? Math.Round(processUtil.CpuPercent, 1) : null,
+            ProcessGpuPercent = tuflowRunning ? Math.Round(processUtil.GpuPercent, 1) : null,
+            ProcessDiskReadMBps = tuflowRunning ? Math.Round(processUtil.DiskReadMBps, 3) : null,
+            ProcessDiskWriteMBps = tuflowRunning ? Math.Round(processUtil.DiskWriteMBps, 3) : null
+        };
+
+        var ok = await api.ReportFleetSnapshotAsync(dto, ct);
+        if (!ok)
+            logger.LogDebug("Fleet snapshot upload failed for {Host} (dropped)", hostname);
+    }
+
+    private static bool MatchesFleetProcess(string name, IReadOnlyList<string> patterns)
+    {
+        foreach (var pattern in patterns)
+        {
+            if (string.IsNullOrWhiteSpace(pattern))
+                continue;
+            if (name.Contains(pattern.Trim(), StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool IsFleetProcessRunning(ResourceMetricsCollector.Sample sample, IReadOnlyList<string> patterns)
+    {
+        foreach (var name in sample.ProcessesByName.Keys)
+        {
+            if (MatchesFleetProcess(name, patterns))
+                return true;
+        }
+
+        // Also check live process list in case WMI process counters omit short-lived names.
+        try
+        {
+            foreach (var p in Process.GetProcesses())
+            {
+                try
+                {
+                    if (MatchesFleetProcess(p.ProcessName, patterns))
+                        return true;
+                }
+                finally { p.Dispose(); }
+            }
+        }
+        catch { /* best-effort */ }
+
+        return false;
+    }
+
+    /// <summary>Sum CPU/GPU/disk for processes matching fleet patterns (TUFLOW Active/Idle thresholds).</summary>
+    private static (double CpuPercent, double GpuPercent, double DiskReadMBps, double DiskWriteMBps) AggregateFleetProcessUtil(
+        ResourceMetricsCollector.Sample sample,
+        IReadOnlyList<string> patterns)
+    {
+        double cpu = 0, gpu = 0, diskRead = 0, diskWrite = 0;
+        foreach (var (name, usage) in sample.ProcessesByName)
+        {
+            if (!MatchesFleetProcess(name, patterns))
+                continue;
+            cpu += usage.CpuPercent;
+            gpu += usage.GpuPercent;
+            diskRead += usage.DiskReadBytesPerSec / (1024.0 * 1024.0);
+            diskWrite += usage.DiskWriteBytesPerSec / (1024.0 * 1024.0);
+        }
+
+        return (cpu, gpu, diskRead, diskWrite);
     }
 
     private void ProcessPendingCommands(IReadOnlyList<string> commands)

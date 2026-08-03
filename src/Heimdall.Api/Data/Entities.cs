@@ -488,6 +488,37 @@ public class SessionDrilldownViewer
     public DateTimeOffset LastHeartbeatUtc { get; set; }
 }
 
+/// <summary>Curated enrollment for the Historical Dashboard (TUFLOW fleet POC). Only enrolled hosts get 30s snapshots.</summary>
+public class FleetDashboardMachine
+{
+    public int Id { get; set; }
+    public int MachineId { get; set; }
+    public Machine Machine { get; set; } = null!;
+    public DateTimeOffset AddedUtc { get; set; }
+    public string? Notes { get; set; }
+}
+
+/// <summary>Append-only 30s fleet metric sample for enrolled Historical Dashboard machines.</summary>
+public class FleetMetricSnapshot
+{
+    public long Id { get; set; }
+    public DateTimeOffset SampledAtUtc { get; set; }
+    public int MachineId { get; set; }
+    public Machine Machine { get; set; } = null!;
+    public string? Username { get; set; }
+    public bool TuflowRunning { get; set; }
+    public double? CpuPercent { get; set; }
+    public double? GpuPercent { get; set; }
+    public double? GpuMemoryUsedMb { get; set; }
+    public double? RamUsedMb { get; set; }
+    public double? DiskReadMBps { get; set; }
+    public double? DiskWriteMBps { get; set; }
+    public double? NetworkInMBps { get; set; }
+    public double? NetworkOutMBps { get; set; }
+    /// <summary>True when TuflowRunning and any active threshold is met (stored at ingest for stable history).</summary>
+    public bool IsActive { get; set; }
+}
+
 /// <summary>Latest live resource-metrics snapshot reported by the agent for a machine (one row per machine, upserted).</summary>
 public class MachineResourceMetric
 {

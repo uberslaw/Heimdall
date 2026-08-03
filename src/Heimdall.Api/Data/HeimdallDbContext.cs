@@ -30,6 +30,8 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<RemoteAccessViewer> RemoteAccessViewers => Set<RemoteAccessViewer>();
     public DbSet<SessionDrilldownViewer> SessionDrilldownViewers => Set<SessionDrilldownViewer>();
     public DbSet<MachineResourceMetric> MachineResourceMetrics => Set<MachineResourceMetric>();
+    public DbSet<FleetDashboardMachine> FleetDashboardMachines => Set<FleetDashboardMachine>();
+    public DbSet<FleetMetricSnapshot> FleetMetricSnapshots => Set<FleetMetricSnapshot>();
     public DbSet<CustomTheme> CustomThemes => Set<CustomTheme>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -213,6 +215,25 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
         modelBuilder.Entity<MachineResourceMetric>(e =>
         {
             e.HasIndex(x => x.MachineId).IsUnique();
+            e.HasOne(x => x.Machine)
+                .WithMany()
+                .HasForeignKey(x => x.MachineId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FleetDashboardMachine>(e =>
+        {
+            e.HasIndex(x => x.MachineId).IsUnique();
+            e.HasOne(x => x.Machine)
+                .WithMany()
+                .HasForeignKey(x => x.MachineId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FleetMetricSnapshot>(e =>
+        {
+            e.HasIndex(x => new { x.MachineId, x.SampledAtUtc });
+            e.HasIndex(x => x.SampledAtUtc);
             e.HasOne(x => x.Machine)
                 .WithMany()
                 .HasForeignKey(x => x.MachineId)

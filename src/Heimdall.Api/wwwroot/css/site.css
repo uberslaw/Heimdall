@@ -1464,14 +1464,14 @@ table.hd-sortable th.sorted-desc::after {
   table-layout: fixed;
 }
 
-.hd-remote-table .hd-col-status { width: 8%; }
-.hd-remote-table .hd-col-machine { width: 16%; }
-.hd-remote-table .hd-col-ip { width: 11%; }
-.hd-remote-table .hd-col-contact { width: 13%; }
-.hd-remote-table .hd-col-ping { width: 12%; }
+.hd-remote-table .hd-col-status { width: 7%; }
+.hd-remote-table .hd-col-machine { width: 15%; }
+.hd-remote-table .hd-col-ip { width: 10%; }
+.hd-remote-table .hd-col-contact { width: 12%; }
+.hd-remote-table .hd-col-ping { width: 11%; }
 .hd-remote-table .hd-col-rds { width: 10%; }
-.hd-remote-table .hd-col-rdp { width: 13%; }
-.hd-remote-table .hd-col-actions { width: 17%; }
+.hd-remote-table .hd-col-rdp { width: 12%; }
+.hd-remote-table .hd-col-actions { width: 23%; }
 
 .hd-remote-table th {
   text-align: center;
@@ -1520,7 +1520,8 @@ table.hd-sortable th.sorted-desc::after {
   gap: 0.35rem;
 }
 
-.hd-cell-actions .hd-action-form {
+.hd-cell-actions .hd-action-form,
+.hd-cell-actions .hd-connect-rdp {
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -1537,10 +1538,11 @@ table.hd-sortable th.sorted-desc::after {
 }
 
 .hd-ping-form {
-  display: inline-flex;
+  display: inline-grid;
+  grid-template-columns: auto 1.15rem;
   align-items: center;
-  gap: 0.35rem;
-  flex-wrap: nowrap;
+  column-gap: 0.35rem;
+  justify-content: center;
 }
 
 .hd-ping-icon {
@@ -1553,6 +1555,10 @@ table.hd-sortable th.sorted-desc::after {
   font-weight: 700;
   line-height: 1;
   flex-shrink: 0;
+}
+
+.hd-ping-empty {
+  visibility: hidden;
 }
 
 .hd-ping-ok {
@@ -1574,6 +1580,21 @@ table.hd-sortable th.sorted-desc::after {
 
 .hd-cell-actions .hd-btn {
   width: 100%;
+}
+
+.hd-connect-rdp .hd-btn-icon {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.9rem;
+  flex-shrink: 0;
+}
+
+.hd-remote-table tr.hd-remote-offline > td {
+  background: rgba(220, 96, 96, 0.22);
+}
+
+.hd-remote-table tr.hd-remote-offline:hover > td {
+  background: rgba(220, 96, 96, 0.30);
 }
 
 .hd-remote-machine a {
@@ -1634,8 +1655,9 @@ table.hd-sortable th.sorted-desc::after {
 
 @media (max-width: 992px) {
   .hd-cell-ping .hd-ping-form {
-    flex-direction: column;
-    align-items: flex-start;
+    /* Keep button + reserved result slot on one row so Ping never jumps */
+    grid-template-columns: auto 1.15rem;
+    justify-content: start;
   }
 
   .hd-cell-actions {

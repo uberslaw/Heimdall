@@ -59,6 +59,8 @@
     function hydrateRdpFromSession() {
         var store = readStore();
         document.querySelectorAll(".hd-remote-table tbody tr[data-hostname]").forEach(function (row) {
+            if (row.classList.contains("hd-remote-offline")) return;
+
             var hostname = row.getAttribute("data-hostname");
             var rdpCell = row.querySelector(".hd-remote-rdp");
             if (!hostname || !rdpCell || rdpCell.textContent.trim()) return;

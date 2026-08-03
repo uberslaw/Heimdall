@@ -1,0 +1,161 @@
+@page "{id:int}"
+@model HistoricalDashboardMachineModel
+@{
+    ViewData["Title"] = string.IsNullOrWhiteSpace(Model.Hostname) ? "Fleet machine" : Model.Hostname;
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+    <div>
+        <h1 class="hd-title mb-1">@(Model.NotFoundMachine ? "Machine not found" : Model.Hostname)</h1>
+        @if (!Model.NotFoundMachine)
+        {
+            <p class="hd-sub mb-0">
+                Fleet detail · @(Model.LastIp ?? "no IP") ·
+                @(Model.IsEnrolled ? "enrolled" : "not enrolled")
+            </p>
+        }
+    </div>
+    <div class="d-flex gap-2">
+        <a class="hd-btn hd-btn-black" asp-page="/HistoricalDashboard" asp-route-tab="live">Live Fleet</a>
+        <a class="hd-btn hd-btn-black" asp-page="/HistoricalDashboard" asp-route-tab="historical">Analytics</a>
+        <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="historical-dashboard">Help</a>
+    </div>
+</div>
+
+@if (Model.NotFoundMachine)
+{
+    <div class="hd-panel">
+        <p class="mb-0">No machine with id @Model.Id.</p>
+    </div>
+}
+else
+{
+    <div class="d-flex flex-wrap gap-2 mb-3">
+        @foreach (var r in new[] { "24h", "7d", "30d", "90d", "365d" })
+        {
+            var active = Model.Range == r;
+            <a class="hd-btn hd-btn-sm @(active ? "hd-btn-gold" : "hd-btn-silver")"
+               asp-page="/HistoricalDashboardMachine" asp-route-id="@Model.Id" asp-route-range="@r">@r</a>
+        }
+        <span class="text-secondary small align-self-center ms-1">@Model.RangeLabel</span>
+    </div>
+
+    var s = Model.Summary;
+    <div class="hd-grid mb-4">
+        <div class="hd-stat"><div class="label">Runtime</div><div class="value">@HistoricalDashboardMachineModel.FormatHours(s.RuntimeHours) h</div></div>
+        <div class="hd-stat"><div class="label">Active</div><div class="value">@HistoricalDashboardMachineModel.FormatHours(s.ActiveRuntimeHours) h</div></div>
+        <div class="hd-stat"><div class="label">Idle</div><div class="value">@HistoricalDashboardMachineModel.FormatHours(s.IdleRuntimeHours) h</div></div>
+        <div class="hd-stat"><div class="label">GPU hours</div><div class="value">@HistoricalDashboardMachineModel.FormatHours(s.GpuHours)</div></div>
+        <div class="hd-stat"><div class="label">CPU hours</div><div class="value">@HistoricalDashboardMachineModel.FormatHours(s.CpuHours)</div></div>
+        <div class="hd-stat"><div class="label">RAM GB·h</div><div class="value">@HistoricalDashboardMachineModel.FormatHours(s.RamGbHours)</div></div>
+        <div class="hd-stat"><div class="label">Disk R/W GB</div><div class="value">@s.DiskReadGb.ToString("0.##") / @s.DiskWriteGb.ToString("0.##")</div></div>
+        <div class="hd-stat"><div class="label">Net In/Out GB</div><div class="value">@s.NetworkInGb.ToString("0.##") / @s.NetworkOutGb.ToString("0.##")</div></div>
+        <div class="hd-stat"><div class="label">Samples</div><div class="value">@s.SampleCount</div></div>
+    </div>
+
+    <div class="hd-panel mb-4">
+        <h2 class="h5 mb-3">CPU / GPU / RAM</h2>
+        @if (Model.Series.Count == 0)
+        {
+            <p class="text-secondary mb-0">No snapshots in this range yet. Enroll the machine and wait for the agent’s 30s fleet sampler.</p>
+        }
+        else
+        {
+            <canvas id="fleet-chart-util" height="120"></canvas>
+        }
+    </div>
+
+    @if (Model.Series.Count > 0)
+    {
+        <div class="hd-panel mb-4">
+            <h2 class="h5 mb-3">Disk &amp; network (MB/s)</h2>
+            <canvas id="fleet-chart-io" height="120"></canvas>
+        </div>
+
+        <div class="hd-panel mb-4">
+            <h2 class="h5 mb-3">Runtime vs Active (samples / bucket)</h2>
+            <canvas id="fleet-chart-runtime" height="120"></canvas>
+        </div>
+    }
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script>
+        (function () {
+            const data = @Html.Raw(Model.ChartJson);
+            if (!data.labels || data.labels.length === 0) return;
+
+            const grid = { color: 'rgba(200,206,216,0.12)' };
+            const ticks = { color: '#a4aec4' };
+
+            const utilEl = document.getElementById('fleet-chart-util');
+            if (utilEl) {
+                new Chart(utilEl, {
+                    type: 'line',
+                    data: {
+                        labels: data.labels,
+                        datasets: [
+                            { label: 'CPU %', data: data.cpu, borderColor: '#d4b86a', tension: 0.2, pointRadius: 0 },
+                            { label: 'GPU %', data: data.gpu, borderColor: '#6fd4c0', tension: 0.2, pointRadius: 0 },
+                            { label: 'RAM MB', data: data.ramMb, borderColor: '#c8ced8', tension: 0.2, pointRadius: 0, yAxisID: 'y1' }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        interaction: { mode: 'index', intersect: false },
+                        scales: {
+                            x: { ticks, grid },
+                            y: { ticks, grid, title: { display: true, text: '%', color: '#a4aec4' } },
+                            y1: { position: 'right', ticks, grid: { drawOnChartArea: false }, title: { display: true, text: 'MB', color: '#a4aec4' } }
+                        }
+                    }
+                });
+            }
+
+            const ioEl = document.getElementById('fleet-chart-io');
+            if (ioEl) {
+                new Chart(ioEl, {
+                    type: 'line',
+                    data: {
+                        labels: data.labels,
+                        datasets: [
+                            { label: 'Disk read', data: data.diskRead, borderColor: '#d4b86a', tension: 0.2, pointRadius: 0 },
+                            { label: 'Disk write', data: data.diskWrite, borderColor: '#c4924a', tension: 0.2, pointRadius: 0 },
+                            { label: 'Net in', data: data.netIn, borderColor: '#6fd4c0', tension: 0.2, pointRadius: 0 },
+                            { label: 'Net out', data: data.netOut, borderColor: '#a4aec4', tension: 0.2, pointRadius: 0 }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        interaction: { mode: 'index', intersect: false },
+                        scales: {
+                            x: { ticks, grid },
+                            y: { ticks, grid, title: { display: true, text: 'MB/s', color: '#a4aec4' } }
+                        }
+                    }
+                });
+            }
+
+            const runtimeEl = document.getElementById('fleet-chart-runtime');
+            if (runtimeEl) {
+                new Chart(runtimeEl, {
+                    type: 'line',
+                    data: {
+                        labels: data.labels,
+                        datasets: [
+                            { label: 'TUFLOW running', data: data.runtimeSamples, borderColor: '#d4b86a', tension: 0.2, pointRadius: 0 },
+                            { label: 'Active', data: data.activeSamples, borderColor: '#6fd4c0', tension: 0.2, pointRadius: 0 }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        interaction: { mode: 'index', intersect: false },
+                        scales: {
+                            x: { ticks, grid },
+                            y: { ticks, grid, beginAtZero: true, title: { display: true, text: 'Samples', color: '#a4aec4' } }
+                        }
+                    }
+                });
+            }
+        })();
+    </script>
+}

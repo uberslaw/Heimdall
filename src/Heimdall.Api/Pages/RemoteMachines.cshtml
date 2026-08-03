@@ -81,7 +81,8 @@
         {
             var restartActive = r.RestartProgress is not null
                 && RemoteMachineService.IsActiveRestartPhase(r.RestartProgress.Phase);
-            <tr data-hostname="@r.Hostname"
+            <tr class="@(r.IsOnline ? null : "hd-remote-offline")"
+                data-hostname="@r.Hostname"
                 @(restartActive ? Html.Raw("data-restart-poll=\"true\"") : null)
                 @(RemoteMachinesModel.ShouldShowRdpStatus(r) && r.RdpResponding is bool rdShow
                     ? Html.Raw($"data-rdp-responding=\"{rdShow}\"")
@@ -131,17 +132,25 @@
                 <td class="hd-cell-ping">
                     <form method="post" asp-page-handler="Ping" class="hd-ping-form">
                         <input type="hidden" name="hostname" value="@r.Hostname" />
+                        <button type="submit" class="btn btn-ghost btn-sm">Ping</button>
                         @if (r.PingReachable is bool pingOk)
                         {
                             <span class="hd-ping-icon @(pingOk ? "hd-ping-ok" : "hd-ping-fail")"
                                   title="@r.PingDetail"
                                   aria-label="@(pingOk ? "Reachable" : "Unreachable")">@(pingOk ? "✓" : "✗")</span>
                         }
-                        <button type="submit" class="btn btn-ghost btn-sm">Ping</button>
+                        else
+                        {
+                            <span class="hd-ping-icon hd-ping-empty" aria-hidden="true"></span>
+                        }
                     </form>
                 </td>
                 <td>
-                    @if (!string.IsNullOrWhiteSpace(r.TermServiceStatus))
+                    @if (!r.IsOnline)
+                    {
+                        <span class="badge-pill badge-ended">Offline</span>
+                    }
+                    else if (!string.IsNullOrWhiteSpace(r.TermServiceStatus))
                     {
                         <span class="badge-pill @RemoteMachinesModel.TermServiceBadgeClass(r.TermServiceStatus)">@r.TermServiceStatus</span>
                     }
@@ -151,7 +160,11 @@
                     }
                 </td>
                 <td class="hd-remote-rdp">
-                    @if (RemoteMachinesModel.IsRdpTesting(r))
+                    @if (!r.IsOnline)
+                    {
+                        <span class="badge-pill badge-ended">Offline</span>
+                    }
+                    else if (RemoteMachinesModel.IsRdpTesting(r))
                     {
                         <span class="badge-pill badge-rdp">Testing RDP…</span>
                     }
@@ -163,6 +176,15 @@
                     }
                 </td>
                 <td class="hd-cell-actions">
+                    <a class="hd-btn hd-btn-silver hd-btn-sm hd-btn-compact hd-connect-rdp"
+                       asp-page-handler="ConnectRdp"
+                       asp-route-hostname="@r.Hostname"
+                       title="Open Remote Desktop (mstsc) to @r.Hostname">
+                        <svg class="hd-btn-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="M8 1a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V1Zm1 13.5a.5.5 0 1 0 1 0 .5.5 0 0 0-1 0Zm2 0a.5.5 0 1 0 1 0 .5.5 0 0 0-1 0ZM9.5 1a.5.5 0 0 0 0 1h5a.5.5 0 0 0 0-1h-5ZM9 3.5a.5.5 0 0 0 .5.5h5a.5.5 0 0 0 0-1h-5a.5.5 0 0 0-.5.5ZM1.5 2A1.5 1.5 0 0 0 0 3.5v7A1.5 1.5 0 0 0 1.5 12H6v2h-.5a.5.5 0 0 0 0 1H7a.5.5 0 0 0 0-1H6.5v-2h.041a.5.5 0 0 0 .052-.004l.592-.032a.5.5 0 0 0 .46-.5V3.5a.5.5 0 0 0-.5-.5H1.5ZM1 3.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5h-4a.5.5 0 0 1-.5-.5v-7Z"/>
+                        </svg>
+                        <span>Connect</span>
+                    </a>
                     <form method="post" asp-page-handler="ProbeRdp" class="hd-action-form">
                         <input type="hidden" name="hostname" value="@r.Hostname" />
                         <button type="submit" class="hd-btn hd-btn-gold hd-btn-sm hd-btn-compact">Test RDP</button>
