@@ -147,13 +147,10 @@ public class FleetDashboardService(HeimdallDbContext db)
         var machineIds = enrolled.Select(e => e.MachineId).ToList();
         var todayStart = DateTimeOffset.UtcNow.Date;
         var todayStartOffset = new DateTimeOffset(todayStart, TimeSpan.Zero);
-        // EF SQLite cannot translate DateTimeOffset.AddDays inside Where.
         var recentFrom = todayStartOffset.AddDays(-1);
 
-        var recent = await db.FleetMetricSnapshots.AsNoTracking()
-            .Where(s => machineIds.Contains(s.MachineId) && s.SampledAtUtc >= recentFrom)
-            .OrderBy(s => s.SampledAtUtc)
-            .ToListAsync(ct);
+        // SQLite cannot translate DateTimeOffset Where/OrderBy — load by machine id, filter in memory.
+        var recent = await LoadSnapshotsForMachinesAsync(machineIds, recentFrom, toUtc: null, ct);
 
         var byMachine = recent.GroupBy(s => s.MachineId).ToDictionary(g => g.Key, g => g.ToList());
         var rows = new List<LiveFleetRow>();
@@ -210,23 +207,13 @@ public class FleetDashboardService(HeimdallDbContext db)
         if (enrolledIds.Count == 0)
             return FleetMetrics.Empty;
 
-        var query = db.FleetMetricSnapshots.AsNoTracking()
-            .Where(s => enrolledIds.Contains(s.MachineId) && s.SampledAtUtc >= fromUtc);
-        if (toUtc is not null)
-            query = query.Where(s => s.SampledAtUtc < toUtc.Value);
-
-        var snaps = await query.OrderBy(s => s.SampledAtUtc).ToListAsync(ct);
+        var snaps = await LoadSnapshotsForMachinesAsync(enrolledIds, fromUtc, toUtc, ct);
         return AggregateInternal(snaps);
     }
 
     public async Task<FleetMetrics> AggregateMachineAsync(int machineId, DateTimeOffset fromUtc, DateTimeOffset? toUtc, CancellationToken ct)
     {
-        var query = db.FleetMetricSnapshots.AsNoTracking()
-            .Where(s => s.MachineId == machineId && s.SampledAtUtc >= fromUtc);
-        if (toUtc is not null)
-            query = query.Where(s => s.SampledAtUtc < toUtc.Value);
-
-        var snaps = await query.OrderBy(s => s.SampledAtUtc).ToListAsync(ct);
+        var snaps = await LoadSnapshotsForMachinesAsync([machineId], fromUtc, toUtc, ct);
         return AggregateInternal(snaps);
     }
 
@@ -240,12 +227,7 @@ public class FleetDashboardService(HeimdallDbContext db)
             return [];
 
         var ids = enrolled.Select(e => e.MachineId).ToList();
-        var query = db.FleetMetricSnapshots.AsNoTracking()
-            .Where(s => ids.Contains(s.MachineId) && s.SampledAtUtc >= fromUtc);
-        if (toUtc is not null)
-            query = query.Where(s => s.SampledAtUtc < toUtc.Value);
-
-        var snaps = await query.OrderBy(s => s.SampledAtUtc).ToListAsync(ct);
+        var snaps = await LoadSnapshotsForMachinesAsync(ids, fromUtc, toUtc, ct);
         var byMachine = snaps.GroupBy(s => s.MachineId).ToDictionary(g => g.Key, g => g.ToList());
 
         return enrolled
@@ -261,12 +243,7 @@ public class FleetDashboardService(HeimdallDbContext db)
     public async Task<IReadOnlyList<TimeSeriesPoint>> GetTimeSeriesAsync(
         int machineId, DateTimeOffset fromUtc, DateTimeOffset? toUtc, TimeSpan bucket, CancellationToken ct)
     {
-        var query = db.FleetMetricSnapshots.AsNoTracking()
-            .Where(s => s.MachineId == machineId && s.SampledAtUtc >= fromUtc);
-        if (toUtc is not null)
-            query = query.Where(s => s.SampledAtUtc < toUtc.Value);
-
-        var snaps = await query.OrderBy(s => s.SampledAtUtc).ToListAsync(ct);
+        var snaps = await LoadSnapshotsForMachinesAsync([machineId], fromUtc, toUtc, ct);
         if (snaps.Count == 0)
             return [];
 
@@ -296,6 +273,31 @@ public class FleetDashboardService(HeimdallDbContext db)
                     list.Count(s => s.IsActive));
             })
             .ToList();
+    }
+
+    /// <summary>
+    /// Load fleet snapshots for the given machines. Date filters and ordering are applied in memory
+    /// because EF Core + SQLite cannot translate DateTimeOffset comparisons or ORDER BY.
+    /// </summary>
+    private async Task<List<FleetMetricSnapshot>> LoadSnapshotsForMachinesAsync(
+        IReadOnlyCollection<int> machineIds,
+        DateTimeOffset fromUtc,
+        DateTimeOffset? toUtc,
+        CancellationToken ct)
+    {
+        if (machineIds.Count == 0)
+            return [];
+
+        var ids = machineIds as List<int> ?? machineIds.ToList();
+        var snaps = await db.FleetMetricSnapshots.AsNoTracking()
+            .Where(s => ids.Contains(s.MachineId))
+            .ToListAsync(ct);
+
+        IEnumerable<FleetMetricSnapshot> filtered = snaps.Where(s => s.SampledAtUtc >= fromUtc);
+        if (toUtc is not null)
+            filtered = filtered.Where(s => s.SampledAtUtc < toUtc.Value);
+
+        return filtered.OrderBy(s => s.SampledAtUtc).ToList();
     }
 
     public static (DateTimeOffset From, DateTimeOffset? To) ResolvePeriod(string period)
