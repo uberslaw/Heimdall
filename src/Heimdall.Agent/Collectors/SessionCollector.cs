@@ -138,9 +138,10 @@ public sealed class SessionCollector
                 var stateChanged = tracked.State != liveSession.State;
                 tracked.Username = liveSession.Username;
                 tracked.Domain = liveSession.Domain;
-                tracked.SessionType = liveSession.SessionType;
+                // WTS often clears protocol/client fields on disconnect; keep the last known fingerprint.
                 tracked.ClientName = liveSession.ClientName ?? tracked.ClientName;
                 tracked.ClientAddress = liveSession.ClientAddress ?? tracked.ClientAddress;
+                tracked.SessionType = StickySessionType(liveSession.SessionType, tracked.ClientName, tracked.ClientAddress);
                 tracked.LastObservedUtc = now;
 
                 if (stateChanged)
@@ -348,6 +349,22 @@ public sealed class SessionCollector
             return SessionType.Rdp;
 
         return SessionType.Local;
+    }
+
+    /// <summary>
+    /// After disconnect, WTS often reports Console/protocol-0 with empty client fields even though
+    /// the session was inbound RDP. Prefer a retained client fingerprint over a fresh Local classify.
+    /// </summary>
+    internal static SessionType StickySessionType(
+        SessionType classified,
+        string? clientName,
+        string? clientAddress)
+    {
+        if (classified == SessionType.Rdp)
+            return SessionType.Rdp;
+        if (HasRemoteClientFingerprint(clientName, clientAddress))
+            return SessionType.Rdp;
+        return classified;
     }
 
     internal static bool HasRemoteClientFingerprint(string? clientName, string? clientAddress)

@@ -147,9 +147,11 @@ public class FleetDashboardService(HeimdallDbContext db)
         var machineIds = enrolled.Select(e => e.MachineId).ToList();
         var todayStart = DateTimeOffset.UtcNow.Date;
         var todayStartOffset = new DateTimeOffset(todayStart, TimeSpan.Zero);
+        // EF SQLite cannot translate DateTimeOffset.AddDays inside Where.
+        var recentFrom = todayStartOffset.AddDays(-1);
 
         var recent = await db.FleetMetricSnapshots.AsNoTracking()
-            .Where(s => machineIds.Contains(s.MachineId) && s.SampledAtUtc >= todayStartOffset.AddDays(-1))
+            .Where(s => machineIds.Contains(s.MachineId) && s.SampledAtUtc >= recentFrom)
             .OrderBy(s => s.SampledAtUtc)
             .ToListAsync(ct);
 

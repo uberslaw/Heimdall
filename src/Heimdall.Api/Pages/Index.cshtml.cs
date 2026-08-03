@@ -83,7 +83,11 @@ public class IndexModel(HeimdallDbContext db) : PageModel
             });
 
             var util = Math.Clamp(occupied / windowSeconds * 100.0, 0, 100);
-            var lastUser = machineSessions.OrderByDescending(s => s.LastObservedUtc).FirstOrDefault();
+            var lastUser = machineSessions
+                .OrderByDescending(s => s.State == SessionState.Active)
+                .ThenByDescending(s => s.LastObservedUtc)
+                .ThenByDescending(s => s.ActiveSeconds)
+                .FirstOrDefault();
 
             rows.Add(new MachineRow(
                 m.Hostname,

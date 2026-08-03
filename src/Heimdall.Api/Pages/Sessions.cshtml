@@ -11,7 +11,7 @@
     <h1 class="hd-title mb-1">Sessions</h1>
     <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="sessions">Help</a>
 </div>
-<p class="hd-sub">Local and inbound RDP logons · usage by machine · disconnected app activity</p>
+<p class="hd-sub">Logon / usage sessions · who signed in · local vs RDP · active vs disconnected time</p>
 
 <form method="get" class="hd-panel mb-3">
     <div class="row g-3 align-items-end">
@@ -79,7 +79,8 @@ else
     <div class="hd-panel mb-3">
         <h2 class="hd-section-title">By machine</h2>
         <p class="text-secondary small">
-            Select one or more machines, then Apply, to show the full session list below.
+            Click a machine name to open its session log for this period.
+            Or select one or more machines and Apply.
             @if (!snap.ShowSessionDetails)
             {
                 <span>Or <a href="@Url.Page("/Sessions", new { range = Model.Range, hideSystem = Model.HideSystem, onlyDisconnectedApps = Model.OnlyDisconnectedApps, hosts = snap.MachineSummaries.Select(m => m.Hostname).ToArray() })">view all @snap.MachineSummaries.Count machines</a>.</span>
@@ -126,7 +127,16 @@ else
                                 <input type="checkbox" class="host-checkbox" name="hosts" value="@m.Hostname" @(isChecked ? "checked" : null) />
                             </td>
                             <td>
-                                <a asp-page="/Machine" asp-route-hostname="@m.Hostname" asp-route-range="@Model.Range">@m.Hostname</a>
+                                @{
+                                    var sessionLink = Url.Page("/Sessions", new
+                                    {
+                                        range = Model.Range,
+                                        hosts = m.Hostname,
+                                        hideSystem = Model.HideSystem ? "true" : null,
+                                        onlyDisconnectedApps = Model.OnlyDisconnectedApps ? "true" : null
+                                    });
+                                }
+                                <a href="@sessionLink">@m.Hostname</a>
                             </td>
                             <td>@m.SessionCount</td>
                             <td data-sort-value="@m.ActiveSeconds">@DurationDisplay.Render(m.ActiveSeconds)</td>
@@ -157,8 +167,31 @@ else
 
     @if (snap.ShowSessionDetails)
     {
-        <div class="hd-panel">
-            <h2 class="hd-section-title">Session log</h2>
+        <div class="hd-panel" id="session-log">
+            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+                <div>
+                    <h2 class="hd-section-title mb-1">Session log</h2>
+                    <p class="text-secondary small mb-0">
+                        @if (Model.Hosts.Count == 1)
+                        {
+                            <span>Sessions on <strong>@Model.Hosts[0]</strong> · @Model.RangeLabel</span>
+                        }
+                        else if (Model.Hosts.Count > 1)
+                        {
+                            <span>@Model.Hosts.Count machines · @Model.RangeLabel</span>
+                        }
+                        else
+                        {
+                            <span>@Model.RangeLabel</span>
+                        }
+                        · @Model.SessionRows.Count session@(Model.SessionRows.Count == 1 ? "" : "s")
+                    </p>
+                </div>
+                @if (Model.Hosts.Count == 1)
+                {
+                    <a class="hd-btn hd-btn-black hd-btn-sm" asp-page="/Machine" asp-route-hostname="@Model.Hosts[0]" asp-route-range="@Model.Range">Machine detail</a>
+                }
+            </div>
             @if (Model.SessionRows.Count == 0)
             {
                 <p class="text-secondary mb-0">No sessions match the current filters.</p>
@@ -175,6 +208,7 @@ else
                             <th data-sort="text">State</th>
                             <th data-sort="date">Started</th>
                             <th data-sort="date">Ended</th>
+                            <th data-sort="num">Duration</th>
                             <th data-sort="num">Active</th>
                             <th data-sort="num">Disconnected</th>
                             <th data-sort="text">Disc. apps</th>
@@ -184,6 +218,7 @@ else
                     <tbody>
                     @foreach (var s in Model.SessionRows)
                     {
+                        var durationSec = s.ActiveSeconds + s.DisconnectedSeconds;
                         <tr class="@(s.HadAppActivityWhileDisconnected ? "hd-row-highlight" : null)">
                             <td>@s.Hostname</td>
                             <td>@(string.IsNullOrEmpty(s.Domain) ? s.Username : $"{s.Domain}\\{s.Username}")</td>
@@ -212,8 +247,9 @@ else
                                         break;
                                 }
                             </td>
-                            <td>@s.StartedAtUtc.ToLocalTime().ToString("g")</td>
-                            <td>@(s.EndedAtUtc?.ToLocalTime().ToString("g") ?? "—")</td>
+                            <td data-sort-value="@s.StartedAtUtc.ToUnixTimeSeconds()">@s.StartedAtUtc.ToLocalTime().ToString("g")</td>
+                            <td data-sort-value="@(s.EndedAtUtc?.ToUnixTimeSeconds() ?? 0)">@(s.EndedAtUtc?.ToLocalTime().ToString("g") ?? "—")</td>
+                            <td data-sort-value="@durationSec">@DurationDisplay.Render(durationSec)</td>
                             <td data-sort-value="@s.ActiveSeconds">@DurationDisplay.Render(s.ActiveSeconds)</td>
                             <td data-sort-value="@s.DisconnectedSeconds">@DurationDisplay.Render(s.DisconnectedSeconds)</td>
                             <td>
@@ -289,7 +325,7 @@ else
                     var ca = a.children[colIdx], cb = b.children[colIdx];
                     var va = (ca && (ca.dataset.sortValue || ca.textContent)) || '';
                     var vb = (cb && (cb.dataset.sortValue || cb.textContent)) || '';
-                    if (type === 'num') {
+                    if (type === 'num' || type === 'date') {
                         va = parseFloat(va); vb = parseFloat(vb);
                         if (Number.isNaN(va)) va = -Infinity;
                         if (Number.isNaN(vb)) vb = -Infinity;
@@ -303,6 +339,11 @@ else
             if (th.dataset.defaultDesc !== undefined) th.click();
         });
     });
+
+    var log = document.getElementById('session-log');
+    if (log) {
+        log.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
 })();
 </script>
 <script src="~/js/session-drilldown.js" asp-append-version="true"></script>

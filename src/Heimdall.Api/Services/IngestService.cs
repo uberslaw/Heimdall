@@ -285,7 +285,7 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
                 SessionId = dto.SessionId,
                 Username = username,
                 Domain = domain,
-                SessionType = dto.SessionType,
+                SessionType = CoerceSessionType(dto.SessionType, clientName, dto.ClientAddress),
                 State = dto.State,
                 StartedAtUtc = dto.StartedAtUtc ?? dto.ObservedAtUtc,
                 EndedAtUtc = dto.EndedAtUtc,
@@ -323,7 +323,27 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
             existing.Domain = domain ?? existing.Domain;
         }
 
-        existing.SessionType = dto.SessionType;
+        // Agents that still clear SessionType on disconnect keep republishing Local; coerce from fingerprint.
+        existing.SessionType = CoerceSessionType(
+            dto.SessionType, existing.ClientName, existing.ClientAddress);
+    }
+
+    /// <summary>
+    /// Agents may report Local after WTS clears client fields on disconnect while ClientName/Address remain.
+    /// </summary>
+    private static SessionType CoerceSessionType(SessionType reported, string? clientName, string? clientAddress)
+    {
+        if (reported == SessionType.Rdp)
+            return SessionType.Rdp;
+
+        if (!string.IsNullOrWhiteSpace(clientName))
+            return SessionType.Rdp;
+
+        if (string.IsNullOrWhiteSpace(clientAddress))
+            return reported;
+
+        var addr = clientAddress.Trim();
+        return addr is "0.0.0.0" or "::" or "::1" ? reported : SessionType.Rdp;
     }
 
     private async Task UpsertProcessRunAsync(Machine machine, ProcessRunDto dto, CancellationToken ct)

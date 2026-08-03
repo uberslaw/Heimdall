@@ -1331,6 +1331,24 @@ table.hd-sortable th.sorted-desc::after {
 }
 
 /* Discovery page */
+.hd-discovery-name-col {
+  max-width: 5rem;
+  width: 5rem;
+  vertical-align: top;
+}
+
+.hd-discovery-name-col .hd-discovery-read[data-field="name"] {
+  display: block;
+  max-width: 5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hd-discovery-name-col .hd-discovery-edit {
+  max-width: 5rem;
+}
+
 .hd-discovery-location-cell {
   min-width: 12rem;
 }
@@ -1364,8 +1382,20 @@ table.hd-sortable th.sorted-desc::after {
 
 .hd-discovery-cat-col,
 .hd-discovery-subcat-col {
-  max-width: 6rem;
-  width: 6rem;
+  max-width: 7rem;
+  width: 7rem;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.hd-discovery-installs-col {
+  text-align: center;
+  width: 4.5rem;
+}
+
+.hd-discovery-freq-col {
+  white-space: nowrap;
+  width: 4rem;
 }
 
 .hd-discovery-actions-col {
@@ -1377,6 +1407,9 @@ table.hd-sortable th.sorted-desc::after {
   padding-top: 0.25rem !important;
   padding-bottom: 0.65rem !important;
   border-top: none !important;
+  color: var(--hd-muted);
+  font-size: 0.88rem;
+  line-height: 1.35;
 }
 
 .hd-discovery-main + .hd-discovery-desc td {

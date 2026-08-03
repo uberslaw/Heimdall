@@ -37,7 +37,8 @@
     <ol class="small mb-0">
         <li>Use the region/office tree on the left (or the search box) to narrow down to a machine, group, region or office.</li>
         <li>The date-range control at the top changes the utilisation window for every stat on the page.</li>
-        <li>Click a machine's hostname to open its <a asp-page="/Machine">machine detail</a> page (sessions, apps used, metrics).</li>
+        <li>Click a machine's hostname to open its <a asp-page="/Machine">machine detail</a> page (apps used, metrics).</li>
+        <li>Nav <strong>Machines → Sessions</strong> lists logon/usage sessions — click a machine name there to open that host’s session log.</li>
         <li>Badges show <span class="badge-pill badge-rdp">RDP</span> / <span class="badge-pill badge-local">Local</span> session type and whether a machine is currently in use.</li>
     </ol>
 </section>
@@ -113,8 +114,8 @@
         <li><strong>Name</strong> — friendly label (<code>DisplayName</code>); click <strong>Edit</strong>, change values, then <strong>Save</strong> (or <strong>Discard</strong> to revert).</li>
         <li><strong>Name &amp; Location</strong> — exe name on top, full path underneath in muted text.</li>
         <li><strong>Version</strong> — agent-reported file/product version when known, otherwise a path-derived guess; editable manually via Edit/Save.</li>
-        <li><strong>Cat</strong> / <strong>SubCat</strong> — optional labels (shown when any row has data, or while editing); populated via Discovery edits or optional CSV columns.</li>
-        <li><strong>Description</strong> — optional narrative shown on a sub-row spanning the table when present (or while editing).</li>
+        <li><strong>Category</strong> / <strong>Subcategory</strong> — always-visible columns; editable via Edit/Save or CSV import.</li>
+        <li><strong>Descriptions</strong> toggle — shows description text on a sub-row under each app (also always visible while editing).</li>
         <li><strong>Installs</strong> — how many machines have reported this process; hover the count for the host list.</li>
         <li><strong>Freq</strong> — average distinct users per week with real runtime, averaged across every week since first seen.</li>
         <li><strong>Ignore</strong> (rose) marks catalog noise; <strong>Hide ignored</strong> toggles them out of view.</li>
@@ -145,10 +146,11 @@
 
 <section id="sessions" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Sessions</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> local and inbound-RDP logons, with active vs. disconnected time per session.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> logon / usage sessions — who signed in, local vs RDP, start/end, active vs disconnected time.</p>
     <ol class="small mb-0">
-        <li>Filter by machine, user, or date range.</li>
-        <li>Expand a session to drill into which apps were used and for how long during it.</li>
+        <li>Under nav <strong>Machines → Sessions</strong>. Pick a period, then click a machine name (or multi-select) to open the session log.</li>
+        <li>Each row shows user, Local / Inbound RDP, started, ended, total duration, active time, and disconnected time.</li>
+        <li>Open-count buttons show who is on a machine right now; <em>Machine detail</em> links to the apps/metrics page for that host.</li>
     </ol>
 </section>
 

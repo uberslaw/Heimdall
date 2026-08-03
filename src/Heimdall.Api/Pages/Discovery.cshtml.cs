@@ -20,8 +20,6 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
     public int TotalCount { get; private set; }
     public int UnclassifiedCount { get; private set; }
     public int IgnoredCount { get; private set; }
-    public bool ShowCategoryColumn { get; private set; }
-    public bool ShowSubcategoryColumn { get; private set; }
 
     [BindProperty(SupportsGet = true)]
     public bool HideIgnored { get; set; }
@@ -129,8 +127,6 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         BlankPathCount = entries.Count(e => string.IsNullOrWhiteSpace(e.ExecutablePath));
         IgnoredCount = entries.Count(e => e.Ignored);
         UnclassifiedCount = await catalog.CountNeedingClassificationAsync(HttpContext.RequestAborted);
-        ShowCategoryColumn = entries.Any(e => !string.IsNullOrWhiteSpace(e.Category));
-        ShowSubcategoryColumn = entries.Any(e => !string.IsNullOrWhiteSpace(e.Subcategory));
 
         var ctx = await processGroups.BuildContextAsync(HttpContext.RequestAborted);
 
