@@ -94,6 +94,23 @@ Dashboard → **Machines** → **Socratize** (per row, or select host at top) op
 
 **Keep the name Socratize** for this retrospective machine deep-dive. A related future arm — **Flight Recorder / Deep Observe** (high-cardinality capture while a watched process like `tuflow.exe` runs, for AI incident analysis) — is parked in [`docs/BACKLOG.md`](docs/BACKLOG.md) and teased on the Socratize page; it is not the same as today’s brief.
 
+### App lists & Discovery
+
+Dashboard → **Applications** → **App lists**: named process schemas, machine Analyze (approval-gated — never silent auto-track), Request Inventory, classification CSV export/import.  
+Dashboard → **Discovery**: full central process catalog (ProcessName + ExecutablePath), editable labels/version/category, installs + usage frequency.
+
+In-app **Admin → Help** is the page-by-page operator guide (preferred for UI detail).
+
+### Remote
+
+| Page | Purpose |
+|------|---------|
+| **Remote Machines** | RDP/RDS health, ping from API host, Connect `.rdp`, Restart RDS via agent command queue |
+| **Historical Dashboard** | Enroll machines → always-on **30s** resource snapshots; Live Fleet + historical analytics (TUFLOW-oriented POC). Distinct from backlog **Flight Recorder**. |
+| **Staff Access** | Restricted live metrics for staff in a Remote Access Group (optional Windows Negotiate — see [INSTALL.md](INSTALL.md)) |
+
+Admin → **Remote Access Groups** maps staff email ↔ machines. Admin → **Clients** compares agent heartbeat version vs published pack version. Admin → **Theme** / **Database mode** (Live vs Sandbox).
+
 ### Teams
 
 Dashboard → **Teams**: maintain business units / teams (optional parent hierarchy + code) and map people by Windows username (optional domain, display name, email). Primary POC path is **CSV upload**; create/edit/delete teams and assign users manually as well.
@@ -123,7 +140,7 @@ scripts/             Local-admin installers
 
 ## POC limits
 
-- No Entra/AD auth on the website yet
+- No Entra/AD auth on the **admin** dashboard yet (trusted LAN). Staff Access can use Windows Negotiate separately.
 - Process→user via session id (best-effort)
-- Metric collection (RAM/GPU/disk) on the agent is stubbed; thresholds are defined in Config and delivered via `/api/config/{hostname}`. Stats can rank by GPU/disk once agents populate `ProcessRun.PeakGpuPercent` / `DiskReadBytes` / `DiskWriteBytes`.
+- Per-process `ProcessRun` GPU/disk peaks are often still empty (Stats ranking columns). **Live** RAM/GPU/disk sampling runs for Staff Access viewers and for **Historical Dashboard** enrollment (30s fleet snapshots) — thresholds in Config still apply via `/api/config/{hostname}`.
 - SQLite for POC; SQL Server later if needed

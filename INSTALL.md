@@ -31,7 +31,7 @@ On client PCs you only need **`Install.lnk`** (from the pushed/copied pack). Log
 
 **Push requirements:** your account needs admin rights on the target (C$ / SMB). After push, on the target PC run `C:\Temp\Heimdall-Client\Install.lnk` elevated.
 
-**If you still see “Pack collector” / old Steps text:** you are not on `cursor/heimdall-setup-c57e` yet — fetch/checkout that branch, then open `scripts\Heimdall-Setup.lnk` or `scripts\Heimdall-LaunchControl.lnk` (same UI). Optionally run `scripts\New-HeimdallShortcuts.cmd` to refresh icons/targets.
+**If you still see “Pack collector” / old Steps text:** pull latest `main`, then run `scripts\New-HeimdallShortcuts.cmd` and reopen `scripts\Heimdall-Setup.lnk` (or `Heimdall-LaunchControl.lnk` — same UI).
 
 ---
 
@@ -266,7 +266,7 @@ Staff Access can tie sign-in to the user's **Windows account** (Negotiate/NTLM/K
 
 1. Browse the dashboard by **hostname** (e.g. `http://heimdall-server:5080`), not raw IP, so Negotiate works reliably.
 2. Add the site to the **Local intranet** zone (IE settings / Group Policy: *Site to Zone Assignment*), or ensure Edge/Chrome treats it as intranet so Windows credentials are sent automatically.
-3. Register staff in **Settings → Remote Access Groups** using emails that match AD: UPN (`user@domain.com`) or `user@` one of `EmailDomainSuffixes`.
+3. Register staff in **Admin → Remote Access Groups** using emails that match AD: UPN (`user@domain.com`) or `user@` one of `EmailDomainSuffixes`.
 4. Restart **`HeimdallApi`** after changing `appsettings.json`.
 
 **IIS alternative:** If you reverse-proxy with IIS instead of direct Kestrel, enable **Windows Authentication** on the IIS site and disable Anonymous for `/StaffAccess`, `/Staff`, and `/api/staff/*`; forward `X-Forwarded-*` headers. Kestrel-as-service (default installer) supports Negotiate directly — no IIS required.
