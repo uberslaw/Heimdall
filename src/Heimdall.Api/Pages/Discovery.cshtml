@@ -233,6 +233,9 @@
                         : (descText ?? pathText);
                     var hasSuggestion = r.SuggestedGroup is not null;
                     var setFormId = $"discovery-set-{r.Id}";
+                    var approveFormId = $"discovery-approve-{r.Id}";
+                    var unignoreFormId = $"discovery-unignore-{r.Id}";
+                    var findPathFormId = $"discovery-findpath-{r.Id}";
                     var defaultGroup = r.SuggestedGroup?.ToString() ?? "Specialization";
                     <tr class="hd-discovery-main @(r.Ignored ? "hd-row-muted" : null)"
                         data-discovery-id="@r.Id"
@@ -400,19 +403,15 @@
                         <td class="hd-discovery-actions-col">
                             @if (r.Ignored)
                             {
-                                <button type="submit" formaction="?handler=Unignore" formmethod="post"
-                                        class="hd-btn hd-btn-silver hd-btn-sm hd-discovery-action-btn"
-                                        name="id" value="@r.Id"
-                                        formnovalidate>
+                                <button type="submit" form="@unignoreFormId"
+                                        class="hd-btn hd-btn-silver hd-btn-sm hd-discovery-action-btn">
                                     Restore
                                 </button>
                             }
                             else if (hasSuggestion)
                             {
-                                <button type="submit" formaction="?handler=Approve" formmethod="post"
+                                <button type="submit" form="@approveFormId"
                                         class="hd-btn hd-btn-gold hd-btn-sm hd-discovery-action-btn"
-                                        name="id" value="@r.Id"
-                                        formnovalidate
                                         title="@(r.SuggestionReason ?? "Approve suggested group")">
                                     Approve
                                 </button>
@@ -432,10 +431,8 @@
                             }
                             @if (!r.Ignored && string.IsNullOrWhiteSpace(r.Path))
                             {
-                                <button type="submit" formaction="?handler=FindPath" formmethod="post"
+                                <button type="submit" form="@findPathFormId"
                                         class="hd-btn hd-btn-silver hd-btn-sm hd-discovery-action-btn"
-                                        name="id" value="@r.Id"
-                                        formnovalidate
                                         title="Search process samples and inventories for this executable path">
                                     Find path
                                 </button>
@@ -459,19 +456,63 @@
         </div>
     </form>
 
-    @* Separate Set forms (cannot nest inside SaveAll). Select/button use form= attribute. *@
-    @foreach (var r in Model.Rows.Where(x => !x.Ignored))
+    @* Per-row action forms (cannot nest inside SaveAll). Buttons/selects use form= attribute.
+       Approve/Restore/FindPath must NOT post via SaveAll — that posts every Edits[*] field and
+       exceeds ASP.NET Core's default FormOptions.ValueCountLimit (1024), which returns HTTP 400. *@
+    @foreach (var r in Model.Rows)
     {
-        <form method="post" asp-page-handler="Set" id="discovery-set-@r.Id" class="d-none" data-discovery-set-form="@r.Id">
-            @Html.AntiForgeryToken()
-            <input type="hidden" name="id" value="@r.Id" />
-            <input type="hidden" name="hideIgnored" value="@Model.HideIgnored" />
-            <input type="hidden" name="blankPathOnly" value="@Model.BlankPathOnly" />
-            <input type="hidden" name="showClassified" value="@Model.ShowClassified" />
-            <input type="hidden" name="q" value="@Model.Q" />
-            <input type="hidden" name="sort" value="@sort" />
-            <input type="hidden" name="dir" value="@dir" />
-        </form>
+        if (r.Ignored)
+        {
+            <form method="post" asp-page-handler="Unignore" id="discovery-unignore-@r.Id" class="d-none">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="id" value="@r.Id" />
+                <input type="hidden" name="hideIgnored" value="@Model.HideIgnored" />
+                <input type="hidden" name="blankPathOnly" value="@Model.BlankPathOnly" />
+                <input type="hidden" name="showClassified" value="@Model.ShowClassified" />
+                <input type="hidden" name="q" value="@Model.Q" />
+                <input type="hidden" name="sort" value="@sort" />
+                <input type="hidden" name="dir" value="@dir" />
+            </form>
+        }
+        else
+        {
+            <form method="post" asp-page-handler="Set" id="discovery-set-@r.Id" class="d-none" data-discovery-set-form="@r.Id">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="id" value="@r.Id" />
+                <input type="hidden" name="hideIgnored" value="@Model.HideIgnored" />
+                <input type="hidden" name="blankPathOnly" value="@Model.BlankPathOnly" />
+                <input type="hidden" name="showClassified" value="@Model.ShowClassified" />
+                <input type="hidden" name="q" value="@Model.Q" />
+                <input type="hidden" name="sort" value="@sort" />
+                <input type="hidden" name="dir" value="@dir" />
+            </form>
+            @if (r.SuggestedGroup is not null)
+            {
+                <form method="post" asp-page-handler="Approve" id="discovery-approve-@r.Id" class="d-none">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="id" value="@r.Id" />
+                    <input type="hidden" name="hideIgnored" value="@Model.HideIgnored" />
+                    <input type="hidden" name="blankPathOnly" value="@Model.BlankPathOnly" />
+                    <input type="hidden" name="showClassified" value="@Model.ShowClassified" />
+                    <input type="hidden" name="q" value="@Model.Q" />
+                    <input type="hidden" name="sort" value="@sort" />
+                    <input type="hidden" name="dir" value="@dir" />
+                </form>
+            }
+            @if (string.IsNullOrWhiteSpace(r.Path))
+            {
+                <form method="post" asp-page-handler="FindPath" id="discovery-findpath-@r.Id" class="d-none">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="id" value="@r.Id" />
+                    <input type="hidden" name="hideIgnored" value="@Model.HideIgnored" />
+                    <input type="hidden" name="blankPathOnly" value="@Model.BlankPathOnly" />
+                    <input type="hidden" name="showClassified" value="@Model.ShowClassified" />
+                    <input type="hidden" name="q" value="@Model.Q" />
+                    <input type="hidden" name="sort" value="@sort" />
+                    <input type="hidden" name="dir" value="@dir" />
+                </form>
+            }
+        }
     }
 
     <p class="text-secondary small mt-3 mb-0">

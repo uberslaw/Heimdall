@@ -25,6 +25,12 @@ if (staffAccessOpts.RequireWindowsAuth)
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<HeimdallDbConnectionResolver>();
 builder.Services.AddRazorPages();
+// Discovery SaveAll posts Edits[*] for every visible row (6+ fields each). Default FormOptions.ValueCountLimit
+// is 1024 and returns HTTP 400 once the catalog grows past ~150 rows — raise for bulk page posts.
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+{
+    options.ValueCountLimit = 16_384;
+});
 builder.Services.AddDbContext<HeimdallDbContext>((serviceProvider, options) =>
 {
     var resolver = serviceProvider.GetRequiredService<HeimdallDbConnectionResolver>();
