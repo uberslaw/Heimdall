@@ -28,6 +28,9 @@ public class AppsModel(HeimdallDbContext db) : PageModel
             .Select(m => m.Hostname)
             .ToListAsync();
 
+        var machineHosts = await db.Machines.AsNoTracking()
+            .ToDictionaryAsync(m => m.Id, m => m.Hostname);
+
         var fromUtc = DateTimeOffset.UtcNow.AddDays(-days);
         var toUtc = DateTimeOffset.UtcNow;
         // SQLite EF DateTimeOffset filters are unreliable; filter in memory for POC.
@@ -46,10 +49,16 @@ public class AppsModel(HeimdallDbContext db) : PageModel
                 var groupRuns = g.ToList();
                 var seconds = ProcessRunMetrics.UnionDurationSeconds(groupRuns, fromUtc, toUtc);
                 var processName = g.Key;
+                var machines = groupRuns
+                    .Select(x => machineHosts.GetValueOrDefault(x.MachineId))
+                    .Where(h => !string.IsNullOrWhiteSpace(h))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count();
                 return new AppRow(
                     processName,
                     displayNames.GetValueOrDefault(processName, processName),
                     groupRuns.Select(x => x.Username).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                    machines,
                     ProcessRunMetrics.AvgConcurrentProcesses(groupRuns, fromUtc, toUtc),
                     groupRuns.Count,
                     TimeSpan.FromSeconds(seconds),
@@ -64,6 +73,7 @@ public class AppsModel(HeimdallDbContext db) : PageModel
         string ProcessName,
         string DisplayName,
         int UniqueUsers,
+        int UniqueMachines,
         double AvgConcurrentProcesses,
         int RunCount,
         TimeSpan TotalDuration,

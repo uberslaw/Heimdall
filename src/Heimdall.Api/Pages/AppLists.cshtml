@@ -13,9 +13,9 @@
         <p class="hd-sub mb-0">Named process schemas · apply anywhere · analyze machines · approve before tracking</p>
     </div>
     <div class="d-flex gap-2">
-        <a class="hd-btn hd-btn-black" asp-page="/Discovery" title="Browse the full process catalog">View Discovery</a>
+        <a class="hd-btn hd-btn-black" asp-page="/Discovery" title="Classify processes and review suggestions">Discovery &amp; Classification</a>
         <a class="hd-btn hd-btn-black" asp-page="/TrackSoftware">Track Software</a>
-        <a class="hd-btn hd-btn-black" asp-page="/Apps">Applications</a>
+        <a class="hd-btn hd-btn-black" asp-page="/Apps">Application Usage</a>
         <a class="hd-btn hd-btn-black" asp-page="/AppListChangelog">View Changelog</a>
         <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="app-lists" title="How App lists works">Help</a>
     </div>
@@ -504,7 +504,7 @@
         <details class="hd-panel mb-4 hd-collapsible" data-key="csv-classifications" id="csv-classifications">
             <summary class="h5 mb-3">
                 Bulk Update Software Classifications
-                <span class="text-secondary" title="Export → fill Description in AI → Import to batch update groups and descriptions. See Help for the full workflow.">ⓘ</span>
+                <span class="text-secondary" title="Export → fill Category/Subcategory/Group in AI → Import proposes suggestions. Approve on Discovery &amp; Classification.">ⓘ</span>
             </summary>
             <p class="small mb-2">
                 <strong>Central catalog:</strong> @Model.CatalogTotalCount unique process(es) tracked
@@ -523,7 +523,7 @@
                     <span class="text-secondary"> · @Model.CatalogBlankPathCount missing path</span>
                     <span class="text-secondary"> — <a asp-page="/Discovery" asp-route-blankPathOnly="true">view on Discovery</a> or use <strong>Request Inventory</strong> below</span>
                 }
-                · <a asp-page="/Discovery">View Discovery</a> for the full browsable/editable catalog.
+                · <a asp-page="/Discovery">Discovery &amp; Classification</a> to Approve or browse the catalog.
             </p>
             @if (Model.ShowCatalogBackfill)
             {

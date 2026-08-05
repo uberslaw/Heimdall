@@ -10,10 +10,10 @@
 <nav class="hd-panel mb-4" aria-label="Help sections">
     <div class="d-flex flex-wrap gap-2">
         <a class="btn btn-ghost btn-sm" href="#machines">Machines</a>
-        <a class="btn btn-ghost btn-sm" href="#applications">Applications</a>
+        <a class="btn btn-ghost btn-sm" href="#applications">Application Usage</a>
         <a class="btn btn-ghost btn-sm" href="#app-lists">App lists</a>
         <a class="btn btn-ghost btn-sm" href="#app-list-changelog">App list changelog</a>
-        <a class="btn btn-ghost btn-sm" href="#discovery">Discovery</a>
+        <a class="btn btn-ghost btn-sm" href="#discovery">Discovery &amp; Classification</a>
         <a class="btn btn-ghost btn-sm" href="#track-software">Track Software</a>
         <a class="btn btn-ghost btn-sm" href="#socratize">Socratize</a>
         <a class="btn btn-ghost btn-sm" href="#sessions">Sessions</a>
@@ -33,23 +33,24 @@
 
 <section id="machines" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Machines</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> the landing page — who's logged in where, local vs RDP, and daily utilisation per host.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> fleet list by team — status and utilisation at a glance.</p>
     <ol class="small mb-0">
-        <li>Use the region/office tree on the left (or the search box) to narrow down to a machine, group, region or office.</li>
-        <li>The date-range control at the top changes the utilisation window for every stat on the page.</li>
-        <li>Click a machine's hostname to open its <a asp-page="/Machine">machine detail</a> page (apps used, metrics).</li>
-        <li>Nav <strong>Machines → Sessions</strong> lists logon/usage sessions — click a machine name there to open that host’s session log.</li>
-        <li>Badges show <span class="badge-pill badge-rdp">RDP</span> / <span class="badge-pill badge-local">Local</span> session type and whether a machine is currently in use.</li>
+        <li>Machines are grouped under <strong>team section headings</strong>. Active app-list names for that team appear beside the heading.</li>
+        <li><strong>Status</strong> (5‑minute check-in): green Active = online with a non-disconnected session; yellow Idle = online, no active session; red Off = no recent check-in.</li>
+        <li><strong>Period</strong> (Today / 24h / 5d / 7d / 30d / All) sets Active / Passive / Free % and GPU·CPU·IO columns. Click an Active/Passive/Free cell to cycle that row’s period.</li>
+        <li>Active % is non-disconnected session time over the calendar window. Passive and hardware totals need fleet samples (Historical Dashboard enrollment today); otherwise they show —.</li>
+        <li>Name links to machine detail. Assign teams and app lists under <a asp-page="/Teams">Machines → Teams</a>.</li>
+        <li>Nav <strong>Machines → Sessions</strong> lists logon sessions.</li>
     </ol>
 </section>
 
 <section id="applications" class="hd-panel mb-4 hd-help-section">
-    <h2 class="h5">Applications</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> tracked non-Windows processes across the fleet, with usage over the selected date range.</p>
+    <h2 class="h5">Application Usage</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> fleet-wide usage for tracked processes — time, machines, users, and runs over the selected period.</p>
     <ol class="small mb-0">
-        <li>Sort/filter the table to find an application by name, group, or usage.</li>
-        <li>Click an application to open its detail page — which machines and users run it, and how often.</li>
-        <li>To change <em>what</em> counts as an application (vs. Core Windows / SOE noise), use <a asp-page="/AppLists" asp-fragment="app-lists">App lists</a>.</li>
+        <li>Pick a <strong>Period</strong> and Apply. Columns: Users, Machines, Avg open, Runs, Total time, Last seen.</li>
+        <li>Click a row for per-machine / per-user detail. Long names truncate; hover for the full title.</li>
+        <li>To change <em>what</em> counts as an application (vs. Core Windows / SOE noise), use <a asp-page="/AppLists" asp-fragment="app-lists">App lists</a> or <a asp-page="/Discovery" asp-fragment="discovery">Discovery &amp; Classification</a>.</li>
     </ol>
 </section>
 
@@ -76,15 +77,17 @@
         </li>
         <li>
             <strong>Bulk Update Software Classifications</strong> — <em>Export Classified</em>, <em>Export All</em> (full catalog including unclassified), or <em>Export Machine</em>;
-            fill <code>Description</code>/<code>Group</code> in AI, then <em>Import CSV</em> (gold). Header: <code>ProcessName,ExecutablePath,Group,Description,DisplayName</code>.
+            fill <code>Category</code>/<code>Subcategory</code>/<code>Group</code>/<code>Description</code> in AI, then <em>Import CSV</em> (gold).
+            Header: <code>ProcessName,ExecutablePath,Group,Description,DisplayName,Category,Subcategory</code>.
+            Import proposes pending suggestions on the catalog (does not commit groups until Approve/Set).
             <em>Backfill Discovered</em> (rose) imports discovery keys not yet in the catalog and merges blank-path / volatile-folder duplicates where safe.
             Catalog identity is <strong>ProcessName + ExecutablePath</strong> (empty path = unknown location). Volatile segments (DriverStore hashes, WindowsApps package versions, version folders) are normalized on upsert so the same app does not spawn endless rows.
             Rows missing a path can be filled by <em>Request Inventory</em> on App lists (agent WMI + file version scan) or by importing a CSV with <code>ExecutablePath</code> set.
-            See <a asp-page="/Discovery" asp-fragment="discovery">Discovery</a> for a browsable, editable view of the same central catalog.
+            See <a asp-page="/Discovery" asp-fragment="discovery">Discovery &amp; Classification</a> to Approve or Set groups.
         </li>
         <li>
-            <strong>Import CSV</strong> updates <code>ProcessGroupAssignment</code> by <code>ProcessName</code>. Groups: <code>CoreWindows</code>, <code>Soe</code>,
-            <code>Specialization</code>. SOE rows sync <code>SoeApps</code>.
+            <strong>Import CSV</strong> stamps Category/Subcategory/Description and a pending <code>SuggestedGroup</code> onto matching catalog rows (name+path resolution, including blank-path coalesce).
+            Groups: <code>CoreWindows</code>, <code>Soe</code>, <code>Specialization</code>. Commit with Approve/Set on Discovery, or Move Core/SOE/Spec on App lists.
         </li>
         <li><strong>Buttons</strong> — Gold = primary/big; Silver = secondary (Choose File, Edit, Apply, Save, Export); Black = nav only; Rose = Cancel / clear / dismiss / remove.</li>
         <li><strong>View Changelog</strong> (black nav) opens the full <a asp-page="/AppListChangelog" asp-fragment="app-list-changelog">App list changelog</a> page — paginated audit of create/upload/approve/import actions.</li>
@@ -104,22 +107,22 @@
 </section>
 
 <section id="discovery" class="hd-panel mb-4 hd-help-section">
-    <h2 class="h5">Discovery</h2>
+    <h2 class="h5">Discovery &amp; Classification</h2>
     <p class="text-secondary small mb-2">
-        <strong>Purpose:</strong> a single browsable table of the entire central process catalog — every executable Heimdall has ever
-        seen, classified or not — with an editable friendly name and version, and two usage signals.
+        <strong>Purpose:</strong> classify processes into Core Windows / SOE / Specialization. By default only unclassified apps
+        and pending suggestions (from CSV import or heuristics) are listed.
     </p>
     <ol class="small mb-0">
-        <li><strong>Name</strong> — friendly label (<code>DisplayName</code>); click <strong>Edit</strong>, change values, then <strong>Save</strong> (or <strong>Discard</strong> to revert).</li>
-        <li><strong>Name &amp; Location</strong> — exe name on top, full path underneath in muted text.</li>
-        <li><strong>Version</strong> — agent-reported file/product version when known, otherwise a path-derived guess; editable manually via Edit/Save.</li>
-        <li><strong>Category</strong> / <strong>Subcategory</strong> — always-visible columns; editable via Edit/Save or CSV import.</li>
-        <li><strong>Descriptions</strong> toggle — shows description text on a sub-row under each app (also always visible while editing).</li>
-        <li><strong>Installs</strong> — how many machines have reported this process; hover the count for the host list.</li>
-        <li><strong>Freq</strong> — average distinct users per week with real runtime, averaged across every week since first seen.</li>
-        <li><strong>Ignore</strong> (rose) marks catalog noise; <strong>Hide ignored</strong> toggles them out of view.</li>
-        <li><strong>Missing path only</strong> — filter rows where the agent could not resolve an executable path (access denied, short-lived process, or name-only import). Use <em>Request Inventory</em> on App lists to backfill paths from WMI.</li>
-        <li>Click a column header to sort; use the search box to filter by name, exe, or path.</li>
+        <li><strong>Name &amp; Location</strong> — process name (double-click to rename) and read-only path underneath. Click <em>Name</em> or <em>Location</em> in the header to sort (no arrow indicators). Drag column borders to resize; widths persist for the browser session.</li>
+        <li><strong>Version</strong> — file/product/manual/path-derived value (no source subtitle).</li>
+        <li><strong>Category</strong> / <strong>Subcategory</strong> — from CSV import or Edit/Save; shown when present (not always “—”).</li>
+        <li><strong>Classification</strong> — in-row dropdown (Core Windows / SOE / Specialization). Click <strong>Set</strong> to apply that group (and current Category/Subcategory).</li>
+        <li><strong>Installs</strong> — machines that reported the process; hover for the host list.</li>
+        <li><strong>Approve</strong> (gold) — commits a pending Group suggestion. <strong>Set</strong> uses the Classification dropdown instead of a modal.</li>
+        <li><strong>Search</strong> — type a filter and press Search or Enter (not live-as-you-type).</li>
+        <li><strong>Missing path</strong> — catalog rows with an empty ExecutablePath (shown as “missing path”). Use <strong>Find missing paths</strong> (or per-row <strong>Find path</strong>) to reuse paths from process samples / machine inventories; remaining gaps can trigger Request Inventory on those hosts. Or request inventory manually on App Lists.</li>
+        <li><strong>Show classified</strong> — expand the list beyond unclassified / pending suggestions. <strong>Descriptions</strong> toggle shows description sub-rows.</li>
+        <li>Import classifications from <a asp-page="/AppLists" asp-fragment="csv-classifications">App lists → Bulk Update</a>; they appear here as pending until Approve/Set.</li>
     </ol>
 </section>
 
@@ -215,11 +218,12 @@
 
 <section id="teams" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Teams</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> who belongs to which part of the business, so app lists and license-cost reporting can be attributed to a team.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> org teams for Machines sections, people (remote viewing), and which app lists are actively tracking or ignoring. Under <strong>Machines → Teams</strong>.</p>
     <ol class="small mb-0">
-        <li>Create teams (optionally nested under a parent team) and a short code.</li>
-        <li>Add members by username — CSV import is supported for bulk setup.</li>
-        <li>Link a team to an <a asp-page="/AppLists" asp-fragment="app-lists">app list</a> so "Apply team list" on a machine can track exactly that team's toolset.</li>
+        <li>Create, rename, or delete teams (canonical names are seeded: Flood, Acoustics, Visualisation, Buildings, Energy, TSS, General, Traffic, Civil).</li>
+        <li><strong>Edit Team</strong> — add people by username (<code>firstname.lastname</code>; CSV supported) and manage <strong>Team Members</strong>.</li>
+        <li><strong>Edit Fleet</strong> — pick a team, Edit, then move machines between Current Fleet and Current Team; Save to persist.</li>
+        <li>Link app lists with <em>Track List</em> (Actively Tracking) or tick <em>Do Not Track</em> (Ignoring). <a asp-page="/AppLists">Customize</a> opens the App lists page.</li>
     </ol>
 </section>
 

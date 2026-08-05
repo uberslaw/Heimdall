@@ -43,6 +43,7 @@ builder.Services.AddScoped<LiveSamplingService>();
 builder.Services.AddScoped<SessionDrilldownService>();
 builder.Services.AddScoped<PublishedVersionService>();
 builder.Services.AddScoped<FleetDashboardService>();
+builder.Services.AddScoped<MachineUtilisationService>();
 
 var app = builder.Build();
 

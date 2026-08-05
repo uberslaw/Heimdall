@@ -1,24 +1,24 @@
 ﻿@page
 @model IndexModel
+@using Heimdall.Api.Services
 @{
     ViewData["Title"] = "Machines";
-    var shortLabel = Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d";
 }
 
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
     <h1 class="hd-title mb-1">Machines</h1>
     <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="machines">Help</a>
 </div>
-<p class="hd-sub">@Model.RangeLabel utilisation · who is on which box · local vs RDP</p>
+<p class="hd-sub mb-3">By team · status · utilisation</p>
 
 <form method="get" class="hd-panel mb-3" id="machines-filter-form">
     <div class="row g-3 align-items-end">
         <div class="col-md-4 col-lg-3">
-            <label class="form-label" for="util-range">Utilisation period</label>
-            <select class="form-select" name="range" id="util-range" onchange="this.form.requestSubmit()">
-                @foreach (var opt in IndexModel.RangeOptions)
+            <label class="form-label" for="util-period">Period</label>
+            <select class="form-select form-select-sm" name="period" id="util-period" onchange="this.form.requestSubmit()">
+                @foreach (var opt in MachineUtilisationService.PeriodOptions)
                 {
-                    if (Model.Range == opt.Key)
+                    if (Model.Period == opt.Key)
                     {
                         <option value="@opt.Key" selected>@opt.Label</option>
                     }
@@ -40,141 +40,144 @@
     </div>
 </form>
 
-<div class="hd-grid">
-    <div class="hd-stat">
-        <div class="label">Machines</div>
-        <div class="value">@Model.Machines.Count</div>
-    </div>
-    <div class="hd-stat">
-        <div class="label">Online (5m)</div>
-        <div class="value">@Model.OnlineCount</div>
-    </div>
-    <div class="hd-stat">
-        <div class="label">In use now</div>
-        <div class="value">@Model.InUseCount</div>
-    </div>
-    <div class="hd-stat">
-        <div class="label">Avg util (@shortLabel)</div>
-        <div class="value">@Model.AvgUtilisationPct.ToString("0")%</div>
-    </div>
-</div>
+<p class="hd-machines-summary text-secondary small mb-3">
+    @Model.MachineCount machines ·
+    <span class="hd-status-dot hd-status-active" aria-hidden="true"></span> @Model.ActiveCount Active ·
+    <span class="hd-status-dot hd-status-idle" aria-hidden="true"></span> @Model.IdleCount Idle ·
+    <span class="hd-status-dot hd-status-off" aria-hidden="true"></span> @Model.OffCount Off
+    · period <strong>@Model.PeriodLabel</strong>
+</p>
 
-<div class="hd-panel">
-    <table class="hd-table">
+<div class="hd-panel hd-machines-panel">
+@if (Model.Sections.Count == 0)
+{
+    <p class="text-secondary mb-0">
+        @(Model.SelectedCountries.Count + Model.SelectedCities.Count > 0
+            ? "No machines match the selected locations."
+            : "No agents reporting yet. Install the Heimdall agent and point it at this API.")
+    </p>
+}
+else
+{
+    <table class="hd-table hd-machines-table hd-sortable" id="machines-table" data-period="@Model.Period">
         <thead>
             <tr>
-                <th>Host</th>
-                <th>Group</th>
-                <th>Status</th>
-                <th>Last check-in</th>
-                <th>Last user</th>
-                <th>Type</th>
-                <th>Open sessions</th>
-                <th>@shortLabel utilisation</th>
-                <th>Apps</th>
-                <th></th>
+                <th class="hd-col-name" data-sort="text">Name</th>
+                <th class="hd-col-status" data-sort="text">Status</th>
+                <th class="hd-col-user" data-sort="text">Last user</th>
+                <th class="hd-col-pct" data-sort="num" title="Click a cell to cycle period for that row">Active</th>
+                <th class="hd-col-pct" data-sort="num">Passive</th>
+                <th class="hd-col-pct" data-sort="num">Free</th>
+                <th class="hd-col-hw" data-sort="num">GPU h</th>
+                <th class="hd-col-hw" data-sort="num">CPU h</th>
+                <th class="hd-col-io" data-sort="num">Dr</th>
+                <th class="hd-col-io" data-sort="num">Dw</th>
+                <th class="hd-col-io" data-sort="num">NTx</th>
+                <th class="hd-col-io" data-sort="num">NRx</th>
             </tr>
         </thead>
         <tbody>
-        @if (Model.Machines.Count == 0)
+        @foreach (var teamSection in Model.Sections)
         {
-            <tr><td colspan="10">@(Model.SelectedCountries.Count + Model.SelectedCities.Count > 0 ? "No machines match the selected locations." : "No agents reporting yet. Install the Heimdall agent and point it at this API.")</td></tr>
-        }
-        @foreach (var m in Model.Machines)
-        {
-            <tr>
-                <td>
-                    <a asp-page="/Machine" asp-route-hostname="@m.Hostname" asp-route-range="@Model.Range"><strong>@m.Hostname</strong></a>
-                    @if (m.LastReimagedUtc is DateTimeOffset re)
+            <tr class="hd-team-section">
+                <td colspan="12">
+                    <span class="hd-team-name">@teamSection.TeamName</span>
+                    @if (!string.IsNullOrWhiteSpace(teamSection.AppsShort))
                     {
-                        <span class="badge-pill badge-rdp ms-1" title="MachineGuid changed for this hostname">Reimaged @re.ToLocalTime().ToString("d")</span>
+                        <span class="hd-team-apps" title="@teamSection.AppsFull">@teamSection.AppsShort</span>
                     }
-                </td>
-                <td>@(m.Group ?? "—")</td>
-                <td>
-                    @if (m.IsInUse)
-                    {
-                        <span class="badge-pill badge-active">In use</span>
-                    }
-                    else if (m.IsOnline)
-                    {
-                        <span class="badge-pill badge-ended">Idle</span>
-                    }
-                    else
-                    {
-                        <span class="badge-pill badge-ended">Offline</span>
-                    }
-                </td>
-                <td class="text-nowrap">
-                    <span title="@m.LastSeenUtc.ToString("O")">@m.LastSeenUtc.ToLocalTime().ToString("g")</span>
-                    <br /><span class="text-secondary small">@IndexModel.FormatRelativeUtc(m.LastSeenUtc)</span>
-                </td>
-                <td>@(m.LastUser ?? "—")</td>
-                <td>
-                    @if (m.LastSessionType == Heimdall.Shared.Contracts.SessionType.Rdp)
-                    {
-                        <span class="badge-pill badge-rdp">Inbound RDP</span>
-                    }
-                    else if (m.LastSessionType == Heimdall.Shared.Contracts.SessionType.Local)
-                    {
-                        <span class="badge-pill badge-local">Local</span>
-                    }
-                    else
-                    {
-                        <span>—</span>
-                    }
-                </td>
-                <td>@m.OpenSessions</td>
-                <td>
-                    <div class="d-flex align-items-center gap-2">
-                        <div class="util-bar flex-grow-1"><span style="width:@m.UtilisationPct.ToString("0")%"></span></div>
-                        <span>@m.UtilisationPct.ToString("0")%</span>
-                    </div>
-                </td>
-                <td>
-                    @if (m.AnalysisStatus == Heimdall.Api.Data.AppAnalysisStatus.PendingApproval)
-                    {
-                        <span class="badge-pill badge-rdp">Pending approval</span>
-                    }
-                    else if (m.AnalysisStatus == Heimdall.Api.Data.AppAnalysisStatus.Approved)
-                    {
-                        <span class="badge-pill badge-active">Approved</span>
-                    }
-                    else if (m.AnalysisStatus == Heimdall.Api.Data.AppAnalysisStatus.Dismissed)
-                    {
-                        <span class="badge-pill badge-ended">Dismissed</span>
-                    }
-                    else if (m.PendingAppAnalysis)
-                    {
-                        <span class="badge-pill badge-ended">Pending inventory</span>
-                    }
-                    else
-                    {
-                        <span class="badge-pill badge-ended">Not analyzed</span>
-                    }
-                </td>
-                <td class="text-nowrap">
-                    <a class="btn btn-ghost btn-sm" asp-page="/Socratize" asp-route-Host="@m.Hostname">Socratize</a>
-                    <a class="btn btn-ghost btn-sm" asp-page="/AppLists" asp-route-host="@m.Hostname">Analyze apps</a>
                 </td>
             </tr>
+            @foreach (var m in teamSection.Machines)
+            {
+                var u = m.Util;
+                <tr class="hd-machine-row"
+                    data-machine-id="@m.MachineId"
+                    data-hostname="@m.Hostname"
+                    data-period="@u.PeriodKey"
+                    data-sort-section="@teamSection.TeamName">
+                    <td class="hd-col-name" data-sort-value="@m.DisplayName" title="@m.Tooltip">
+                        <a class="hd-machine-name" asp-page="/Machine" asp-route-hostname="@m.Hostname" asp-route-range="@(u.PeriodKey is "today" or "24h" ? "1d" : u.PeriodKey is "5d" or "7d" ? "7d" : u.PeriodKey is "30d" ? "4w" : "year")">@m.DisplayName</a>
+                        @if (m.ShowHostnameUnder)
+                        {
+                            <div class="hd-machine-host text-secondary">@m.Hostname</div>
+                        }
+                    </td>
+                    <td class="hd-col-status" data-sort-value="@m.Status">
+                        <span class="hd-status-pill" title="@m.Status">
+                            <span class="hd-status-dot hd-status-@m.Status.ToString().ToLowerInvariant()" aria-hidden="true"></span>
+                            <span class="hd-status-label">@m.Status</span>
+                        </span>
+                    </td>
+                    <td class="hd-col-user" data-sort-value="@(m.LastUser ?? "")" title="@(m.LastUser ?? "")">@(m.LastUser ?? "—")</td>
+                    <td class="hd-col-pct hd-util-cycle" data-sort-value="@u.ActivePct" title="Period @MachineUtilisationService.PeriodOptions.First(p => p.Key == u.PeriodKey).Label — click to cycle">@MachineUtilisationService.FormatPct(u.ActivePct)</td>
+                    <td class="hd-col-pct hd-util-cycle" data-sort-value="@(u.PassivePct ?? -1)" title="Click to cycle period">@MachineUtilisationService.FormatPct(u.PassivePct)</td>
+                    <td class="hd-col-pct hd-util-cycle" data-sort-value="@u.FreePct" title="Click to cycle period">@MachineUtilisationService.FormatPct(u.FreePct)</td>
+                    <td class="hd-col-hw" data-sort-value="@(u.GpuHours ?? -1)">@MachineUtilisationService.FormatHoursCompact(u.GpuHours)</td>
+                    <td class="hd-col-hw" data-sort-value="@(u.CpuHours ?? -1)">@MachineUtilisationService.FormatHoursCompact(u.CpuHours)</td>
+                    <td class="hd-col-io" data-sort-value="@(u.DiskReadBytes ?? -1)">@MachineUtilisationService.FormatBytesCompact(u.DiskReadBytes)</td>
+                    <td class="hd-col-io" data-sort-value="@(u.DiskWriteBytes ?? -1)">@MachineUtilisationService.FormatBytesCompact(u.DiskWriteBytes)</td>
+                    <td class="hd-col-io" data-sort-value="@(u.NetTxBytes ?? -1)">@MachineUtilisationService.FormatBytesCompact(u.NetTxBytes)</td>
+                    <td class="hd-col-io" data-sort-value="@(u.NetRxBytes ?? -1)">@MachineUtilisationService.FormatBytesCompact(u.NetRxBytes)</td>
+                </tr>
+            }
         }
         </tbody>
     </table>
+}
 </div>
 
 @section Scripts {
-<script src="~/js/location-filter.js" asp-append-version="true"></script>
+<script src="~/js/hd-table.js" asp-append-version="true"></script>
 <script>
 (() => {
-  const tree = document.getElementById('machines-location-tree');
-  if (tree && window.HeimdallLocationFilter) {
-    HeimdallLocationFilter.init(tree);
-    @if (Model.SelectedCountries.Count + Model.SelectedCities.Count > 0)
-    {
-        @:document.getElementById('machines-location-tree-wrap')?.setAttribute('open', '');
-    }
+  const periods = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(
+      MachineUtilisationService.PeriodOptions.Select(p => p.Key).ToList()));
+  function nextPeriod(cur) {
+    const i = periods.indexOf(cur);
+    return periods[(i < 0 ? 0 : i + 1) % periods.length];
   }
+  async function refreshRow(row, period) {
+    const id = row.dataset.machineId;
+    if (!id) return;
+    const url = new URL(window.location.pathname, window.location.origin);
+    url.searchParams.set('handler', 'Util');
+    url.searchParams.set('machineId', id);
+    url.searchParams.set('period', period);
+    const res = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) return;
+    const u = await res.json();
+    row.dataset.period = u.period;
+    const cells = row.querySelectorAll('td');
+    // name, status, user, active, passive, free, gpu, cpu, dr, dw, ntx, nrx
+    const map = [
+      [3, u.active, u.activeSort, u.periodLabel],
+      [4, u.passive, u.passiveSort, u.periodLabel],
+      [5, u.free, u.freeSort, u.periodLabel],
+      [6, u.gpu, u.gpuSort, null],
+      [7, u.cpu, u.cpuSort, null],
+      [8, u.dr, u.drSort, null],
+      [9, u.dw, u.dwSort, null],
+      [10, u.ntx, u.ntxSort, null],
+      [11, u.nrx, u.nrxSort, null]
+    ];
+    map.forEach(([i, text, sort, tip]) => {
+      const td = cells[i];
+      if (!td) return;
+      td.textContent = text;
+      td.dataset.sortValue = sort;
+      if (tip) td.title = 'Period ' + tip + ' — click to cycle';
+    });
+  }
+  document.querySelectorAll('.hd-util-cycle').forEach((cell) => {
+    cell.style.cursor = 'pointer';
+    cell.addEventListener('click', () => {
+      const row = cell.closest('tr');
+      if (!row) return;
+      const cur = row.dataset.period || '7d';
+      refreshRow(row, nextPeriod(cur));
+    });
+  });
 })();
 </script>
 }

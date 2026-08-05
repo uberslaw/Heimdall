@@ -8,7 +8,7 @@ namespace Heimdall.Api.Services;
 /// <summary>Persists user overrides for process group membership and bulk list cleanup.</summary>
 public sealed class ProcessGroupService(HeimdallDbContext db)
 {
-    public const string CsvHeader = "ProcessName,ExecutablePath,Group,Description,DisplayName";
+    public const string CsvHeader = "ProcessName,ExecutablePath,Group,Description,DisplayName,Category,Subcategory";
     private const int MaxImportRows = 50_000;
 
     public record CsvExportRow(
@@ -16,18 +16,25 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
         string? ExecutablePath,
         AppGroup Group,
         string? Description,
-        string DisplayName);
+        string DisplayName,
+        string? Category = null,
+        string? Subcategory = null);
 
     public record CsvImportResult(int Updated, int Skipped, IReadOnlyList<string> Errors,
         IReadOnlyList<CsvImportedRow>? ImportedRows = null);
 
+    /// <summary>
+    /// One parsed CSV row. Group becomes a pending catalog suggestion (SuggestedGroup) until Approve/Set;
+    /// Category/Subcategory/Description/DisplayName are applied to matching ProcessCatalogEntries.
+    /// </summary>
     public record CsvImportedRow(
         string ProcessName,
         string? ExecutablePath,
         string? DisplayName,
         string? Description,
         string? Category,
-        string? Subcategory);
+        string? Subcategory,
+        AppGroup? Group = null);
     public async Task<ProcessClassificationContext> BuildContextAsync(CancellationToken ct = default)
     {
         var assignments = await db.ProcessGroupAssignments.AsNoTracking().ToListAsync(ct);
@@ -345,7 +352,9 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
             sb.Append(EscapeCsv(row.ExecutablePath ?? "")).Append(',');
             sb.Append(EscapeCsv(row.Group.ToString())).Append(',');
             sb.Append(EscapeCsv(row.Description ?? "")).Append(',');
-            sb.AppendLine(EscapeCsv(row.DisplayName));
+            sb.Append(EscapeCsv(row.DisplayName)).Append(',');
+            sb.Append(EscapeCsv(row.Category ?? "")).Append(',');
+            sb.AppendLine(EscapeCsv(row.Subcategory ?? ""));
         }
         return Encoding.UTF8.GetBytes(sb.ToString());
     }
@@ -358,10 +367,16 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
                 executablePath = r.ExecutablePath,
                 group = r.Group.ToString(),
                 description = r.Description,
-                displayName = r.DisplayName
+                displayName = r.DisplayName,
+                category = r.Category,
+                subcategory = r.Subcategory
             }),
             new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
 
+    /// <summary>
+    /// Parse a classification CSV into pending catalog suggestions (Group → SuggestedGroup, plus Category/Subcategory).
+    /// Does not write ProcessGroupAssignment — Approve/Set on Discovery (or Move on App lists) commits the group.
+    /// </summary>
     public async Task<CsvImportResult> ImportCsvAsync(Stream stream, CancellationToken ct = default)
     {
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
@@ -381,11 +396,6 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
         if (procIdx < 0)
             return new CsvImportResult(0, 0, ["Missing required column: ProcessName."]);
 
-        var existingAssignments = await db.ProcessGroupAssignments.ToListAsync(ct);
-        var assignmentMap = existingAssignments.ToDictionary(a => a.ProcessName, StringComparer.OrdinalIgnoreCase);
-        var soeApps = await db.SoeApps.ToListAsync(ct);
-        var soeMap = soeApps.ToDictionary(s => s.ProcessName, StringComparer.OrdinalIgnoreCase);
-        var now = DateTimeOffset.UtcNow;
         var updated = 0;
         var skipped = 0;
         var errors = new List<string>();
@@ -420,76 +430,51 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
             }
 
             var groupRaw = GetCol(cols, groupIdx);
-            if (!TryParseGroup(groupRaw, out var targetGroup))
+            AppGroup? targetGroup = null;
+            if (!string.IsNullOrWhiteSpace(groupRaw))
             {
-                errors.Add($"Row {rowNum} ({processName}): invalid Group '{groupRaw ?? ""}' — use CoreWindows, Soe, or Specialization.");
+                if (!TryParseGroup(groupRaw, out var parsed))
+                {
+                    errors.Add($"Row {rowNum} ({processName}): invalid Group '{groupRaw}' — use CoreWindows, Soe, or Specialization.");
+                    skipped++;
+                    continue;
+                }
+                targetGroup = parsed;
+            }
+            else if (groupIdx >= 0)
+            {
+                // Group column present but empty — still allow Category/Subcategory-only rows.
+            }
+            else if (catIdx < 0 && subcatIdx < 0 && descIdx < 0)
+            {
+                errors.Add($"Row {rowNum} ({processName}): missing Group (or Category/Subcategory/Description).");
                 skipped++;
                 continue;
             }
 
             var description = NullIfEmpty(GetCol(cols, descIdx));
             var displayName = NullIfEmpty(GetCol(cols, dispIdx)) ?? processName;
-            var executablePath = NullIfEmpty(GetCol(cols, pathIdx)); // informational for export round-trip; not persisted on assignment, but feeds the catalog
+            var executablePath = NullIfEmpty(GetCol(cols, pathIdx));
             var category = NullIfEmpty(GetCol(cols, catIdx));
             var subcategory = NullIfEmpty(GetCol(cols, subcatIdx));
-            importedRows.Add(new CsvImportedRow(processName, executablePath, displayName, description, category, subcategory));
 
-            var changed = false;
-            if (assignmentMap.TryGetValue(processName, out var existing))
+            if (targetGroup is null && category is null && subcategory is null && description is null
+                && displayName == processName)
             {
-                if (existing.Group != targetGroup)
-                {
-                    existing.Group = targetGroup;
-                    changed = true;
-                }
-                if (!string.Equals(existing.Description, description, StringComparison.Ordinal))
-                {
-                    existing.Description = description;
-                    changed = true;
-                }
-                if (!string.Equals(existing.DisplayName, displayName, StringComparison.Ordinal))
-                {
-                    existing.DisplayName = displayName;
-                    changed = true;
-                }
-                if (changed)
-                {
-                    existing.UpdatedUtc = now;
-                    updated++;
-                }
-                else
-                {
-                    skipped++;
-                }
-            }
-            else
-            {
-                var row = new ProcessGroupAssignment
-                {
-                    ProcessName = processName,
-                    Group = targetGroup,
-                    DisplayName = displayName,
-                    Description = description,
-                    UpdatedUtc = now
-                };
-                db.ProcessGroupAssignments.Add(row);
-                assignmentMap[processName] = row;
-                changed = true;
-                updated++;
+                skipped++;
+                continue;
             }
 
-            if (changed)
-                ApplySoeMembership(processName, displayName, targetGroup, soeMap);
+            importedRows.Add(new CsvImportedRow(
+                processName, executablePath, displayName, description, category, subcategory, targetGroup));
+            updated++;
         }
-
-        if (updated > 0)
-            await db.SaveChangesAsync(ct);
 
         if (updated > 0)
         {
             await AuditAsync(
                 "csv-import",
-                $"CSV import: {updated} updated, {skipped} skipped, {errors.Count} error(s).");
+                $"CSV import: {updated} suggestion row(s), {skipped} skipped, {errors.Count} error(s). Pending Approve on Discovery.");
         }
 
         return new CsvImportResult(updated, skipped, errors, importedRows);

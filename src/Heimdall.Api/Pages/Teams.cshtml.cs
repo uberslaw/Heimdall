@@ -12,6 +12,10 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
     public IReadOnlyList<TeamOption> TeamOptions { get; private set; } = [];
     public IReadOnlyList<PersonRow> People { get; private set; } = [];
     public IReadOnlyList<string> SessionUsernames { get; private set; } = [];
+    public IReadOnlyList<MachinePick> AllMachines { get; private set; } = [];
+    public IReadOnlyList<TeamMachinesBlock> TeamMachines { get; private set; } = [];
+    public IReadOnlyList<TeamAppListsBlock> TeamAppLists { get; private set; } = [];
+    public IReadOnlyList<AppListPick> UnlinkedAppLists { get; private set; } = [];
     public bool IsEmpty => TeamOptions.Count == 0 && People.Count == 0;
 
     [BindProperty]
@@ -52,6 +56,24 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
 
     [BindProperty]
     public IFormFile? CsvFile { get; set; }
+
+    [BindProperty]
+    public int AssignTeamId { get; set; }
+
+    [BindProperty]
+    public List<int> SelectedMachineIds { get; set; } = [];
+
+    [BindProperty]
+    public int LinkTeamId { get; set; }
+
+    [BindProperty]
+    public int LinkAppListId { get; set; }
+
+    [BindProperty]
+    public bool LinkAsIgnored { get; set; }
+
+    [BindProperty]
+    public int AppListId { get; set; }
 
     public async Task OnGetAsync(int? editTeam, int? editPerson)
     {
@@ -160,10 +182,104 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
             return RedirectToPage();
         }
 
+        if (team.Children.Count > 0)
+        {
+            TempData["Error"] = $"Cannot delete “{team.Name}” while it has child teams. Reassign or delete children first.";
+            return RedirectToPage();
+        }
+
+        var machines = await db.Machines.Where(m => m.TeamId == team.Id).ToListAsync();
+        foreach (var m in machines)
+            m.TeamId = null;
+
+        var lists = await db.AppLists.Where(a => a.TeamId == team.Id).ToListAsync();
+        foreach (var a in lists)
+        {
+            a.TeamId = null;
+            a.IsTeamExcluded = false;
+        }
+
         db.PersonTeams.RemoveRange(team.Members);
         db.Teams.Remove(team);
         await db.SaveChangesAsync();
         TempData["Message"] = $"Deleted team “{team.Name}”.";
+        return RedirectToPage();
+    }
+
+    public async Task<IActionResult> OnPostAssignMachinesAsync()
+    {
+        if (!await db.Teams.AnyAsync(t => t.Id == AssignTeamId))
+        {
+            TempData["Error"] = "Team not found.";
+            return RedirectToPage();
+        }
+
+        var selected = SelectedMachineIds.Distinct().ToHashSet();
+        var all = await db.Machines.ToListAsync();
+        foreach (var m in all)
+        {
+            if (selected.Contains(m.Id))
+                m.TeamId = AssignTeamId;
+            else if (m.TeamId == AssignTeamId)
+                m.TeamId = null;
+        }
+
+        await db.SaveChangesAsync();
+        TempData["Message"] = $"Updated machine assignments ({selected.Count} on team).";
+        return RedirectToPage();
+    }
+
+    public async Task<IActionResult> OnPostLinkAppListAsync()
+    {
+        var list = await db.AppLists.FindAsync(LinkAppListId);
+        if (list is null || !await db.Teams.AnyAsync(t => t.Id == LinkTeamId))
+        {
+            TempData["Error"] = "Team or app list not found.";
+            return RedirectToPage();
+        }
+
+        list.TeamId = LinkTeamId;
+        list.IsTeamExcluded = LinkAsIgnored;
+        list.UpdatedUtc = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        TempData["Message"] = LinkAsIgnored
+            ? $"Linked “{list.Name}” as do not track for the team."
+            : $"Tracking “{list.Name}” for the team.";
+        return RedirectToPage();
+    }
+
+    public async Task<IActionResult> OnPostSetAppListExcludedAsync(bool excluded)
+    {
+        var list = await db.AppLists.FindAsync(AppListId);
+        if (list is null || list.TeamId is null)
+        {
+            TempData["Error"] = "App list not linked to a team.";
+            return RedirectToPage();
+        }
+
+        list.IsTeamExcluded = excluded;
+        list.UpdatedUtc = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        TempData["Message"] = excluded
+            ? $"“{list.Name}” set to do not track."
+            : $"“{list.Name}” set to actively tracking.";
+        return RedirectToPage();
+    }
+
+    public async Task<IActionResult> OnPostUnlinkAppListAsync()
+    {
+        var list = await db.AppLists.FindAsync(AppListId);
+        if (list is null)
+        {
+            TempData["Error"] = "App list not found.";
+            return RedirectToPage();
+        }
+
+        list.TeamId = null;
+        list.IsTeamExcluded = false;
+        list.UpdatedUtc = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        TempData["Message"] = $"Unlinked “{list.Name}” from team.";
         return RedirectToPage();
     }
 
@@ -191,6 +307,10 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
                 TempData["Error"] = "Person assignment not found.";
                 return RedirectToPage();
             }
+
+            // Domain is no longer collected in the form; keep existing unless username embeds DOMAIN\user.
+            if (domain is null && PersonUsername.IndexOf('\\') < 0)
+                domain = person.Domain;
 
             person.Username = username;
             person.Domain = domain;
@@ -308,6 +428,52 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
 
         // Surface session users that aren't assigned yet (for empty-state / awareness)
         _ = matchLookup;
+
+        AllMachines = await db.Machines.AsNoTracking()
+            .OrderBy(m => m.Hostname)
+            .Select(m => new MachinePick(m.Id, m.Hostname, m.FriendlyName, m.TeamId))
+            .ToListAsync();
+
+        TeamMachines = TeamOptions.Select(t => new TeamMachinesBlock(
+            t.Id,
+            t.Label.TrimStart('—', ' '),
+            AllMachines.Where(m => m.TeamId == t.Id).ToList())).ToList();
+
+        var linkedRaw = await db.AppLists.AsNoTracking()
+            .Where(a => a.TeamId != null)
+            .OrderBy(a => a.Name)
+            .Select(a => new
+            {
+                a.Id,
+                a.Name,
+                a.TeamId,
+                a.IsTeamExcluded,
+                Entries = a.Entries
+                    .OrderBy(e => e.DisplayName ?? e.ProcessName)
+                    .Select(e => e.DisplayName != null && e.DisplayName != "" ? e.DisplayName : e.ProcessName)
+                    .ToList()
+            })
+            .ToListAsync();
+
+        var linkedLists = linkedRaw.Select(a => new AppListPick(
+            a.Id,
+            a.Name,
+            a.TeamId,
+            a.IsTeamExcluded,
+            a.Entries.Count,
+            string.Join(", ", a.Entries))).ToList();
+
+        TeamAppLists = TeamOptions.Select(t => new TeamAppListsBlock(
+            t.Id,
+            t.Label.TrimStart('—', ' '),
+            linkedLists.Where(a => a.TeamId == t.Id && !a.IsTeamExcluded).ToList(),
+            linkedLists.Where(a => a.TeamId == t.Id && a.IsTeamExcluded).ToList())).ToList();
+
+        UnlinkedAppLists = await db.AppLists.AsNoTracking()
+            .Where(a => a.TeamId == null)
+            .OrderBy(a => a.Name)
+            .Select(a => new AppListPick(a.Id, a.Name, null, false, a.Entries.Count, ""))
+            .ToListAsync();
     }
 
     private static List<TeamNode> BuildTree(ILookup<int?, Team> byParent, int? parentId, int depth)
@@ -592,4 +758,12 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
         int TeamId,
         string TeamName,
         bool SeenInSessions);
+    public record MachinePick(int Id, string Hostname, string? FriendlyName, int? TeamId);
+    public record AppListPick(int Id, string Name, int? TeamId, bool IsTeamExcluded, int EntryCount, string AppsSummary = "");
+    public record TeamMachinesBlock(int TeamId, string TeamName, IReadOnlyList<MachinePick> Machines);
+    public record TeamAppListsBlock(
+        int TeamId,
+        string TeamName,
+        IReadOnlyList<AppListPick> Active,
+        IReadOnlyList<AppListPick> Ignored);
 }

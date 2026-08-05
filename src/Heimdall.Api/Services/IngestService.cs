@@ -1400,6 +1400,37 @@ public static class SeedData
             """);
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_FleetMetricSnapshots_Machine_Sampled ON FleetMetricSnapshots(MachineId, SampledAtUtc)");
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_FleetMetricSnapshots_Sampled ON FleetMetricSnapshots(SampledAtUtc)");
+
+        // Machines list redesign — friendly names + team sections
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN FriendlyName TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN TeamId INTEGER NULL");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_Machines_TeamId ON Machines(TeamId)");
+        await TryExec(db, "ALTER TABLE AppLists ADD COLUMN IsTeamExcluded INTEGER NOT NULL DEFAULT 0");
+
+        await EnsureCanonicalTeamsAsync(db);
+    }
+
+    /// <summary>Create canonical org team names if missing (idempotent; does not rename or delete).</summary>
+    private static async Task EnsureCanonicalTeamsAsync(HeimdallDbContext db)
+    {
+        string[] names =
+        [
+            "Flood", "Acoustics", "Visualisation", "Buildings", "Energy",
+            "TSS", "General", "Traffic", "Civil"
+        ];
+        var existing = await db.Teams.AsNoTracking()
+            .Select(t => t.Name)
+            .ToListAsync();
+        var set = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
+        foreach (var name in names)
+        {
+            if (set.Contains(name))
+                continue;
+            db.Teams.Add(new Team { Name = name });
+            set.Add(name);
+        }
+        if (db.ChangeTracker.HasChanges())
+            await db.SaveChangesAsync();
     }
 
     private static async Task<bool> HasSystemFlagAsync(HeimdallDbContext db, string key)

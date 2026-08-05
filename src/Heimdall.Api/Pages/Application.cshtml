@@ -7,7 +7,7 @@
 }
 
 <p class="hd-meta-line mb-2">
-    <a asp-page="/Apps" asp-route-range="@Model.Range">← Applications</a>
+    <a asp-page="/Apps" asp-route-range="@Model.Range">← Application Usage</a>
     @if (d is not null)
     {
         <span> · </span>
@@ -18,7 +18,7 @@
 @if (Model.MissingProcess)
 {
     <div class="hd-panel">
-        <p class="text-secondary mb-0">No process name specified. Pick an app from the <a asp-page="/Apps">Applications</a> list.</p>
+        <p class="text-secondary mb-0">No process name specified. Pick an app from the <a asp-page="/Apps">Application Usage</a> list.</p>
     </div>
 }
 else if (d is not null)

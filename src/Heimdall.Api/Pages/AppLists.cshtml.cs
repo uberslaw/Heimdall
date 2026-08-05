@@ -484,18 +484,22 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         }
 
         var newCatalogCount = 0;
+        var metaApplied = 0;
         if (result.ImportedRows is { Count: > 0 })
         {
             var catalogResult = await catalog.UpsertAsync(
                 result.ImportedRows.Select(r => new ProcessCatalogService.CatalogItem(r.ProcessName, r.ExecutablePath, r.DisplayName)),
                 null, "classification CSV import", HttpContext.RequestAborted);
             newCatalogCount = catalogResult.NewCount;
-            await catalog.ApplyImportMetadataAsync(result.ImportedRows, HttpContext.RequestAborted);
+            metaApplied = await catalog.ApplyImportMetadataAsync(result.ImportedRows, HttpContext.RequestAborted);
         }
 
-        var summary = $"Import complete: {result.Updated} updated, {result.Skipped} skipped.";
+        var summary = $"Import complete: {result.Updated} suggestion row(s), {result.Skipped} skipped.";
+        if (metaApplied > 0)
+            summary += $" Applied Category/Subcategory/Group suggestions to {metaApplied} catalog entr(ies).";
         if (newCatalogCount > 0)
             summary += $" {newCatalogCount} new process(es) added to the catalog.";
+        summary += " Review and Approve on Discovery & Classification.";
         if (result.Errors.Count > 0)
         {
             var preview = string.Join("; ", result.Errors.Take(5));
@@ -518,6 +522,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         }
 
         var count = await processGroups.AssignGroupsAsync(SelectedGroupProcesses, targetGroup, HttpContext.RequestAborted);
+        await catalog.ClearSuggestionsAsync(SelectedGroupProcesses, HttpContext.RequestAborted);
         var label = ProcessClassification.GroupLabel(targetGroup);
         TempData["Message"] = $"Moved {count} process(es) to {label}. Re-run Analyze to refresh pending proposals.";
 

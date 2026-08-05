@@ -1,24 +1,32 @@
 @page
 @model DiscoveryModel
 @{
-    ViewData["Title"] = "Discovery";
-    const int colCount = 8; // Name, Name&Location, Version, Cat, SubCat, Installs, Freq, Actions
+    ViewData["Title"] = "Discovery & Classification";
+    const int colCount = 7; // Name&Location, Version, Cat, SubCat, Classification, Installs, Actions
+    var sort = Model.Sort?.ToLowerInvariant() ?? "name";
+    var dir = Model.Dir?.ToLowerInvariant() == "desc" ? "desc" : "asc";
+    string ToggleDir(string col) => sort == col && dir == "asc" ? "desc" : "asc";
+    string SortClass(string col) => sort == col ? (dir == "asc" ? "sorted-asc" : "sorted-desc") : "";
 }
 
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
     <div>
-        <h1 class="hd-title mb-1">Discovery</h1>
+        <h1 class="hd-title mb-1">Discovery &amp; Classification</h1>
         <p class="hd-sub mb-0">
-            Every process in the central catalog · @Model.TotalCount tracked (unique by name + path)
+            @Model.TotalCount in catalog
             · <span class="@(Model.UnclassifiedCount > 0 ? "text-warning" : "text-secondary")">@Model.UnclassifiedCount awaiting classification</span>
+            @if (Model.PendingSuggestionCount > 0)
+            {
+                <span class="text-secondary"> · @Model.PendingSuggestionCount pending suggestion(s)</span>
+            }
             @if (Model.BlankPathCount > 0)
             {
-                <span class="text-secondary"> · @Model.BlankPathCount missing path — use <a asp-page="/AppLists">Request Inventory</a> on App Lists</span>
+                <span class="text-secondary"> · @Model.BlankPathCount missing path — use <strong>Find missing paths</strong> below, or <a asp-page="/AppLists">Request Inventory</a> on App Lists</span>
             }
         </p>
     </div>
     <div class="d-flex gap-2">
-        <a class="hd-btn hd-btn-black" asp-page="/Apps">Applications</a>
+        <a class="hd-btn hd-btn-black" asp-page="/Apps">Application Usage</a>
         <a class="hd-btn hd-btn-black" asp-page="/AppLists">App lists</a>
         <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="discovery" title="How Discovery works">Help</a>
     </div>
@@ -41,10 +49,17 @@
     }
 </div>
 
-<form method="get" class="hd-panel mb-3">
+<form method="get" class="hd-panel mb-3" id="discovery-filter-form">
+    <input type="hidden" name="sort" value="@sort" />
+    <input type="hidden" name="dir" value="@dir" />
     <div class="row g-3 align-items-end">
         <div class="col-md-5 col-lg-4">
-            <input type="search" class="form-control hd-table-filter" placeholder="Filter name, exe, or path…" data-filter-for="discovery-table" />
+            <label class="form-label" for="discovery-q">Search</label>
+            <div class="input-group">
+                <input type="search" class="form-control" name="q" id="discovery-q" value="@Model.Q"
+                       placeholder="Name, path, category…" autocomplete="off" />
+                <button type="submit" class="hd-btn hd-btn-silver">Search</button>
+            </div>
         </div>
         <div class="col-auto">
             <div class="form-check">
@@ -60,12 +75,25 @@
         </div>
         <div class="col-auto">
             <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="showClassified" value="true" id="show-classified" @(Model.ShowClassified ? "checked" : null) onchange="this.form.submit()" />
+                <label class="form-check-label" for="show-classified">Show classified</label>
+            </div>
+        </div>
+        <div class="col-auto">
+            <div class="form-check">
                 <input class="form-check-input" type="checkbox" id="show-descriptions" />
                 <label class="form-check-label" for="show-descriptions">Descriptions</label>
             </div>
         </div>
         <div class="col-auto ms-md-auto">
-            <div class="d-flex gap-2" id="discovery-toolbar">
+            <div class="d-flex gap-2 flex-wrap" id="discovery-toolbar">
+                @if (Model.BlankPathCount > 0)
+                {
+                    <button type="submit" form="discovery-find-paths-form" class="hd-btn hd-btn-gold hd-btn-sm"
+                            title="Reuse paths from process samples and inventories; request agent inventory where still unknown">
+                        Find missing paths (@Model.BlankPathCount)
+                    </button>
+                }
                 <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="discovery-edit-btn">Edit</button>
                 <button type="submit" form="discovery-save-form" class="hd-btn hd-btn-silver hd-btn-sm" id="discovery-save-btn" disabled>Save</button>
                 <button type="button" class="hd-btn hd-btn-rose hd-btn-sm" id="discovery-discard-btn" disabled>Discard</button>
@@ -74,116 +102,348 @@
     </div>
 </form>
 
+@if (Model.BlankPathCount > 0)
+{
+    <form method="post" asp-page-handler="FindPaths" id="discovery-find-paths-form" class="d-none">
+        @Html.AntiForgeryToken()
+        <input type="hidden" name="hideIgnored" value="@Model.HideIgnored" />
+        <input type="hidden" name="blankPathOnly" value="@Model.BlankPathOnly" />
+        <input type="hidden" name="showClassified" value="@Model.ShowClassified" />
+        <input type="hidden" name="q" value="@Model.Q" />
+        <input type="hidden" name="sort" value="@sort" />
+        <input type="hidden" name="dir" value="@dir" />
+        <input type="hidden" name="requestInventory" value="true" />
+    </form>
+}
+
 <div class="hd-panel">
     <form method="post" asp-page-handler="SaveAll" id="discovery-save-form">
+        @Html.AntiForgeryToken()
         <input type="hidden" name="hideIgnored" value="@Model.HideIgnored" />
-        <div class="table-responsive">
-            <table class="hd-table hd-sortable mb-0" id="discovery-table">
+        <input type="hidden" name="blankPathOnly" value="@Model.BlankPathOnly" />
+        <input type="hidden" name="showClassified" value="@Model.ShowClassified" />
+        <input type="hidden" name="q" value="@Model.Q" />
+        <input type="hidden" name="sort" value="@sort" />
+        <input type="hidden" name="dir" value="@dir" />
+        <div class="hd-discovery-table-wrap">
+            <table class="hd-table mb-0" id="discovery-table">
+                <colgroup>
+                    <col data-col="location" class="hd-discovery-col-location" />
+                    <col data-col="version" class="hd-discovery-col-version" />
+                    <col data-col="category" class="hd-discovery-col-category" />
+                    <col data-col="subcategory" class="hd-discovery-col-subcategory" />
+                    <col data-col="classification" class="hd-discovery-col-classification" />
+                    <col data-col="installs" class="hd-discovery-col-installs" />
+                    <col data-col="actions" class="hd-discovery-col-actions" />
+                </colgroup>
                 <thead>
                     <tr>
-                        <th data-sort="text" class="hd-discovery-name-col">Name</th>
-                        <th data-sort="text">Name &amp; Location</th>
-                        <th data-sort="text" class="hd-discovery-version-col">Version</th>
-                        <th data-sort="text" class="hd-discovery-cat-col">Category</th>
-                        <th data-sort="text" class="hd-discovery-subcat-col">Subcategory</th>
-                        <th data-sort="num" class="hd-discovery-installs-col" title="Number of machines where this process was seen">Installs</th>
-                        <th data-sort="num" class="hd-discovery-freq-col" data-default-desc title="Average weekly users with real runtime across machines">Freq</th>
-                        <th class="hd-discovery-actions-col"></th>
+                        <th class="hd-discovery-location-cell" data-col="location">
+                            <a class="hd-discovery-sort-link @SortClass("name")"
+                               asp-page="/Discovery"
+                               asp-route-q="@Model.Q"
+                               asp-route-hideIgnored="@Model.HideIgnored"
+                               asp-route-blankPathOnly="@Model.BlankPathOnly"
+                               asp-route-showClassified="@Model.ShowClassified"
+                               asp-route-sort="name"
+                               asp-route-dir="@ToggleDir("name")">Name</a>
+                            <span class="text-secondary"> &amp; </span>
+                            <a class="hd-discovery-sort-link @SortClass("path")"
+                               asp-page="/Discovery"
+                               asp-route-q="@Model.Q"
+                               asp-route-hideIgnored="@Model.HideIgnored"
+                               asp-route-blankPathOnly="@Model.BlankPathOnly"
+                               asp-route-showClassified="@Model.ShowClassified"
+                               asp-route-sort="path"
+                               asp-route-dir="@ToggleDir("path")">Location</a>
+                            <span class="hd-col-resize" data-resize="location" title="Drag to resize"></span>
+                        </th>
+                        <th class="hd-discovery-version-col" data-col="version">
+                            <a class="hd-discovery-sort-link @SortClass("version")"
+                               asp-page="/Discovery"
+                               asp-route-q="@Model.Q"
+                               asp-route-hideIgnored="@Model.HideIgnored"
+                               asp-route-blankPathOnly="@Model.BlankPathOnly"
+                               asp-route-showClassified="@Model.ShowClassified"
+                               asp-route-sort="version"
+                               asp-route-dir="@ToggleDir("version")">Version</a>
+                            <span class="hd-col-resize" data-resize="version" title="Drag to resize"></span>
+                        </th>
+                        <th class="hd-discovery-cat-col" data-col="category">
+                            <a class="hd-discovery-sort-link @SortClass("category")"
+                               asp-page="/Discovery"
+                               asp-route-q="@Model.Q"
+                               asp-route-hideIgnored="@Model.HideIgnored"
+                               asp-route-blankPathOnly="@Model.BlankPathOnly"
+                               asp-route-showClassified="@Model.ShowClassified"
+                               asp-route-sort="category"
+                               asp-route-dir="@ToggleDir("category")">Category</a>
+                            <span class="hd-col-resize" data-resize="category" title="Drag to resize"></span>
+                        </th>
+                        <th class="hd-discovery-subcat-col" data-col="subcategory">
+                            <a class="hd-discovery-sort-link @SortClass("subcategory")"
+                               asp-page="/Discovery"
+                               asp-route-q="@Model.Q"
+                               asp-route-hideIgnored="@Model.HideIgnored"
+                               asp-route-blankPathOnly="@Model.BlankPathOnly"
+                               asp-route-showClassified="@Model.ShowClassified"
+                               asp-route-sort="subcategory"
+                               asp-route-dir="@ToggleDir("subcategory")">Subcategory</a>
+                            <span class="hd-col-resize" data-resize="subcategory" title="Drag to resize"></span>
+                        </th>
+                        <th class="hd-discovery-class-col" data-col="classification">
+                            <a class="hd-discovery-sort-link @SortClass("classification")"
+                               asp-page="/Discovery"
+                               asp-route-q="@Model.Q"
+                               asp-route-hideIgnored="@Model.HideIgnored"
+                               asp-route-blankPathOnly="@Model.BlankPathOnly"
+                               asp-route-showClassified="@Model.ShowClassified"
+                               asp-route-sort="classification"
+                               asp-route-dir="@ToggleDir("classification")">Classification</a>
+                            <span class="hd-col-resize" data-resize="classification" title="Drag to resize"></span>
+                        </th>
+                        <th class="hd-discovery-installs-col" data-col="installs" title="Number of machines where this process was seen">
+                            <a class="hd-discovery-sort-link @SortClass("installs")"
+                               asp-page="/Discovery"
+                               asp-route-q="@Model.Q"
+                               asp-route-hideIgnored="@Model.HideIgnored"
+                               asp-route-blankPathOnly="@Model.BlankPathOnly"
+                               asp-route-showClassified="@Model.ShowClassified"
+                               asp-route-sort="installs"
+                               asp-route-dir="@ToggleDir("installs")">Installs</a>
+                            <span class="hd-col-resize" data-resize="installs" title="Drag to resize"></span>
+                        </th>
+                        <th class="hd-discovery-actions-col" data-col="actions"></th>
                     </tr>
                 </thead>
                 <tbody>
                 @if (Model.Rows.Count == 0)
                 {
-                    <tr><td colspan="@colCount">No processes in the catalog yet. Discovery is populated from tracked runs, machine inventories, and app lists.</td></tr>
+                    <tr><td colspan="@colCount">@(Model.ShowClassified ? "No processes match." : "No unclassified applications. Pending suggestions stay visible here until Approve or Set. Tick Show classified to browse the full catalog.")</td></tr>
                 }
                 @for (var i = 0; i < Model.Rows.Count; i++)
                 {
                     var r = Model.Rows[i];
-                    var versionFull = r.VersionDisplay ?? "-";
-                    var versionShort = r.VersionDisplay is null
-                        ? "-"
-                        : (versionFull.Length > 6 ? versionFull[..6] + "…" : versionFull);
+                    var versionFull = r.VersionDisplay ?? "—";
                     var hasDescription = !string.IsNullOrWhiteSpace(r.Description);
-                    var filterText = $"{r.Name} {r.ExeName} {r.Path} {r.Description} {r.Category} {r.Subcategory}".ToLowerInvariant();
+                    var descText = hasDescription ? r.Description!.Trim() : null;
+                    var pathText = string.IsNullOrWhiteSpace(r.Path) ? null : r.Path;
+                    var locationTip = descText is not null && pathText is not null
+                        ? $"{descText}\n\n{pathText}"
+                        : (descText ?? pathText);
+                    var hasSuggestion = r.SuggestedGroup is not null;
+                    var setFormId = $"discovery-set-{r.Id}";
+                    var defaultGroup = r.SuggestedGroup?.ToString() ?? "Specialization";
                     <tr class="hd-discovery-main @(r.Ignored ? "hd-row-muted" : null)"
                         data-discovery-id="@r.Id"
-                        data-filter-text="@filterText"
-                        data-has-description="@(hasDescription ? "true" : "false")">
-                        <td data-sort-value="@r.Name" class="hd-discovery-name-col">
+                        data-has-description="@(hasDescription ? "true" : "false")"
+                        data-name="@r.Name"
+                        data-exe="@r.ExeName">
+                        <td class="hd-discovery-location-cell" title="@locationTip">
                             <input type="hidden" name="Edits[@i].Id" value="@r.Id" />
-                            <span class="hd-discovery-read" data-field="name" title="@r.Name">@r.Name</span>
-                            <input class="form-control form-control-sm hd-discovery-edit d-none" type="text"
-                                   name="Edits[@i].Name" value="@r.Name" maxlength="200"
-                                   data-original="@r.Name" data-field="name" />
-                            @if (r.Unclassified && !r.Ignored)
+                            <div class="hd-discovery-exe">
+                                <code class="hd-discovery-name-display"
+                                      data-field="name"
+                                      data-id="@r.Id"
+                                      title="@(hasDescription ? locationTip : "Double-click to edit name")">@r.Name</code>
+                                <input class="form-control form-control-sm hd-discovery-name-input d-none"
+                                       type="text" value="@r.Name" maxlength="200"
+                                       data-id="@r.Id" data-original="@r.Name" aria-label="Process name" />
+                                <input class="form-control form-control-sm hd-discovery-edit d-none" type="text"
+                                       name="Edits[@i].Name" value="@r.Name" maxlength="200"
+                                       data-original="@r.Name" data-field="name" />
+                            </div>
+                            <div class="hd-meta-line hd-discovery-path">
+                                @if (string.IsNullOrWhiteSpace(r.Path))
+                                {
+                                    <span class="text-warning">missing path</span>
+                                }
+                                else
+                                {
+                                    @r.Path
+                                }
+                            </div>
+                            @if (hasSuggestion)
                             {
-                                <span class="badge-pill badge-rdp mt-1" title="Not yet in a classification/group">unclassified</span>
+                                <span class="badge-pill badge-group-specialization mt-1"
+                                      title="@(r.SuggestionReason ?? "Pending classification")">
+                                    suggested: @DiscoveryModel.GroupLabel(r.SuggestedGroup!.Value)
+                                </span>
                             }
                             @if (r.Ignored)
                             {
                                 <span class="badge-pill badge-ended mt-1">ignored</span>
                             }
                         </td>
-                        <td data-sort-value="@($"{r.ExeName} {r.Path}")" class="hd-discovery-location-cell">
-                            <div class="hd-discovery-exe"><code>@r.ExeName</code></div>
-                            <div class="hd-meta-line hd-discovery-path">@(string.IsNullOrWhiteSpace(r.Path) ? "—" : r.Path)</div>
-                        </td>
-                        <td data-sort-value="@(r.VersionDisplay ?? "")" class="hd-discovery-version-col">
+                        <td class="hd-discovery-version-col" title="@versionFull">
                             <span class="hd-discovery-read hd-discovery-version-text"
-                                  title="@versionFull"
-                                  data-field="version">@versionShort</span>
+                                  data-field="version">@versionFull</span>
                             <input class="form-control form-control-sm hd-discovery-edit d-none hd-discovery-version-input" type="text"
                                    name="Edits[@i].Version" value="@r.ManualVersion"
                                    placeholder="@(r.VersionDisplay ?? "-")" maxlength="50"
-                                   data-original="@(r.ManualVersion ?? "")" data-field="version"
-                                   title="@(r.VersionDisplay is null ? "No version known — type one to save it manually" : $"Current: {r.VersionDisplay} ({r.VersionSource})")" />
-                            @if (r.VersionSource != "manual" && r.VersionSource != "unknown")
-                            {
-                                <div class="text-secondary small mt-1 hd-discovery-version-source">@r.VersionSource</div>
-                            }
+                                   data-original="@(r.ManualVersion ?? "")" data-field="version" />
                         </td>
-                        <td data-sort-value="@(r.Category ?? "")" class="hd-discovery-cat-col">
-                            <span class="hd-discovery-read" data-field="category">@(r.Category ?? "—")</span>
+                        <td class="hd-discovery-cat-col" title="@(r.Category ?? "")">
+                            @if (!r.Ignored)
+                            {
+                                <select class="form-select form-select-sm hd-discovery-tax-select"
+                                        form="@setFormId"
+                                        name="category"
+                                        aria-label="Category for @r.Name"
+                                        data-field="category"
+                                        data-id="@r.Id">
+                                    <option value="">—</option>
+                                    @foreach (var opt in Model.CategoryOptions)
+                                    {
+                                        if (string.Equals(r.Category, opt, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            <option value="@opt" selected>@opt</option>
+                                        }
+                                        else
+                                        {
+                                            <option value="@opt">@opt</option>
+                                        }
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(r.Category)
+                                         && !Model.CategoryOptions.Contains(r.Category, StringComparer.OrdinalIgnoreCase))
+                                    {
+                                        <option value="@r.Category" selected>@r.Category</option>
+                                    }
+                                </select>
+                            }
+                            else
+                            {
+                                <span class="text-secondary">@(r.Category ?? "—")</span>
+                            }
                             <input class="form-control form-control-sm hd-discovery-edit d-none" type="text"
                                    name="Edits[@i].Category" value="@r.Category" maxlength="100"
                                    data-original="@(r.Category ?? "")" data-field="category" />
                         </td>
-                        <td data-sort-value="@(r.Subcategory ?? "")" class="hd-discovery-subcat-col">
-                            <span class="hd-discovery-read" data-field="subcategory">@(r.Subcategory ?? "—")</span>
+                        <td class="hd-discovery-subcat-col" title="@(r.Subcategory ?? "")">
+                            @if (!r.Ignored)
+                            {
+                                <select class="form-select form-select-sm hd-discovery-tax-select"
+                                        form="@setFormId"
+                                        name="subcategory"
+                                        aria-label="Subcategory for @r.Name"
+                                        data-field="subcategory"
+                                        data-id="@r.Id">
+                                    <option value="">—</option>
+                                    @foreach (var opt in Model.SubcategoryOptions)
+                                    {
+                                        if (string.Equals(r.Subcategory, opt, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            <option value="@opt" selected>@opt</option>
+                                        }
+                                        else
+                                        {
+                                            <option value="@opt">@opt</option>
+                                        }
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(r.Subcategory)
+                                         && !Model.SubcategoryOptions.Contains(r.Subcategory, StringComparer.OrdinalIgnoreCase))
+                                    {
+                                        <option value="@r.Subcategory" selected>@r.Subcategory</option>
+                                    }
+                                </select>
+                            }
+                            else
+                            {
+                                <span class="text-secondary">@(r.Subcategory ?? "—")</span>
+                            }
                             <input class="form-control form-control-sm hd-discovery-edit d-none" type="text"
                                    name="Edits[@i].Subcategory" value="@r.Subcategory" maxlength="100"
                                    data-original="@(r.Subcategory ?? "")" data-field="subcategory" />
                         </td>
-                        <td data-sort-value="@r.SeenHosts.Count" class="hd-discovery-installs-col" title="@(r.SeenHosts.Count == 0 ? "Not tied to a specific host yet" : string.Join(", ", r.SeenHosts))">
+                        <td class="hd-discovery-class-col">
+                            @if (!r.Ignored)
+                            {
+                                <select class="form-select form-select-sm hd-discovery-group-select"
+                                        form="@setFormId"
+                                        name="group"
+                                        aria-label="Classification for @r.Name"
+                                        data-id="@r.Id">
+                                    @if (defaultGroup == "CoreWindows")
+                                    {
+                                        <option value="CoreWindows" selected>Core Windows</option>
+                                    }
+                                    else
+                                    {
+                                        <option value="CoreWindows">Core Windows</option>
+                                    }
+                                    @if (defaultGroup == "Soe")
+                                    {
+                                        <option value="Soe" selected>SOE</option>
+                                    }
+                                    else
+                                    {
+                                        <option value="Soe">SOE</option>
+                                    }
+                                    @if (defaultGroup == "Specialization")
+                                    {
+                                        <option value="Specialization" selected>Specialization</option>
+                                    }
+                                    else
+                                    {
+                                        <option value="Specialization">Specialization</option>
+                                    }
+                                </select>
+                            }
+                            else
+                            {
+                                <span class="text-secondary">—</span>
+                            }
+                        </td>
+                        <td class="hd-discovery-installs-col" title="@(r.SeenHosts.Count == 0 ? "Not tied to a specific host yet" : string.Join(", ", r.SeenHosts))">
                             @r.SeenHosts.Count
                         </td>
-                        <td data-sort-value="@r.AvgWeeklyUsers.ToString(System.Globalization.CultureInfo.InvariantCulture)" class="hd-discovery-freq-col">
-                            @r.AvgWeeklyUsers.ToString("0.0")
-                        </td>
-                        <td class="hd-discovery-actions-col text-end">
+                        <td class="hd-discovery-actions-col">
                             @if (r.Ignored)
                             {
                                 <button type="submit" formaction="?handler=Unignore" formmethod="post"
-                                        class="hd-btn hd-btn-silver hd-btn-sm"
+                                        class="hd-btn hd-btn-silver hd-btn-sm hd-discovery-action-btn"
                                         name="id" value="@r.Id"
                                         formnovalidate>
                                     Restore
                                 </button>
                             }
+                            else if (hasSuggestion)
+                            {
+                                <button type="submit" formaction="?handler=Approve" formmethod="post"
+                                        class="hd-btn hd-btn-gold hd-btn-sm hd-discovery-action-btn"
+                                        name="id" value="@r.Id"
+                                        formnovalidate
+                                        title="@(r.SuggestionReason ?? "Approve suggested group")">
+                                    Approve
+                                </button>
+                                <button type="submit" form="@setFormId"
+                                        class="hd-btn hd-btn-silver hd-btn-sm hd-discovery-action-btn"
+                                        title="Apply Classification dropdown (and current Category/Subcategory)">
+                                    Set
+                                </button>
+                            }
                             else
                             {
-                                <button type="submit" formaction="?handler=Ignore" formmethod="post"
-                                        class="hd-btn hd-btn-rose hd-btn-sm"
+                                <button type="submit" form="@setFormId"
+                                        class="hd-btn hd-btn-silver hd-btn-sm hd-discovery-action-btn"
+                                        title="Apply Classification dropdown (and current Category/Subcategory)">
+                                    Set
+                                </button>
+                            }
+                            @if (!r.Ignored && string.IsNullOrWhiteSpace(r.Path))
+                            {
+                                <button type="submit" formaction="?handler=FindPath" formmethod="post"
+                                        class="hd-btn hd-btn-silver hd-btn-sm hd-discovery-action-btn"
                                         name="id" value="@r.Id"
-                                        formnovalidate>
-                                    Ignore
+                                        formnovalidate
+                                        title="Search process samples and inventories for this executable path">
+                                    Find path
                                 </button>
                             }
                         </td>
                     </tr>
                     <tr class="hd-discovery-desc d-none"
                         data-discovery-desc-for="@r.Id"
-                        data-filter-text="@filterText"
                         data-has-description="@(hasDescription ? "true" : "false")">
                         <td colspan="@colCount" class="hd-discovery-desc-cell">
                             <span class="hd-discovery-read hd-meta-line" data-field="description">@(r.Description ?? "")</span>
@@ -198,11 +458,28 @@
             </table>
         </div>
     </form>
+
+    @* Separate Set forms (cannot nest inside SaveAll). Select/button use form= attribute. *@
+    @foreach (var r in Model.Rows.Where(x => !x.Ignored))
+    {
+        <form method="post" asp-page-handler="Set" id="discovery-set-@r.Id" class="d-none" data-discovery-set-form="@r.Id">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="id" value="@r.Id" />
+            <input type="hidden" name="hideIgnored" value="@Model.HideIgnored" />
+            <input type="hidden" name="blankPathOnly" value="@Model.BlankPathOnly" />
+            <input type="hidden" name="showClassified" value="@Model.ShowClassified" />
+            <input type="hidden" name="q" value="@Model.Q" />
+            <input type="hidden" name="sort" value="@sort" />
+            <input type="hidden" name="dir" value="@dir" />
+        </form>
+    }
+
     <p class="text-secondary small mt-3 mb-0">
-        <strong>Installs</strong> is the number of machines that have reported this process (hover for the list).
-        <strong>Freq</strong> is the average number of distinct users per week — averaged across every week since it was first seen with real runtime,
-        counting only <code>ProcessRuns</code> that had actual duration (not bare inventory sightings).
-        Use <strong>Edit</strong> to change friendly names, descriptions, categories, and versions, then <strong>Save</strong>.
+        Default list is unclassified apps plus pending suggestions. <strong>Approve</strong> commits an import/AI suggestion;
+        pick <strong>Classification</strong>, <strong>Category</strong>, and <strong>Subcategory</strong>, then click <strong>Set</strong> to apply all three.
+        Double-click a name to rename. <strong>Installs</strong> is machines that reported the process (hover for hosts).
+        <strong>Find missing paths</strong> reuses agent-reported paths from samples/inventories (and can request inventory where still unknown).
+        Drag column borders to resize (saved for this browser session).
     </p>
 </div>
 
@@ -226,7 +503,17 @@
   const saveForm = document.getElementById('discovery-save-form');
   const descToggle = document.getElementById('show-descriptions');
   const descStorageKey = 'hd-discovery-show-descriptions';
+  const colWidthKey = 'hd-discovery-col-widths';
+  const filterForm = document.getElementById('discovery-filter-form');
+  const qInput = document.getElementById('discovery-q');
   let editing = false;
+
+  qInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      filterForm?.submit();
+    }
+  });
 
   function mainRows() {
     return [...table.querySelectorAll('tbody tr.hd-discovery-main')];
@@ -245,12 +532,6 @@
     mainRows().forEach(row => {
       const desc = descRowFor(row.dataset.discoveryId);
       if (!desc) return;
-      const filteredOut = row.style.display === 'none';
-      if (filteredOut) {
-        desc.classList.add('d-none');
-        desc.style.display = 'none';
-        return;
-      }
       if (editing) {
         desc.classList.remove('d-none');
         desc.style.display = '';
@@ -283,11 +564,9 @@
 
     table.querySelectorAll('.hd-discovery-read').forEach(el => el.classList.toggle('d-none', on));
     table.querySelectorAll('.hd-discovery-edit').forEach(el => el.classList.toggle('d-none', !on));
+    // During Edit, free-text Category/Subcategory inputs replace the Set dropdowns.
+    table.querySelectorAll('.hd-discovery-tax-select').forEach(el => el.classList.toggle('d-none', on));
     syncDescriptionVisibility();
-  }
-
-  function markDirty() {
-    if (editing) saveBtn.disabled = false;
   }
 
   editBtn?.addEventListener('click', () => setEditing(true));
@@ -302,7 +581,7 @@
 
   saveForm?.querySelectorAll('.hd-discovery-edit').forEach(el => {
     el.addEventListener('input', () => {
-      markDirty();
+      if (editing) saveBtn.disabled = false;
       if (el.dataset.field === 'description') {
         const row = el.closest('tr.hd-discovery-desc');
         if (row) {
@@ -314,57 +593,164 @@
     });
   });
 
-  // Custom filter: match path text and keep description rows in sync with main rows.
-  const filterInput = document.querySelector('[data-filter-for="discovery-table"]');
-  filterInput?.addEventListener('input', () => {
-    const q = filterInput.value.trim().toLowerCase();
-    mainRows().forEach(row => {
-      const text = row.dataset.filterText || row.textContent.toLowerCase();
-      const show = !q || text.includes(q);
-      row.style.display = show ? '' : 'none';
-    });
-    syncDescriptionVisibility();
-  });
-
-  // Custom sort: move description rows with their parent main row.
-  table?.querySelectorAll('thead th[data-sort]').forEach((th, colIdx) => {
-    if (th.dataset.discoverySortBound === 'true') return;
-    th.dataset.discoverySortBound = 'true';
-    th.addEventListener('click', () => {
-      const tbody = table.tBodies[0];
-      const type = th.dataset.sort;
-      const asc = th.dataset.dir !== 'asc';
-      table.querySelectorAll('thead th[data-sort]').forEach(h => {
-        h.dataset.dir = '';
-        h.classList.remove('sorted-asc', 'sorted-desc');
-      });
-      th.dataset.dir = asc ? 'asc' : 'desc';
-      th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
-
-      const pairs = mainRows().map(row => ({ row, desc: descRowFor(row.dataset.discoveryId) }));
-      pairs.sort((a, b) => {
-        const ca = a.row.children[colIdx];
-        const cb = b.row.children[colIdx];
-        let va = ca?.dataset.sortValue ?? ca?.textContent ?? '';
-        let vb = cb?.dataset.sortValue ?? cb?.textContent ?? '';
-        if (type === 'num' || type === 'date') {
-          va = parseFloat(va);
-          vb = parseFloat(vb);
-          if (Number.isNaN(va)) va = -Infinity;
-          if (Number.isNaN(vb)) vb = -Infinity;
-          return asc ? va - vb : vb - va;
+  // While editing, free-text Category/Subcategory must win over the (hidden) selects on Set.
+  document.querySelectorAll('form[data-discovery-set-form]').forEach(form => {
+    form.addEventListener('submit', () => {
+      if (!editing) return;
+      const id = form.dataset.discoverySetForm;
+      const row = table?.querySelector(`tr.hd-discovery-main[data-discovery-id="${id}"]`);
+      if (!row) return;
+      const catInput = row.querySelector('.hd-discovery-edit[data-field="category"]');
+      const subInput = row.querySelector('.hd-discovery-edit[data-field="subcategory"]');
+      const catSelect = row.querySelector('.hd-discovery-tax-select[data-field="category"]');
+      const subSelect = row.querySelector('.hd-discovery-tax-select[data-field="subcategory"]');
+      if (catSelect && catInput) {
+        const v = catInput.value || '';
+        if (v && ![...catSelect.options].some(o => o.value === v)) {
+          catSelect.add(new Option(v, v, true, true));
         }
-        va = String(va).toLowerCase();
-        vb = String(vb).toLowerCase();
-        return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+        catSelect.value = v;
+        catSelect.disabled = false;
+      }
+      if (subSelect && subInput) {
+        const v = subInput.value || '';
+        if (v && ![...subSelect.options].some(o => o.value === v)) {
+          subSelect.add(new Option(v, v, true, true));
+        }
+        subSelect.value = v;
+        subSelect.disabled = false;
+      }
+    });
+  });
+
+  // Double-click name → inline rename via AJAX
+  async function saveName(id, name, displayEl, inputEl) {
+    const token = document.querySelector('input[name="__RequestVerificationToken"]')?.value;
+    const body = new URLSearchParams();
+    body.set('id', id);
+    body.set('name', name);
+    body.set('ajax', '1');
+    if (token) body.set('__RequestVerificationToken', token);
+    try {
+      const res = await fetch('?handler=SaveName', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'RequestVerificationToken': token || '',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body
       });
-      pairs.forEach(p => {
-        tbody.appendChild(p.row);
-        if (p.desc) tbody.appendChild(p.desc);
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Save failed');
+      displayEl.textContent = data.name;
+      inputEl.dataset.original = data.name;
+      const bulk = displayEl.closest('tr')?.querySelector('.hd-discovery-edit[data-field="name"]');
+      if (bulk) {
+        bulk.value = data.name;
+        bulk.dataset.original = data.name;
+      }
+    } catch (err) {
+      alert(err.message || 'Could not save name');
+      inputEl.value = inputEl.dataset.original || displayEl.textContent;
+    }
+  }
+
+  table?.querySelectorAll('.hd-discovery-name-display').forEach(display => {
+    const row = display.closest('tr');
+    const input = row?.querySelector('.hd-discovery-name-input');
+    if (!input) return;
+
+    display.addEventListener('dblclick', () => {
+      if (editing) return;
+      display.classList.add('d-none');
+      input.classList.remove('d-none');
+      input.focus();
+      input.select();
+    });
+
+    const finish = async () => {
+      input.classList.add('d-none');
+      display.classList.remove('d-none');
+      const next = input.value.trim();
+      if (!next || next === (input.dataset.original || '')) {
+        input.value = input.dataset.original || display.textContent;
+        return;
+      }
+      await saveName(input.dataset.id, next, display, input);
+    };
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') {
+        input.value = input.dataset.original || '';
+        input.blur();
+      }
+    });
+    input.addEventListener('blur', finish);
+  });
+
+  // Column resize (sessionStorage per column)
+  (function initColResize() {
+    if (!table) return;
+    const cols = table.querySelectorAll('colgroup col[data-col]');
+    const minWidths = {
+      location: 120,
+      version: 56,
+      category: 64,
+      subcategory: 72,
+      classification: 110,
+      installs: 52,
+      actions: 64
+    };
+
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(colWidthKey) || '{}');
+      cols.forEach(col => {
+        const key = col.dataset.col;
+        if (saved[key] && Number(saved[key]) > 0) {
+          col.style.width = `${saved[key]}px`;
+        }
+      });
+    } catch { /* ignore */ }
+
+    function persist() {
+      const widths = {};
+      cols.forEach(col => {
+        const w = col.style.width;
+        if (w) widths[col.dataset.col] = parseFloat(w);
+      });
+      sessionStorage.setItem(colWidthKey, JSON.stringify(widths));
+    }
+
+    table.querySelectorAll('.hd-col-resize').forEach(handle => {
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const key = handle.dataset.resize;
+        const col = table.querySelector(`colgroup col[data-col="${key}"]`);
+        const th = handle.closest('th');
+        if (!col || !th) return;
+        const startX = e.clientX;
+        const startW = th.getBoundingClientRect().width;
+        const min = minWidths[key] || 48;
+
+        const onMove = (ev) => {
+          const next = Math.max(min, startW + (ev.clientX - startX));
+          col.style.width = `${next}px`;
+        };
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          document.body.classList.remove('hd-col-resizing');
+          persist();
+        };
+        document.body.classList.add('hd-col-resizing');
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
       });
     });
-    if (th.dataset.defaultDesc !== undefined) th.click();
-  });
+  })();
 
   syncDescriptionVisibility();
 })();

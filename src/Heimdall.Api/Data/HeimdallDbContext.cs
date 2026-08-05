@@ -43,6 +43,11 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
             e.HasIndex(x => x.Country);
             e.HasIndex(x => x.MachineGuid);
             e.HasIndex(x => x.SmbiosUuid);
+            e.HasIndex(x => x.TeamId);
+            e.HasOne(x => x.Team)
+                .WithMany()
+                .HasForeignKey(x => x.TeamId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<MachineIdentityEvent>(e =>

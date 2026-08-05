@@ -8,7 +8,7 @@
     <h1 class="hd-title mb-1">Teams</h1>
     <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="teams">Help</a>
 </div>
-<p class="hd-sub">Who belongs to which part of the business · CSV import for POC</p>
+<p class="hd-sub">Teams · people · machines · app lists</p>
 
 @if (TempData["Message"] is string msg)
 {
@@ -34,8 +34,8 @@ jsmith,ARUP,Jane Smith,jane.smith@example.com,Digital,Buildings
 ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
         <p class="mb-3 text-secondary small">
             Simpler format also works: <code>Username,Team</code>.
-            Username may be <code>DOMAIN\user</code> or bare SAM; matching to sessions is case-insensitive either way.
-            Optional column: <code>Code</code> (team code).
+            Username is typically <code>firstname.lastname</code> (sometimes <code>firstname-initial.lastname</code>).
+            Optional column: <code>Code</code> (team code). Domain remains optional in CSV.
         </p>
         <a class="btn btn-hd" asp-page-handler="Template">Download CSV template</a>
     </div>
@@ -142,30 +142,8 @@ ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
 <div class="row g-4 mb-4">
     <div class="col-lg-5">
         <form method="post" asp-page-handler="SavePerson" class="hd-panel h-100">
-            <h2 class="h5 mb-3">@(Model.EditingPersonId is null ? "Assign person" : "Edit assignment")</h2>
+            <h2 class="h5 mb-3">@(Model.EditingPersonId is null ? "Edit Team" : "Edit team member")</h2>
             <input type="hidden" asp-for="EditingPersonId" />
-            <div class="mb-3">
-                <label class="form-label">Username</label>
-                <input class="form-control" asp-for="PersonUsername" placeholder="jsmith or ARUP\jsmith" list="session-users" required />
-                <datalist id="session-users">
-                    @foreach (var u in Model.SessionUsernames)
-                    {
-                        <option value="@u"></option>
-                    }
-                </datalist>
-            </div>
-            <div class="mb-3">
-                <label class="form-label">Domain (optional)</label>
-                <input class="form-control" asp-for="PersonDomain" placeholder="ARUP" />
-            </div>
-            <div class="mb-3">
-                <label class="form-label">Display name</label>
-                <input class="form-control" asp-for="PersonDisplayName" />
-            </div>
-            <div class="mb-3">
-                <label class="form-label">Email</label>
-                <input class="form-control" asp-for="PersonEmail" type="email" />
-            </div>
             <div class="mb-3">
                 <label class="form-label">Team</label>
                 <select class="form-select" asp-for="PersonTeamId" required>
@@ -176,14 +154,33 @@ ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
                     }
                 </select>
             </div>
+            <div class="mb-3">
+                <label class="form-label">Username</label>
+                <input class="form-control" asp-for="PersonUsername" placeholder="firstname.lastname" list="session-users" required />
+                <div class="form-text">Typically <code>firstname.lastname</code>; sometimes <code>firstname-initial.lastname</code>.</div>
+                <datalist id="session-users">
+                    @foreach (var u in Model.SessionUsernames)
+                    {
+                        <option value="@u"></option>
+                    }
+                </datalist>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Display name <span class="text-secondary">(optional)</span></label>
+                <input class="form-control" asp-for="PersonDisplayName" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Email <span class="text-secondary">(optional)</span></label>
+                <input class="form-control" asp-for="PersonEmail" type="email" />
+            </div>
             <div class="d-flex gap-2 flex-wrap">
                 @if (Model.TeamOptions.Count == 0)
                 {
-                    <button type="submit" class="btn btn-hd" disabled>@(Model.EditingPersonId is null ? "Assign" : "Save")</button>
+                    <button type="submit" class="btn btn-hd" disabled>@(Model.EditingPersonId is null ? "Save" : "Save")</button>
                 }
                 else
                 {
-                    <button type="submit" class="btn btn-hd">@(Model.EditingPersonId is null ? "Assign" : "Save")</button>
+                    <button type="submit" class="btn btn-hd">Save</button>
                 }
                 @if (Model.EditingPersonId is not null)
                 {
@@ -194,7 +191,7 @@ ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
     </div>
     <div class="col-lg-7">
         <div class="hd-panel h-100">
-            <h2 class="h5 mb-3">People → team</h2>
+            <h2 class="h5 mb-3">Team Members</h2>
             @if (Model.People.Count == 0)
             {
                 <p class="text-secondary mb-0">No people assigned yet.</p>
@@ -249,6 +246,375 @@ ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
         </div>
     </div>
 </div>
+
+@if (Model.TeamOptions.Count > 0)
+{
+    <div class="hd-panel mb-4" id="edit-fleet-panel">
+        <h2 class="h5 mb-2">Edit Fleet</h2>
+        <p class="text-secondary small mb-3">Assign hosts to a team for Machines list sections. Friendly names are edited on the machine detail page later.</p>
+
+        <div class="d-flex flex-wrap gap-2 align-items-end mb-3">
+            <div class="flex-grow-1" style="min-width: 12rem; max-width: 28rem;">
+                <label class="form-label small" for="fleet-team-select">Team</label>
+                <select class="form-select" id="fleet-team-select">
+                    @foreach (var t in Model.TeamOptions)
+                    {
+                        <option value="@t.Id">@t.Label</option>
+                    }
+                </select>
+            </div>
+            <button type="button" class="hd-btn hd-btn-silver" id="fleet-edit-btn">Edit</button>
+        </div>
+
+        <form method="post" asp-page-handler="AssignMachines" id="fleet-assign-form" class="hd-fleet-editor" hidden>
+            <input type="hidden" name="AssignTeamId" id="fleet-assign-team" value="" />
+            <div id="fleet-selected-ids"></div>
+
+            <div class="hd-fleet-transfer">
+                <div class="hd-fleet-pane">
+                    <div class="hd-fleet-pane-title">Current Fleet</div>
+                    <select multiple class="form-select hd-fleet-list" id="fleet-available" size="12" disabled></select>
+                </div>
+                <div class="hd-fleet-arrows">
+                    <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="fleet-to-team" title="Add to team" disabled>→</button>
+                    <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="fleet-to-fleet" title="Remove from team" disabled>←</button>
+                </div>
+                <div class="hd-fleet-pane">
+                    <div class="hd-fleet-pane-title">Current Team</div>
+                    <select multiple class="form-select hd-fleet-list" id="fleet-assigned" size="12" disabled></select>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <div id="fleet-unsaved-modal" class="hd-modal" hidden>
+        <div class="hd-modal-backdrop" data-fleet-modal-dismiss></div>
+        <div class="hd-modal-dialog hd-panel" role="dialog" aria-labelledby="fleet-unsaved-title">
+            <h3 class="h6 mb-2" id="fleet-unsaved-title">Unsaved changes</h3>
+            <p class="small mb-3">You have unsaved changes, click Save or Discard to confirm.</p>
+            <div class="d-flex gap-2 flex-wrap">
+                <button type="button" class="hd-btn hd-btn-gold hd-btn-sm" id="fleet-modal-save">Save</button>
+                <button type="button" class="hd-btn hd-btn-rose hd-btn-sm" id="fleet-modal-discard">Discard</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="hd-panel mb-4">
+        <h2 class="h5 mb-2">App lists by team</h2>
+        <p class="text-secondary small mb-3">
+            Actively Tracking lists appear in the Machines section header. Ignoring lists stay linked but hidden from that header.
+            <a asp-page="/AppLists">Customize lists</a>
+        </p>
+
+        <form method="post" asp-page-handler="LinkAppList" class="row g-2 align-items-end mb-4">
+            <div class="col-md-4">
+                <label class="form-label small">Team</label>
+                <select class="form-select form-select-sm" name="LinkTeamId" required>
+                    @foreach (var t in Model.TeamOptions)
+                    {
+                        <option value="@t.Id">@t.Label</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">App list</label>
+                <select class="form-select form-select-sm" name="LinkAppListId" required>
+                    <option value="">— select —</option>
+                    @foreach (var a in Model.UnlinkedAppLists)
+                    {
+                        <option value="@a.Id">@a.Name (@a.EntryCount)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Track List</button>
+            </div>
+            <div class="col-auto">
+                <div class="form-check mb-1">
+                    <input class="form-check-input" type="checkbox" name="LinkAsIgnored" value="true" id="link-ignored" />
+                    <label class="form-check-label small" for="link-ignored">Do Not Track</label>
+                </div>
+            </div>
+        </form>
+
+        @foreach (var block in Model.TeamAppLists)
+        {
+            <div class="hd-team-app-row mb-3">
+                <div class="hd-team-app-col">
+                    <div class="hd-team-app-col-head">Actively Tracking</div>
+                    @if (block.Active.Count == 0)
+                    {
+                        <p class="small text-secondary mb-0">—</p>
+                    }
+                    else
+                    {
+                        <ul class="list-unstyled small mb-0">
+                        @foreach (var a in block.Active)
+                        {
+                            <li class="hd-team-app-item mb-2">
+                                <div class="d-flex flex-wrap gap-2 align-items-center">
+                                    <a asp-page="/AppLists" asp-route-section="create" class="hd-team-app-name text-truncate" title="@a.Name">@a.Name</a>
+                                    <form method="post" asp-page-handler="UnlinkAppList" class="d-inline">
+                                        <input type="hidden" name="AppListId" value="@a.Id" />
+                                        <button type="submit" class="btn btn-ghost btn-sm py-0">Unlink</button>
+                                    </form>
+                                </div>
+                                @if (!string.IsNullOrEmpty(a.AppsSummary))
+                                {
+                                    <div class="hd-team-app-apps text-secondary text-truncate" title="@a.AppsSummary">@a.AppsSummary</div>
+                                }
+                            </li>
+                        }
+                        </ul>
+                    }
+                </div>
+                <div class="hd-team-app-col hd-team-app-col-center">
+                    <div class="hd-team-app-col-head">Team</div>
+                    <div class="hd-team-app-team-name">@block.TeamName</div>
+                </div>
+                <div class="hd-team-app-col">
+                    <div class="hd-team-app-col-head">Ignoring</div>
+                    @if (block.Ignored.Count == 0)
+                    {
+                        <p class="small text-secondary mb-0">—</p>
+                    }
+                    else
+                    {
+                        <ul class="list-unstyled small mb-0">
+                        @foreach (var a in block.Ignored)
+                        {
+                            <li class="hd-team-app-item mb-2">
+                                <div class="d-flex flex-wrap gap-2 align-items-center">
+                                    <a asp-page="/AppLists" class="hd-team-app-name text-truncate" title="@a.Name">@a.Name</a>
+                                    <form method="post" asp-page-handler="SetAppListExcluded" class="d-inline">
+                                        <input type="hidden" name="AppListId" value="@a.Id" />
+                                        <input type="hidden" name="excluded" value="false" />
+                                        <button type="submit" class="btn btn-ghost btn-sm py-0">Activate</button>
+                                    </form>
+                                    <form method="post" asp-page-handler="UnlinkAppList" class="d-inline">
+                                        <input type="hidden" name="AppListId" value="@a.Id" />
+                                        <button type="submit" class="btn btn-ghost btn-sm py-0">Unlink</button>
+                                    </form>
+                                </div>
+                                @if (!string.IsNullOrEmpty(a.AppsSummary))
+                                {
+                                    <div class="hd-team-app-apps text-secondary text-truncate" title="@a.AppsSummary">@a.AppsSummary</div>
+                                }
+                            </li>
+                        }
+                        </ul>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@section Scripts {
+@if (Model.TeamOptions.Count > 0)
+{
+    <script>
+    (function () {
+        var machines = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(
+            Model.AllMachines.Select(m => new {
+                id = m.Id,
+                label = string.IsNullOrWhiteSpace(m.FriendlyName) ? m.Hostname : m.FriendlyName + " (" + m.Hostname + ")",
+                teamId = m.TeamId
+            }).OrderBy(m => m.label, StringComparer.OrdinalIgnoreCase)));
+
+        var teamSelect = document.getElementById('fleet-team-select');
+        var editBtn = document.getElementById('fleet-edit-btn');
+        var form = document.getElementById('fleet-assign-form');
+        var assignTeam = document.getElementById('fleet-assign-team');
+        var available = document.getElementById('fleet-available');
+        var assigned = document.getElementById('fleet-assigned');
+        var toTeam = document.getElementById('fleet-to-team');
+        var toFleet = document.getElementById('fleet-to-fleet');
+        var selectedIds = document.getElementById('fleet-selected-ids');
+        var modal = document.getElementById('fleet-unsaved-modal');
+        var modalSave = document.getElementById('fleet-modal-save');
+        var modalDiscard = document.getElementById('fleet-modal-discard');
+
+        var editing = false;
+        var dirty = false;
+        var baselineIds = [];
+        var pendingTeamId = null;
+
+        function machineLabel(m) { return m.label; }
+
+        function sortOptions(sel) {
+            var opts = Array.prototype.slice.call(sel.options);
+            opts.sort(function (a, b) {
+                return a.text.localeCompare(b.text, undefined, { sensitivity: 'base' });
+            });
+            sel.innerHTML = '';
+            opts.forEach(function (o) { sel.add(o); });
+        }
+
+        function currentTeamId() {
+            return parseInt(teamSelect.value, 10);
+        }
+
+        function assignedIds() {
+            return Array.prototype.map.call(assigned.options, function (o) { return parseInt(o.value, 10); });
+        }
+
+        function populateLists(teamId) {
+            available.innerHTML = '';
+            assigned.innerHTML = '';
+            machines.forEach(function (m) {
+                var opt = new Option(machineLabel(m), m.id);
+                opt.title = machineLabel(m);
+                if (m.teamId === teamId) assigned.add(opt);
+                else available.add(opt);
+            });
+            sortOptions(available);
+            sortOptions(assigned);
+            baselineIds = assignedIds().slice().sort(function (a, b) { return a - b; });
+            dirty = false;
+        }
+
+        function setListsEnabled(on) {
+            available.disabled = !on;
+            assigned.disabled = !on;
+            toTeam.disabled = !on;
+            toFleet.disabled = !on;
+        }
+
+        function enterEdit() {
+            editing = true;
+            form.hidden = false;
+            assignTeam.value = String(currentTeamId());
+            populateLists(currentTeamId());
+            setListsEnabled(true);
+            editBtn.textContent = 'Save';
+            editBtn.classList.remove('hd-btn-silver');
+            editBtn.classList.add('hd-btn-gold');
+        }
+
+        function exitEdit() {
+            editing = false;
+            dirty = false;
+            pendingTeamId = null;
+            setListsEnabled(false);
+            form.hidden = true;
+            editBtn.textContent = 'Edit';
+            editBtn.classList.remove('hd-btn-gold');
+            editBtn.classList.add('hd-btn-silver');
+            hideModal();
+        }
+
+        function markDirty() {
+            var now = assignedIds().slice().sort(function (a, b) { return a - b; });
+            dirty = now.length !== baselineIds.length ||
+                now.some(function (id, i) { return id !== baselineIds[i]; });
+        }
+
+        function moveSelected(from, to) {
+            var selected = Array.prototype.filter.call(from.options, function (o) { return o.selected; });
+            selected.forEach(function (o) {
+                to.add(new Option(o.text, o.value));
+                from.remove(o.index);
+            });
+            sortOptions(to);
+            markDirty();
+        }
+
+        function buildHiddenIds() {
+            selectedIds.innerHTML = '';
+            assignedIds().forEach(function (id) {
+                var input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'SelectedMachineIds';
+                input.value = String(id);
+                selectedIds.appendChild(input);
+            });
+        }
+
+        function save() {
+            assignTeam.value = String(currentTeamId());
+            buildHiddenIds();
+            form.submit();
+        }
+
+        function showModal() { modal.hidden = false; }
+        function hideModal() { modal.hidden = true; }
+
+        function switchTeam(nextId) {
+            teamSelect.value = String(nextId);
+            if (editing) {
+                assignTeam.value = String(nextId);
+                populateLists(nextId);
+            }
+            pendingTeamId = null;
+            hideModal();
+        }
+
+        editBtn.addEventListener('click', function () {
+            if (!editing) {
+                enterEdit();
+                return;
+            }
+            save();
+        });
+
+        toTeam.addEventListener('click', function () { moveSelected(available, assigned); });
+        toFleet.addEventListener('click', function () { moveSelected(assigned, available); });
+
+        teamSelect.addEventListener('change', function (e) {
+            var nextId = parseInt(teamSelect.value, 10);
+            if (editing && dirty) {
+                e.preventDefault();
+                pendingTeamId = nextId;
+                // revert select until user confirms
+                var prev = assignTeam.value;
+                teamSelect.value = prev;
+                showModal();
+                return;
+            }
+            if (editing) {
+                assignTeam.value = String(nextId);
+                populateLists(nextId);
+            }
+        });
+
+        modalSave.addEventListener('click', function () {
+            if (pendingTeamId == null) { hideModal(); return; }
+            // Save current team, then navigate would lose pending switch —
+            // save current assignments first; after postback team resets.
+            // Persist current team, store desired team in sessionStorage for restore.
+            try { sessionStorage.setItem('heimdall.fleet.pendingTeam', String(pendingTeamId)); } catch (ex) { }
+            save();
+        });
+
+        modalDiscard.addEventListener('click', function () {
+            if (pendingTeamId == null) { hideModal(); return; }
+            var next = pendingTeamId;
+            pendingTeamId = null;
+            dirty = false;
+            switchTeam(next);
+        });
+
+        modal.querySelectorAll('[data-fleet-modal-dismiss]').forEach(function (el) {
+            el.addEventListener('click', function () {
+                pendingTeamId = null;
+                hideModal();
+            });
+        });
+
+        // Restore pending team after Save-then-switch
+        try {
+            var pending = sessionStorage.getItem('heimdall.fleet.pendingTeam');
+            if (pending) {
+                sessionStorage.removeItem('heimdall.fleet.pendingTeam');
+                teamSelect.value = pending;
+                enterEdit();
+            }
+        } catch (ex) { }
+    })();
+    </script>
+}
+}
 
 @functions {
     IEnumerable<TeamsModel.TeamNode> Flatten(IEnumerable<TeamsModel.TeamNode> nodes)

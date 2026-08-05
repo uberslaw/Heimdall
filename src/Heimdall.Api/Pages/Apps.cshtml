@@ -1,18 +1,18 @@
 @page
 @model AppsModel
 @{
-    ViewData["Title"] = "Applications";
+    ViewData["Title"] = "Application Usage";
 }
 
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
     <div>
-        <h1 class="hd-title mb-1">Applications</h1>
-        <p class="hd-sub mb-0">Tracked non-Windows processes · @Model.RangeLabel</p>
+        <h1 class="hd-title mb-1">Application Usage</h1>
+        <p class="hd-sub mb-0">Tracked process usage across the fleet · @Model.RangeLabel</p>
     </div>
     <div class="d-flex gap-2">
-        <a class="btn btn-hd" asp-page="/TrackSoftware">Track Software</a>
-        <a class="btn btn-ghost" asp-page="/AppLists">App lists</a>
-        <a class="btn btn-ghost" asp-page="/Help" asp-fragment="applications">Help</a>
+        <a class="hd-btn hd-btn-black" asp-page="/TrackSoftware">Track Software</a>
+        <a class="hd-btn hd-btn-black" asp-page="/Discovery">Discovery &amp; Classification</a>
+        <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="applications">Help</a>
     </div>
 </div>
 
@@ -20,27 +20,6 @@
 {
     <div class="alert alert-success">@msg</div>
 }
-
-<form method="get" asp-page="/Socratize" class="hd-panel mb-3">
-    <div class="row g-3 align-items-end">
-        <div class="col-md-5 col-lg-4">
-            <label class="form-label" for="socratize-host">Socratize machine</label>
-            <select class="form-select" name="Host" id="socratize-host" required>
-                <option value="">— select host —</option>
-                @foreach (var host in Model.Hostnames)
-                {
-                    <option value="@host">@host</option>
-                }
-            </select>
-        </div>
-        <div class="col-md-3 col-lg-2">
-            <button type="submit" class="btn btn-ghost w-100">Socratize</button>
-        </div>
-        <div class="col-md-4 col-lg-6">
-            <p class="text-secondary mb-0 small">One-click cost-justification brief from collected sessions &amp; apps (last 30 days default).</p>
-        </div>
-    </div>
-</form>
 
 <form method="get" class="hd-panel mb-3">
     <div class="row g-3 align-items-end">
@@ -61,52 +40,71 @@
             </select>
         </div>
         <div class="col-md-3 col-lg-2">
-            <button type="submit" class="btn btn-hd w-100">Apply</button>
+            <button type="submit" class="hd-btn hd-btn-gold w-100">Apply</button>
+        </div>
+        <div class="col-md-5 col-lg-5 ms-lg-auto">
+            <label class="form-label" for="socratize-host">Socratize machine</label>
+            <div class="input-group">
+                <select class="form-select" name="Host" id="socratize-host" form="socratize-jump">
+                    <option value="">— select host —</option>
+                    @foreach (var host in Model.Hostnames)
+                    {
+                        <option value="@host">@host</option>
+                    }
+                </select>
+                <button type="submit" class="hd-btn hd-btn-silver" form="socratize-jump">Go</button>
+            </div>
         </div>
     </div>
 </form>
+<form method="get" asp-page="/Socratize" id="socratize-jump" class="d-none"></form>
 
-<div class="hd-panel">
-    <table class="hd-table">
+<div class="hd-panel hd-apps-panel">
+    <table class="hd-table hd-apps-table hd-sortable" id="apps-table">
         <thead>
             <tr>
-                <th>Process</th>
-                <th>Users</th>
-                <th>Avg # processes open</th>
-                <th>Runs</th>
-                <th>Total time</th>
-                <th>Last seen</th>
+                <th data-sort="text" class="hd-apps-col-name">Process</th>
+                <th data-sort="num" class="hd-apps-col-num" title="Distinct users in the period">Users</th>
+                <th data-sort="num" class="hd-apps-col-num" title="Distinct machines in the period">Machines</th>
+                <th data-sort="num" class="hd-apps-col-num" title="Time-weighted average concurrent instances">Avg open</th>
+                <th data-sort="num" class="hd-apps-col-num" title="Distinct process lifetimes (PID runs)">Runs</th>
+                <th data-sort="num" class="hd-apps-col-time" data-default-desc title="Wall-clock time with at least one instance open">Total time</th>
+                <th data-sort="date" class="hd-apps-col-seen">Last seen</th>
             </tr>
         </thead>
         <tbody>
         @if (Model.Apps.Count == 0)
         {
-            <tr><td colspan="6">No tracked application usage yet. Use <strong>Track Software</strong> or enable apps under Config.</td></tr>
+            <tr><td colspan="7">No tracked application usage yet. Use <strong>Track Software</strong> or enable apps under Config.</td></tr>
         }
         @foreach (var a in Model.Apps)
         {
+            var title = string.Equals(a.DisplayName, a.ProcessName, StringComparison.OrdinalIgnoreCase)
+                ? a.ProcessName
+                : $"{a.DisplayName} ({a.ProcessName})";
             <tr style="cursor:pointer" onclick="window.location='@Url.Page("/Application", new { process = a.ProcessName, range = Model.Range })'">
-                <td>
-                    <a asp-page="/Application" asp-route-process="@a.ProcessName" asp-route-range="@Model.Range" onclick="event.stopPropagation()">
-                        <strong>@a.DisplayName</strong>
-                    </a>
+                <td class="hd-apps-col-name" data-sort-value="@a.DisplayName" title="@title">
+                    <a class="hd-apps-name text-truncate d-inline-block"
+                       asp-page="/Application" asp-route-process="@a.ProcessName" asp-route-range="@Model.Range"
+                       onclick="event.stopPropagation()" title="@title">@a.DisplayName</a>
                     @if (!string.Equals(a.DisplayName, a.ProcessName, StringComparison.OrdinalIgnoreCase))
                     {
-                        <span class="text-secondary small">(@a.ProcessName)</span>
+                        <div class="hd-meta-line text-truncate" title="@a.ProcessName">@a.ProcessName</div>
                     }
                 </td>
-                <td>@a.UniqueUsers</td>
-                <td>@ConcurrentDisplay.Render(a.AvgConcurrentProcesses)</td>
-                <td>@a.RunCount</td>
-                <td>@DurationDisplay.Render(a.TotalDuration)</td>
-                <td>@a.LastSeenUtc.ToLocalTime().ToString("g")</td>
+                <td class="hd-apps-col-num" data-sort-value="@a.UniqueUsers">@a.UniqueUsers</td>
+                <td class="hd-apps-col-num" data-sort-value="@a.UniqueMachines">@a.UniqueMachines</td>
+                <td class="hd-apps-col-num" data-sort-value="@a.AvgConcurrentProcesses.ToString(System.Globalization.CultureInfo.InvariantCulture)">@ConcurrentDisplay.Render(a.AvgConcurrentProcesses)</td>
+                <td class="hd-apps-col-num" data-sort-value="@a.RunCount">@a.RunCount</td>
+                <td class="hd-apps-col-time" data-sort-value="@a.TotalDuration.TotalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)" title="@DurationDisplay.Render(a.TotalDuration)">@DurationDisplay.Render(a.TotalDuration)</td>
+                <td class="hd-apps-col-seen" data-sort-value="@a.LastSeenUtc.ToUnixTimeSeconds()" title="@a.LastSeenUtc.ToLocalTime().ToString("g")">@a.LastSeenUtc.ToLocalTime().ToString("g")</td>
             </tr>
         }
         </tbody>
     </table>
     <p class="text-secondary small mt-3 mb-0">
-        <strong>Total time</strong> is wall-clock time with at least one instance open (overlapping runs are not double-counted).
-        <strong>Avg # processes open</strong> is the time-weighted average concurrent instance count.
-        <strong>Runs</strong> counts distinct process lifetimes (one per PID).
+        <strong>Total time</strong> is wall-clock with at least one instance open (overlaps not double-counted).
+        <strong>Avg open</strong> is the time-weighted average concurrent instance count.
+        <strong>Runs</strong> counts distinct process lifetimes. Click a row for per-machine detail.
     </p>
 </div>

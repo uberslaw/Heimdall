@@ -87,6 +87,224 @@ public sealed class ProcessCatalogService(HeimdallDbContext db, ProcessGroupServ
         db.ProcessCatalogEntries.CountAsync(e => e.ExecutablePath == "" || e.ExecutablePath == null, ct);
 
     /// <summary>
+    /// Result of searching ProcessRuns / machine inventories / sibling catalog rows for blank ExecutablePath entries.
+    /// </summary>
+    public sealed record MissingPathResolveResult(
+        int Considered,
+        int Filled,
+        int Merged,
+        int Ambiguous,
+        int Unresolved,
+        IReadOnlyList<string> HostsNeedingInventory);
+
+    /// <summary>
+    /// Fill blank catalog ExecutablePath values by reusing paths already reported by agents
+    /// (ProcessRuns, DiscoveredInventoryJson) or present on another catalog row for the same process name.
+    /// Unambiguous (single canonical path) → fill or merge into an existing pathed row.
+    /// Multiple distinct paths → leave blank (Ambiguous). Returns hostnames that still need a fresh inventory.
+    /// </summary>
+    public async Task<MissingPathResolveResult> ResolveMissingPathsAsync(
+        IEnumerable<int>? catalogIds = null,
+        CancellationToken ct = default)
+    {
+        var idFilter = catalogIds?.ToHashSet();
+        var blankQuery = db.ProcessCatalogEntries.Where(e => e.ExecutablePath == "" || e.ExecutablePath == null);
+        if (idFilter is { Count: > 0 })
+            blankQuery = blankQuery.Where(e => idFilter.Contains(e.Id));
+
+        var blanks = await blankQuery.ToListAsync(ct);
+        if (blanks.Count == 0)
+            return new MissingPathResolveResult(0, 0, 0, 0, 0, []);
+
+        var names = blanks.Select(e => e.ProcessName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var pathIndex = await BuildReportedPathIndexAsync(names, ct);
+
+        var siblings = await db.ProcessCatalogEntries
+            .Where(e => names.Contains(e.ProcessName) && e.ExecutablePath != null && e.ExecutablePath != "")
+            .ToListAsync(ct);
+        var siblingsByName = siblings
+            .GroupBy(e => e.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+        var identityMap = BuildIdentityMap(await db.ProcessCatalogEntries
+            .Where(e => names.Contains(e.ProcessName))
+            .ToListAsync(ct));
+
+        var filled = 0;
+        var merged = 0;
+        var ambiguous = 0;
+        var unresolvedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var blank in blanks.ToList())
+        {
+            pathIndex.TryGetValue(blank.ProcessName, out var candidates);
+            candidates ??= [];
+
+            // Include sibling catalog paths as candidates (another row already has a location).
+            if (siblingsByName.TryGetValue(blank.ProcessName, out var sibs))
+            {
+                foreach (var s in sibs)
+                {
+                    if (ReferenceEquals(s, blank) || string.IsNullOrWhiteSpace(s.ExecutablePath))
+                        continue;
+                    candidates.Add(new ReportedPath(s.ExecutablePath.Trim(), s.LastSeenUtc, "catalog"));
+                }
+            }
+
+            var byCanonical = candidates
+                .Where(c => !string.IsNullOrWhiteSpace(c.Path))
+                .GroupBy(c => CatalogPathNormalizer.Normalize(c.Path), StringComparer.OrdinalIgnoreCase)
+                .Where(g => g.Key.Length > 0)
+                .ToList();
+
+            if (byCanonical.Count == 0)
+            {
+                foreach (var host in GetSeenHostnames(blank))
+                    unresolvedHosts.Add(host);
+                continue;
+            }
+
+            if (byCanonical.Count > 1)
+            {
+                ambiguous++;
+                foreach (var host in GetSeenHostnames(blank))
+                    unresolvedHosts.Add(host);
+                continue;
+            }
+
+            var best = byCanonical[0].OrderByDescending(c => c.SeenUtc).First();
+            var chosenPath = best.Path.Trim();
+            var newKey = IdentityKey(blank.ProcessName, chosenPath);
+
+            if (identityMap.TryGetValue(newKey, out var existing) && !ReferenceEquals(existing, blank))
+            {
+                if (MergeEntryInto(blank, existing))
+                {
+                    db.ProcessCatalogEntries.Remove(blank);
+                    identityMap.Remove(IdentityKey(blank.ProcessName, blank.ExecutablePath));
+                    merged++;
+                }
+                continue;
+            }
+
+            // Prefer merging into a sibling that shares the canonical path even if raw path differs slightly.
+            if (siblingsByName.TryGetValue(blank.ProcessName, out var pathSiblings))
+            {
+                var canon = CatalogPathNormalizer.Normalize(chosenPath);
+                var siblingMatch = pathSiblings
+                    .Where(s => !ReferenceEquals(s, blank)
+                                && string.Equals(CatalogPathNormalizer.Normalize(s.ExecutablePath), canon, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(s => s.LastSeenUtc)
+                    .FirstOrDefault();
+                if (siblingMatch is not null)
+                {
+                    if (MergeEntryInto(blank, siblingMatch))
+                    {
+                        db.ProcessCatalogEntries.Remove(blank);
+                        identityMap.Remove(IdentityKey(blank.ProcessName, ""));
+                        merged++;
+                    }
+                    continue;
+                }
+            }
+
+            var oldKey = IdentityKey(blank.ProcessName, blank.ExecutablePath);
+            identityMap.Remove(oldKey);
+            blank.ExecutablePath = chosenPath;
+            identityMap[newKey] = blank;
+            filled++;
+        }
+
+        if (filled + merged > 0)
+        {
+            var extraMerged = await MergeDuplicateCatalogEntriesAsync(ct);
+            merged += extraMerged;
+            await db.SaveChangesAsync(ct);
+        }
+
+        var stillBlank = await blankQuery.CountAsync(ct);
+        // Recompute unresolved hosts from remaining blanks when we filled some.
+        if (filled + merged > 0)
+        {
+            unresolvedHosts.Clear();
+            var remaining = await blankQuery.AsNoTracking().ToListAsync(ct);
+            foreach (var e in remaining)
+            {
+                pathIndex.TryGetValue(e.ProcessName, out var cands);
+                var hasAny = cands is { Count: > 0 } && cands.Any(c => !string.IsNullOrWhiteSpace(c.Path));
+                if (!hasAny || (cands!.GroupBy(c => CatalogPathNormalizer.Normalize(c.Path)).Count(g => g.Key.Length > 0) != 1))
+                {
+                    foreach (var host in GetSeenHostnames(e))
+                        unresolvedHosts.Add(host);
+                }
+            }
+        }
+
+        return new MissingPathResolveResult(
+            blanks.Count,
+            filled,
+            merged,
+            ambiguous,
+            stillBlank,
+            unresolvedHosts.OrderBy(h => h, StringComparer.OrdinalIgnoreCase).ToList());
+    }
+
+    private sealed record ReportedPath(string Path, DateTimeOffset SeenUtc, string Source);
+
+    private async Task<Dictionary<string, List<ReportedPath>>> BuildReportedPathIndexAsync(
+        IReadOnlyList<string> processNames,
+        CancellationToken ct)
+    {
+        var index = new Dictionary<string, List<ReportedPath>>(StringComparer.OrdinalIgnoreCase);
+        if (processNames.Count == 0)
+            return index;
+
+        void Add(string rawName, string? rawPath, DateTimeOffset seenUtc, string source)
+        {
+            var name = ConfigService.NormalizeProcessName(rawName);
+            if (name.Length == 0 || string.IsNullOrWhiteSpace(rawPath))
+                return;
+            if (!index.TryGetValue(name, out var list))
+            {
+                list = [];
+                index[name] = list;
+            }
+            list.Add(new ReportedPath(rawPath.Trim(), seenUtc, source));
+        }
+
+        var nameSet = processNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Load path-bearing runs and filter in memory so casing differences still match.
+        var runs = await db.ProcessRuns.AsNoTracking()
+            .Where(r => r.ExecutablePath != null && r.ExecutablePath != "")
+            .Select(r => new { r.ProcessName, r.ExecutablePath, r.LastSeenAtUtc })
+            .ToListAsync(ct);
+        foreach (var r in runs)
+        {
+            if (!nameSet.Contains(ConfigService.NormalizeProcessName(r.ProcessName)))
+                continue;
+            Add(r.ProcessName, r.ExecutablePath, r.LastSeenAtUtc, "process-run");
+        }
+
+        var machines = await db.Machines.AsNoTracking()
+            .Where(m => m.DiscoveredInventoryJson != null && m.DiscoveredInventoryJson != "")
+            .Select(m => new { m.DiscoveredInventoryJson, m.LastSeenUtc })
+            .ToListAsync(ct);
+        foreach (var m in machines)
+        {
+            var seen = m.LastSeenUtc == default ? DateTimeOffset.UtcNow : m.LastSeenUtc;
+            foreach (var snap in DeserializeInventorySnapshot(m.DiscoveredInventoryJson))
+            {
+                if (!nameSet.Contains(ConfigService.NormalizeProcessName(snap.ProcessName)))
+                    continue;
+                Add(snap.ProcessName, snap.ExecutablePath, seen, "inventory");
+            }
+        }
+
+        return index;
+    }
+
+    /// <summary>
     /// Upsert catalog rows from all historical discovery sources: ProcessRuns, machine inventory JSON,
     /// AppList entries, and ProcessGroupAssignments. Safe to run repeatedly (idempotent merge).
     /// </summary>
@@ -358,7 +576,11 @@ public sealed class ProcessCatalogService(HeimdallDbContext db, ProcessGroupServ
     public Task<List<ProcessCatalogEntry>> GetAllAsync(CancellationToken ct = default) =>
         db.ProcessCatalogEntries.AsNoTracking().OrderBy(e => e.ProcessName).ThenBy(e => e.ExecutablePath).ToListAsync(ct);
 
-    /// <summary>Apply Description/Category/Subcategory/DisplayName from a classification CSV import onto matching catalog rows.</summary>
+    /// <summary>
+    /// Apply Description/Category/Subcategory/DisplayName/SuggestedGroup from a classification CSV import
+    /// onto matching catalog rows. Uses the same identity resolution as Upsert (exact → canonical → blank-path),
+    /// and when the CSV path is empty, updates every catalog row for that process name.
+    /// </summary>
     public async Task<int> ApplyImportMetadataAsync(IEnumerable<ProcessGroupService.CsvImportedRow> rows, CancellationToken ct = default)
     {
         var list = rows.ToList();
@@ -367,44 +589,99 @@ public sealed class ProcessCatalogService(HeimdallDbContext db, ProcessGroupServ
 
         var names = list.Select(r => r.ProcessName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var entries = await db.ProcessCatalogEntries.Where(e => names.Contains(e.ProcessName)).ToListAsync(ct);
+        var byName = entries
+            .GroupBy(e => e.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
         var identityMap = BuildIdentityMap(entries);
+        var canonicalMap = BuildCanonicalMap(entries);
         var updated = 0;
 
         foreach (var row in list)
         {
-            var key = IdentityKey(row.ProcessName, row.ExecutablePath);
-            if (!identityMap.TryGetValue(key, out var entry))
+            if (!byName.TryGetValue(row.ProcessName, out var existingForNames) || existingForNames.Count == 0)
                 continue;
 
-            var changed = false;
-            if (row.DisplayName is not null && !string.Equals(entry.DisplayName, row.DisplayName, StringComparison.Ordinal))
+            var item = new CatalogItem(row.ProcessName, row.ExecutablePath, row.DisplayName);
+            var resolved = ResolveExistingRow(item, existingForNames, identityMap, canonicalMap);
+
+            List<ProcessCatalogEntry> targets;
+            if (string.IsNullOrWhiteSpace(row.ExecutablePath))
             {
-                entry.DisplayName = row.DisplayName;
-                changed = true;
+                // Name-only CSV rows: stamp metadata onto every path variant of that process.
+                targets = existingForNames;
             }
-            if (!string.Equals(entry.Description, row.Description, StringComparison.Ordinal))
+            else if (resolved is not null)
             {
-                entry.Description = row.Description;
-                changed = true;
+                targets = [resolved];
             }
-            if (!string.Equals(entry.Category, row.Category, StringComparison.Ordinal))
+            else
             {
-                entry.Category = row.Category;
-                changed = true;
+                // Path in CSV didn't resolve (e.g. DriverStore hash skew before canonical match) —
+                // still apply classification metadata to every catalog row for that process name.
+                targets = existingForNames;
             }
-            if (!string.Equals(entry.Subcategory, row.Subcategory, StringComparison.Ordinal))
+
+            foreach (var entry in targets)
             {
-                entry.Subcategory = row.Subcategory;
-                changed = true;
+                var changed = false;
+                if (row.DisplayName is not null && !string.Equals(entry.DisplayName, row.DisplayName, StringComparison.Ordinal))
+                {
+                    entry.DisplayName = row.DisplayName;
+                    changed = true;
+                }
+                if (row.Description is not null && !string.Equals(entry.Description, row.Description, StringComparison.Ordinal))
+                {
+                    entry.Description = row.Description;
+                    changed = true;
+                }
+                if (row.Category is not null && !string.Equals(entry.Category, row.Category, StringComparison.Ordinal))
+                {
+                    entry.Category = row.Category;
+                    changed = true;
+                }
+                if (row.Subcategory is not null && !string.Equals(entry.Subcategory, row.Subcategory, StringComparison.Ordinal))
+                {
+                    entry.Subcategory = row.Subcategory;
+                    changed = true;
+                }
+                if (row.Group is not null && entry.SuggestedGroup != row.Group)
+                {
+                    entry.SuggestedGroup = row.Group;
+                    entry.SuggestionReason = "Imported classification CSV";
+                    changed = true;
+                }
+                if (changed)
+                    updated++;
             }
-            if (changed)
-                updated++;
         }
 
         if (updated > 0)
             await db.SaveChangesAsync(ct);
 
         return updated;
+    }
+
+    /// <summary>Clear pending suggestions after a human Approve/Set.</summary>
+    public async Task ClearSuggestionsAsync(IEnumerable<string> processNames, CancellationToken ct = default)
+    {
+        var names = processNames
+            .Select(ConfigService.NormalizeProcessName)
+            .Where(n => n.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (names.Count == 0) return;
+
+        var entries = await db.ProcessCatalogEntries
+            .Where(e => names.Contains(e.ProcessName) && (e.SuggestedGroup != null || e.SuggestionReason != null))
+            .ToListAsync(ct);
+        if (entries.Count == 0) return;
+
+        foreach (var e in entries)
+        {
+            e.SuggestedGroup = null;
+            e.SuggestionReason = null;
+        }
+        await db.SaveChangesAsync(ct);
     }
 
     private sealed record DiscoveryKeySets(
