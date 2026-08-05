@@ -1,0 +1,42 @@
+! ---------------------------------------------------------------------------
+! Restart / resume wiring for graceful-stop-and-resume runs launched via
+! TuflowLauncher (see ../TuflowLauncher/Program.cs) and Heimdall's TUFLOW
+! Runs page. Drop this block into your .tcf and adjust paths. Pass "RESUME"
+! as one of TuflowStartRequestDto.Scenarios when queuing a start that should
+! pick up from a checkpoint instead of starting cold.
+!
+! Background (TUFLOW manual 2025.2, Section 8.8.3 "Restart Files"):
+!   Write Restart File Interval / Write Restart File at Time control WHEN
+!   checkpoints are written during the run (independent of resuming).
+!   Read Restart File controls what a *resumed* run reads back in.
+!   Write Restart Filename == INCLUDE TIME (the default) time-stamps each
+!   restart file rather than overwriting one; TuflowLauncher's checkpoint
+!   watcher picks up whichever .trf/.erf file has the newest write time,
+!   which is what makes "resume from latest checkpoint" possible without
+!   tracking filenames by hand. Do not switch this to OVERWRITE unless you
+!   specifically want only the single most recent checkpoint to ever exist.
+! ---------------------------------------------------------------------------
+
+! Always write checkpoints periodically so a graceful stop never loses more
+! than this interval of progress. Smaller interval = less lost work per
+! stop, more disk I/O / runtime overhead — tune to your run length.
+Write Restart File Interval == 1  ! hours
+
+! Restart File Version 2 is required for TUFLOW HPC; harmless for Classic.
+Write Restart File Version == 2
+
+If Scenario == RESUME
+    ! Point this at the actual restart file produced by the run being
+    ! resumed. TuflowLauncher reports the newest file it saw as
+    ! LastCheckpointFile in status.json / TuflowRunStatusDto — read that off
+    ! Heimdall's TUFLOW Runs page before queuing the resume and paste the
+    ! filename in here. See resume.trd.example.txt for a way to avoid
+    ! hand-editing this file every time.
+    Read Restart File == ..\results\trf\<paste-latest-.trf-filename-here>.trf
+
+    ! Optional: trust the restart file's geometry snapshot instead of
+    ! re-reading the current .tgc. Only one of "HPC Restart Geometry" or
+    ! "Restart File Ignore Fields" may be present in a control file — using
+    ! both is an error per the manual. Leave commented unless you need it.
+    ! HPC Restart Geometry == Restart File
+End If

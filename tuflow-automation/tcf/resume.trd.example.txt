@@ -1,0 +1,13 @@
+! resume.trd — an alternative to editing the .tcf directly on every resume.
+!
+! In the main .tcf:
+!     If Scenario == RESUME
+!         Read File == resume.trd
+!     End If
+!
+! Then only this small file needs regenerating per resume attempt (by hand,
+! or by a future Heimdall enhancement that writes it automatically from the
+! TuflowRunStatusDto.LastCheckpointFile value reported by TuflowLauncher),
+! rather than touching the version-controlled main .tcf each time.
+
+Read Restart File == ..\results\trf\EG16_~s1~_002_20260805-1830.trf

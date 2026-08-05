@@ -1,0 +1,93 @@
+@*
+    NEW FILE — drop in as-is at: Heimdall.Api/Pages/FleetSimProgress.cshtml
+
+    Uses the same confirmed-real CSS classes as the Machine.cshtml TUFLOW panel patch (hd-panel,
+    hd-section-title, hd-table, table-responsive, badge-pill, text-secondary small) rather than the
+    guessed Bootstrap-ish classes the standalone TuflowRuns.cshtml skeleton used — see that file's own
+    header comment for the same caveat if you haven't restyled it yet.
+
+    One row per currently-active TUFLOW run across every Flood-enrolled machine — see
+    FleetSimProgressModel / TuflowRunService.GetFleetProgressAsync for exactly what "active" means and
+    how each figure is computed.
+*@
+@page
+@model Heimdall.Api.Pages.FleetSimProgressModel
+@{
+    ViewData["Title"] = "Fleet Sim Progress";
+}
+
+<p class="text-secondary small"><a asp-page="/TuflowRuns">← TUFLOW Runs</a> (start/stop, licence usage)</p>
+
+<div class="hd-panel mb-3">
+    <h2 class="hd-section-title">Fleet Sim Progress</h2>
+
+    @if (Model.Rows.Count == 0)
+    {
+        <p class="text-secondary mb-0">No TUFLOW runs are currently active on any Flood-enrolled machine. Start one from the TUFLOW Runs page.</p>
+    }
+    else
+    {
+        <p class="text-secondary small mb-3">
+            @Model.Rows.Count active run@(Model.Rows.Count == 1 ? "" : "s"). GPU/CPU/Disk averages are per
+            run since it started (using the TUFLOW process's own resource figures, sampled every 30s) —
+            <em>not</em> a rolling 5-minute window. Network has no per-process figure available, so it's
+            shown as the whole-machine total only.
+        </p>
+
+        <div class="table-responsive">
+            <table class="hd-table mb-0">
+                <thead>
+                    <tr>
+                        <th rowspan="2">Run</th>
+                        <th rowspan="2">Machine</th>
+                        <th rowspan="2">Started by</th>
+                        <th rowspan="2">State</th>
+                        <th rowspan="2">Progress</th>
+                        <th rowspan="2">Elapsed</th>
+                        <th rowspan="2">Est. remaining</th>
+                        <th colspan="4" class="text-secondary small">TUFLOW process (avg)</th>
+                        <th colspan="6" class="text-secondary small">Whole machine (avg)</th>
+                        <th rowspan="2">Samples</th>
+                    </tr>
+                    <tr>
+                        <th class="text-secondary small">CPU</th>
+                        <th class="text-secondary small">GPU</th>
+                        <th class="text-secondary small">Disk R</th>
+                        <th class="text-secondary small">Disk W</th>
+                        <th class="text-secondary small">CPU</th>
+                        <th class="text-secondary small">GPU</th>
+                        <th class="text-secondary small">Disk R</th>
+                        <th class="text-secondary small">Disk W</th>
+                        <th class="text-secondary small">Net in</th>
+                        <th class="text-secondary small">Net out</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var row in Model.Rows)
+                {
+                    <tr>
+                        <td>@row.RunName</td>
+                        <td>@(row.FriendlyName ?? row.Hostname)</td>
+                        <td class="text-secondary small">@(row.RequestedBy ?? "—")</td>
+                        <td><span class="badge-pill @FleetSimProgressModel.RunStateBadgeClass(row.State)">@row.State</span></td>
+                        <td>@(row.PercentComplete is double pct ? $"{pct:0.#}%" : "—")</td>
+                        <td>@FleetSimProgressModel.FormatSpan(row.Elapsed)</td>
+                        <td>@FleetSimProgressModel.FormatHours(row.EstRemainingHours)</td>
+                        <td class="text-secondary small">@FleetSimProgressModel.FormatPercent(row.ProcessCpuPercentAvg)</td>
+                        <td class="text-secondary small">@FleetSimProgressModel.FormatPercent(row.ProcessGpuPercentAvg)</td>
+                        <td class="text-secondary small">@FleetSimProgressModel.FormatRate(row.ProcessDiskReadMBpsAvg)</td>
+                        <td class="text-secondary small">@FleetSimProgressModel.FormatRate(row.ProcessDiskWriteMBpsAvg)</td>
+                        <td class="text-secondary small">@FleetSimProgressModel.FormatPercent(row.MachineCpuPercentAvg)</td>
+                        <td class="text-secondary small">@FleetSimProgressModel.FormatPercent(row.MachineGpuPercentAvg)</td>
+                        <td class="text-secondary small">@FleetSimProgressModel.FormatRate(row.MachineDiskReadMBpsAvg)</td>
+                        <td class="text-secondary small">@FleetSimProgressModel.FormatRate(row.MachineDiskWriteMBpsAvg)</td>
+                        <td class="text-secondary small">@FleetSimProgressModel.FormatRate(row.MachineNetworkInMBpsAvg)</td>
+                        <td class="text-secondary small">@FleetSimProgressModel.FormatRate(row.MachineNetworkOutMBpsAvg)</td>
+                        <td class="text-secondary small">@row.SampleCount</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
