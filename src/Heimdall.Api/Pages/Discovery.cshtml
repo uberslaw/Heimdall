@@ -12,13 +12,10 @@
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
     <div>
         <h1 class="hd-title mb-1">Discovery &amp; Classification</h1>
-        <p class="hd-sub mb-0">
-            @Model.TotalCount in catalog
-            · <span class="@(Model.UnclassifiedCount > 0 ? "text-warning" : "text-secondary")">@Model.UnclassifiedCount awaiting classification</span>
-            @if (Model.PendingSuggestionCount > 0)
-            {
-                <span class="text-secondary"> · @Model.PendingSuggestionCount pending suggestion(s)</span>
-            }
+        <p class="hd-sub mb-0" id="discovery-stats">
+            <span id="discovery-total-count">@Model.TotalCount</span> in catalog
+            · <span id="discovery-unclassified-count" class="@(Model.UnclassifiedCount > 0 ? "text-warning" : "text-secondary")">@Model.UnclassifiedCount</span> awaiting classification
+            <span id="discovery-pending-wrap" class="text-secondary" style="@(Model.PendingSuggestionCount > 0 ? null : "display:none")"> · <span id="discovery-pending-count">@Model.PendingSuggestionCount</span> pending suggestion(s)</span>
             @if (Model.BlankPathCount > 0)
             {
                 <span class="text-secondary"> · @Model.BlankPathCount missing path — use <strong>Find missing paths</strong> below, or <a asp-page="/AppLists">Request Inventory</a> on App Lists</span>
@@ -94,6 +91,14 @@
                         Find missing paths (@Model.BlankPathCount)
                     </button>
                 }
+                @if (Model.PendingSuggestionCount > 0)
+                {
+                    <button type="button" class="hd-btn hd-btn-gold hd-btn-sm" id="discovery-approve-all-btn"
+                            title="Approve pending suggestions in small batches (keeps the API responsive)"
+                            data-pending="@Model.PendingSuggestionCount">
+                        Approve all (<span id="discovery-approve-all-count">@Model.PendingSuggestionCount</span>)
+                    </button>
+                }
                 <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="discovery-edit-btn">Edit</button>
                 <button type="submit" form="discovery-save-form" class="hd-btn hd-btn-silver hd-btn-sm" id="discovery-save-btn" disabled>Save</button>
                 <button type="button" class="hd-btn hd-btn-rose hd-btn-sm" id="discovery-discard-btn" disabled>Discard</button>
@@ -113,6 +118,19 @@
         <input type="hidden" name="sort" value="@sort" />
         <input type="hidden" name="dir" value="@dir" />
         <input type="hidden" name="requestInventory" value="true" />
+    </form>
+}
+
+@if (Model.PendingSuggestionCount > 0)
+{
+    <form method="post" asp-page-handler="ApproveAll" id="discovery-approve-all-form" class="d-none">
+        @Html.AntiForgeryToken()
+        <input type="hidden" name="hideIgnored" value="@Model.HideIgnored" />
+        <input type="hidden" name="blankPathOnly" value="@Model.BlankPathOnly" />
+        <input type="hidden" name="showClassified" value="@Model.ShowClassified" />
+        <input type="hidden" name="q" value="@Model.Q" />
+        <input type="hidden" name="sort" value="@sort" />
+        <input type="hidden" name="dir" value="@dir" />
     </form>
 }
 
@@ -243,7 +261,9 @@
                         data-name="@r.Name"
                         data-exe="@r.ExeName">
                         <td class="hd-discovery-location-cell" title="@locationTip">
-                            <input type="hidden" name="Edits[@i].Id" value="@r.Id" />
+                            @* disabled until Edit mode so accidental/action posts never include ~6 fields × N rows
+                               (ASP.NET FormOptions.ValueCountLimit → HTTP 400 once N ≳ 150). *@
+                            <input type="hidden" class="hd-discovery-save-field" name="Edits[@i].Id" value="@r.Id" disabled />
                             <div class="hd-discovery-exe">
                                 <code class="hd-discovery-name-display"
                                       data-field="name"
@@ -252,9 +272,9 @@
                                 <input class="form-control form-control-sm hd-discovery-name-input d-none"
                                        type="text" value="@r.Name" maxlength="200"
                                        data-id="@r.Id" data-original="@r.Name" aria-label="Process name" />
-                                <input class="form-control form-control-sm hd-discovery-edit d-none" type="text"
+                                <input class="form-control form-control-sm hd-discovery-edit hd-discovery-save-field d-none" type="text"
                                        name="Edits[@i].Name" value="@r.Name" maxlength="200"
-                                       data-original="@r.Name" data-field="name" />
+                                       data-original="@r.Name" data-field="name" disabled />
                             </div>
                             <div class="hd-meta-line hd-discovery-path">
                                 @if (string.IsNullOrWhiteSpace(r.Path))
@@ -281,10 +301,10 @@
                         <td class="hd-discovery-version-col" title="@versionFull">
                             <span class="hd-discovery-read hd-discovery-version-text"
                                   data-field="version">@versionFull</span>
-                            <input class="form-control form-control-sm hd-discovery-edit d-none hd-discovery-version-input" type="text"
+                            <input class="form-control form-control-sm hd-discovery-edit hd-discovery-save-field d-none hd-discovery-version-input" type="text"
                                    name="Edits[@i].Version" value="@r.ManualVersion"
                                    placeholder="@(r.VersionDisplay ?? "-")" maxlength="50"
-                                   data-original="@(r.ManualVersion ?? "")" data-field="version" />
+                                   data-original="@(r.ManualVersion ?? "")" data-field="version" disabled />
                         </td>
                         <td class="hd-discovery-cat-col" title="@(r.Category ?? "")">
                             @if (!r.Ignored)
@@ -318,9 +338,9 @@
                             {
                                 <span class="text-secondary">@(r.Category ?? "—")</span>
                             }
-                            <input class="form-control form-control-sm hd-discovery-edit d-none" type="text"
+                            <input class="form-control form-control-sm hd-discovery-edit hd-discovery-save-field d-none" type="text"
                                    name="Edits[@i].Category" value="@r.Category" maxlength="100"
-                                   data-original="@(r.Category ?? "")" data-field="category" />
+                                   data-original="@(r.Category ?? "")" data-field="category" disabled />
                         </td>
                         <td class="hd-discovery-subcat-col" title="@(r.Subcategory ?? "")">
                             @if (!r.Ignored)
@@ -354,9 +374,9 @@
                             {
                                 <span class="text-secondary">@(r.Subcategory ?? "—")</span>
                             }
-                            <input class="form-control form-control-sm hd-discovery-edit d-none" type="text"
+                            <input class="form-control form-control-sm hd-discovery-edit hd-discovery-save-field d-none" type="text"
                                    name="Edits[@i].Subcategory" value="@r.Subcategory" maxlength="100"
-                                   data-original="@(r.Subcategory ?? "")" data-field="subcategory" />
+                                   data-original="@(r.Subcategory ?? "")" data-field="subcategory" disabled />
                         </td>
                         <td class="hd-discovery-class-col">
                             @if (!r.Ignored)
@@ -411,12 +431,14 @@
                             else if (hasSuggestion)
                             {
                                 <button type="submit" form="@approveFormId"
-                                        class="hd-btn hd-btn-gold hd-btn-sm hd-discovery-action-btn"
+                                        class="hd-btn hd-btn-gold hd-btn-sm hd-discovery-action-btn hd-discovery-approve-btn"
+                                        data-approve-id="@r.Id"
                                         title="@(r.SuggestionReason ?? "Approve suggested group")">
                                     Approve
                                 </button>
                                 <button type="submit" form="@setFormId"
-                                        class="hd-btn hd-btn-silver hd-btn-sm hd-discovery-action-btn"
+                                        class="hd-btn hd-btn-silver hd-btn-sm hd-discovery-action-btn hd-discovery-set-btn"
+                                        data-set-id="@r.Id"
                                         title="Apply Classification dropdown (and current Category/Subcategory)">
                                     Set
                                 </button>
@@ -424,7 +446,8 @@
                             else
                             {
                                 <button type="submit" form="@setFormId"
-                                        class="hd-btn hd-btn-silver hd-btn-sm hd-discovery-action-btn"
+                                        class="hd-btn hd-btn-silver hd-btn-sm hd-discovery-action-btn hd-discovery-set-btn"
+                                        data-set-id="@r.Id"
                                         title="Apply Classification dropdown (and current Category/Subcategory)">
                                     Set
                                 </button>
@@ -444,10 +467,10 @@
                         data-has-description="@(hasDescription ? "true" : "false")">
                         <td colspan="@colCount" class="hd-discovery-desc-cell">
                             <span class="hd-discovery-read hd-meta-line" data-field="description">@(r.Description ?? "")</span>
-                            <textarea class="form-control form-control-sm hd-discovery-edit d-none" rows="2"
+                            <textarea class="form-control form-control-sm hd-discovery-edit hd-discovery-save-field d-none" rows="2"
                                       name="Edits[@i].Description" maxlength="2000"
                                       data-original="@(r.Description ?? "")" data-field="description"
-                                      placeholder="Description">@r.Description</textarea>
+                                      placeholder="Description" disabled>@r.Description</textarea>
                         </td>
                     </tr>
                 }
@@ -516,8 +539,9 @@
     }
 
     <p class="text-secondary small mt-3 mb-0">
-        Default list is unclassified apps plus pending suggestions. <strong>Approve</strong> commits an import/AI suggestion;
-        pick <strong>Classification</strong>, <strong>Category</strong>, and <strong>Subcategory</strong>, then click <strong>Set</strong> to apply all three.
+        Default list is unclassified apps plus pending suggestions. <strong>Approve</strong> commits one import/AI suggestion;
+        <strong>Approve all</strong> commits pending suggestions in small batches (API stays responsive).
+        Pick <strong>Classification</strong>, <strong>Category</strong>, and <strong>Subcategory</strong>, then click <strong>Set</strong> to apply all three.
         Double-click a name to rename. <strong>Installs</strong> is machines that reported the process (hover for hosts).
         <strong>Find missing paths</strong> reuses agent-reported paths from samples/inventories (and can request inventory where still unknown).
         Drag column borders to resize (saved for this browser session).
@@ -605,6 +629,8 @@
 
     table.querySelectorAll('.hd-discovery-read').forEach(el => el.classList.toggle('d-none', on));
     table.querySelectorAll('.hd-discovery-edit').forEach(el => el.classList.toggle('d-none', !on));
+    // SaveAll fields stay disabled until Edit so Approve/Set/FindPath never post ~6×N values (HTTP 400).
+    table.querySelectorAll('.hd-discovery-save-field').forEach(el => { el.disabled = !on; });
     // During Edit, free-text Category/Subcategory inputs replace the Set dropdowns.
     table.querySelectorAll('.hd-discovery-tax-select').forEach(el => el.classList.toggle('d-none', on));
     syncDescriptionVisibility();
@@ -618,6 +644,11 @@
     });
     setEditing(false);
     saveBtn.disabled = true;
+  });
+
+  saveForm?.addEventListener('submit', () => {
+    // Belt-and-suspenders: disabled fields are omitted from POST.
+    table?.querySelectorAll('.hd-discovery-save-field').forEach(el => { el.disabled = false; });
   });
 
   saveForm?.querySelectorAll('.hd-discovery-edit').forEach(el => {
@@ -696,6 +727,299 @@
       inputEl.value = inputEl.dataset.original || displayEl.textContent;
     }
   }
+
+  function showToast(text, kind) {
+    const region = document.getElementById('hd-toast-region');
+    if (!region) return;
+    const toast = document.createElement('div');
+    toast.className = `hd-toast hd-toast-${kind === 'error' ? 'error' : 'success'}`;
+    toast.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+    toast.dataset.autodismiss = '5000';
+    toast.innerHTML = `<span></span><button type="button" class="hd-toast-close" aria-label="Dismiss">&times;</button>`;
+    toast.querySelector('span').textContent = text;
+    region.appendChild(toast);
+    const dismiss = () => {
+      toast.classList.add('hd-toast-hide');
+      setTimeout(() => toast.remove(), 300);
+    };
+    const timer = setTimeout(dismiss, 5000);
+    toast.querySelector('.hd-toast-close')?.addEventListener('click', () => { clearTimeout(timer); dismiss(); });
+  }
+
+  function updateDiscoveryCounts(pending, unclassified) {
+    const pendingEl = document.getElementById('discovery-pending-count');
+    const pendingWrap = document.getElementById('discovery-pending-wrap');
+    const unclassifiedEl = document.getElementById('discovery-unclassified-count');
+    const approveAllBtn = document.getElementById('discovery-approve-all-btn');
+    const approveAllCount = document.getElementById('discovery-approve-all-count');
+    if (typeof pending === 'number') {
+      if (pendingEl) pendingEl.textContent = String(pending);
+      if (pendingWrap) pendingWrap.style.display = pending > 0 ? '' : 'none';
+      if (approveAllCount) approveAllCount.textContent = String(pending);
+      if (approveAllBtn) {
+        if (pending <= 0) approveAllBtn.remove();
+        else {
+          approveAllBtn.dataset.pending = String(pending);
+          const label = approveAllBtn.querySelector('#discovery-approve-all-count');
+          if (label) label.textContent = String(pending);
+        }
+      }
+      const approveAllForm = document.getElementById('discovery-approve-all-form');
+      if (approveAllForm && pending <= 0) approveAllForm.remove();
+    }
+    if (typeof unclassified === 'number' && unclassifiedEl) {
+      unclassifiedEl.textContent = String(unclassified);
+      unclassifiedEl.classList.toggle('text-warning', unclassified > 0);
+      unclassifiedEl.classList.toggle('text-secondary', unclassified <= 0);
+    }
+  }
+
+  function applyRowActionResult(id, data, form) {
+    const row = table?.querySelector(`tr.hd-discovery-main[data-discovery-id="${id}"]`);
+    const desc = descRowFor(id);
+    if (data.removeRow) {
+      row?.remove();
+      desc?.remove();
+      form?.remove();
+      document.getElementById(`discovery-set-${id}`)?.remove();
+      document.getElementById(`discovery-approve-${id}`)?.remove();
+      if (table && !table.querySelector('tbody tr.hd-discovery-main')) {
+        const tbody = table.querySelector('tbody');
+        if (tbody) {
+          const empty = document.createElement('tr');
+          empty.innerHTML = '<td colspan="@colCount">No unclassified applications. Pending suggestions stay visible here until Approve or Set. Tick Show classified to browse the full catalog.</td>';
+          tbody.appendChild(empty);
+        }
+      }
+    } else if (row) {
+      row.querySelector('.badge-pill.badge-group-specialization')?.remove();
+      row.querySelector('.hd-discovery-approve-btn')?.remove();
+      document.getElementById(`discovery-approve-${id}`)?.remove();
+      if (data.groupLabel && data.group) {
+        const sel = row.querySelector('.hd-discovery-group-select');
+        if (sel) sel.value = data.group;
+      }
+      if ('category' in data) {
+        const cat = row.querySelector('.hd-discovery-tax-select[data-field="category"]');
+        if (cat) cat.value = data.category || '';
+      }
+      if ('subcategory' in data) {
+        const sub = row.querySelector('.hd-discovery-tax-select[data-field="subcategory"]');
+        if (sub) sub.value = data.subcategory || '';
+      }
+    }
+    updateDiscoveryCounts(data.pendingSuggestionCount, data.unclassifiedCount);
+    if (data.message) showToast(data.message, 'success');
+  }
+
+  function antiforgeryToken(form) {
+    return form?.querySelector('input[name="__RequestVerificationToken"]')?.value
+      || document.querySelector('input[name="__RequestVerificationToken"]')?.value
+      || '';
+  }
+
+  // Approve all via AJAX batches — never one giant POST that can lock SQLite / drop the listener.
+  document.getElementById('discovery-approve-all-btn')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+    const pending = Number(btn.dataset.pending || document.getElementById('discovery-approve-all-count')?.textContent || '0');
+    if (pending <= 0) return;
+    if (!confirm(`Approve all ${pending} pending suggestion(s) in batches?`)) return;
+
+    const form = document.getElementById('discovery-approve-all-form');
+    const token = antiforgeryToken(form);
+    const showClassified = /^(true|1)$/i.test(String(form?.querySelector('[name="showClassified"]')?.value || ''));
+    btn.disabled = true;
+    let totalApproved = 0;
+    const batchSize = 40;
+
+    const setBusyLabel = (text) => {
+      btn.textContent = text;
+    };
+
+    try {
+      for (;;) {
+        const body = new URLSearchParams();
+        body.set('take', String(batchSize));
+        body.set('ajax', '1');
+        for (const name of ['hideIgnored', 'blankPathOnly', 'showClassified', 'q', 'sort', 'dir']) {
+          const el = form?.querySelector(`[name="${name}"]`);
+          if (el) body.set(name, el.value);
+        }
+        if (token) body.set('__RequestVerificationToken', token);
+
+        setBusyLabel(totalApproved === 0
+          ? 'Approving…'
+          : `Approving… ${totalApproved} done`);
+
+        const res = await fetch('?handler=ApproveAll', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'RequestVerificationToken': token,
+            'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json'
+          },
+          body
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) throw new Error(data.error || `Approve-all batch failed (HTTP ${res.status})`);
+
+        totalApproved += Number(data.approved || 0);
+        const ids = Array.isArray(data.approvedIds) ? data.approvedIds : [];
+        for (const id of ids) {
+          applyRowActionResult(id, {
+            removeRow: !showClassified,
+            pendingSuggestionCount: data.pendingSuggestionCount,
+            unclassifiedCount: data.unclassifiedCount
+          }, document.getElementById(`discovery-approve-${id}`));
+        }
+        updateDiscoveryCounts(data.pendingSuggestionCount, data.unclassifiedCount);
+
+        const remaining = Number(data.remaining ?? data.pendingSuggestionCount ?? 0);
+        if (remaining > 0) {
+          setBusyLabel(`Approving… ${totalApproved} done, ${remaining} left`);
+        }
+
+        if (data.done || remaining <= 0) {
+          showToast(
+            totalApproved === 0
+              ? (data.message || 'No pending suggestions to approve.')
+              : (totalApproved === 1 ? 'Approved 1 pending suggestion.' : `Approved ${totalApproved} pending suggestions.`),
+            'success'
+          );
+          break;
+        }
+      }
+    } catch (err) {
+      const left = Number(document.getElementById('discovery-approve-all-count')?.textContent || '0');
+      btn.disabled = false;
+      btn.innerHTML = `Approve all (<span id="discovery-approve-all-count">${left}</span>)`;
+      btn.dataset.pending = String(left);
+      showToast(err.message || 'Approve all failed — try again (progress is saved).', 'error');
+      return;
+    }
+
+    const left = Number(document.getElementById('discovery-approve-all-count')?.textContent || '0');
+    if (left <= 0) {
+      btn.remove();
+      form?.remove();
+    } else {
+      btn.disabled = false;
+      btn.innerHTML = `Approve all (<span id="discovery-approve-all-count">${left}</span>)`;
+      btn.dataset.pending = String(left);
+    }
+  });
+
+  // Single Approve via AJAX — avoids full Discovery reload (backfill + catalog + ~400-row HTML).
+  document.querySelectorAll('.hd-discovery-approve-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      if (btn.disabled) return;
+      const id = btn.dataset.approveId;
+      const form = id ? document.getElementById(`discovery-approve-${id}`) : null;
+      if (!form || !id) return;
+
+      const token = antiforgeryToken(form);
+      const body = new URLSearchParams();
+      body.set('id', id);
+      body.set('ajax', '1');
+      for (const name of ['hideIgnored', 'blankPathOnly', 'showClassified', 'q', 'sort', 'dir']) {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) body.set(name, el.value);
+      }
+      if (token) body.set('__RequestVerificationToken', token);
+
+      btn.disabled = true;
+      try {
+        const res = await fetch('?handler=Approve', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'RequestVerificationToken': token,
+            'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json'
+          },
+          body
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Approve failed');
+        applyRowActionResult(id, data, form);
+      } catch (err) {
+        btn.disabled = false;
+        showToast(err.message || 'Could not approve', 'error');
+      }
+    });
+  });
+
+  // Set via AJAX — same snappy path as Approve.
+  document.querySelectorAll('.hd-discovery-set-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      if (btn.disabled) return;
+      const id = btn.dataset.setId;
+      const form = id ? document.getElementById(`discovery-set-${id}`) : null;
+      const row = table?.querySelector(`tr.hd-discovery-main[data-discovery-id="${id}"]`);
+      if (!form || !id || !row) return;
+
+      // Mirror Edit-mode free-text Category/Subcategory into the Set selects (same as form submit hook).
+      if (editing) {
+        const catInput = row.querySelector('.hd-discovery-edit[data-field="category"]');
+        const subInput = row.querySelector('.hd-discovery-edit[data-field="subcategory"]');
+        const catSelect = row.querySelector('.hd-discovery-tax-select[data-field="category"]');
+        const subSelect = row.querySelector('.hd-discovery-tax-select[data-field="subcategory"]');
+        if (catSelect && catInput) {
+          const v = catInput.value || '';
+          if (v && ![...catSelect.options].some(o => o.value === v)) {
+            catSelect.add(new Option(v, v, true, true));
+          }
+          catSelect.value = v;
+        }
+        if (subSelect && subInput) {
+          const v = subInput.value || '';
+          if (v && ![...subSelect.options].some(o => o.value === v)) {
+            subSelect.add(new Option(v, v, true, true));
+          }
+          subSelect.value = v;
+        }
+      }
+
+      const token = antiforgeryToken(form);
+      const body = new URLSearchParams();
+      body.set('id', id);
+      body.set('ajax', '1');
+      body.set('group', row.querySelector('.hd-discovery-group-select')?.value || 'Specialization');
+      body.set('category', row.querySelector('.hd-discovery-tax-select[data-field="category"]')?.value || '');
+      body.set('subcategory', row.querySelector('.hd-discovery-tax-select[data-field="subcategory"]')?.value || '');
+      for (const name of ['hideIgnored', 'blankPathOnly', 'showClassified', 'q', 'sort', 'dir']) {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) body.set(name, el.value);
+      }
+      if (token) body.set('__RequestVerificationToken', token);
+
+      btn.disabled = true;
+      try {
+        const res = await fetch('?handler=Set', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'RequestVerificationToken': token,
+            'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json'
+          },
+          body
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Set failed');
+        applyRowActionResult(id, data, form);
+        btn.disabled = false;
+      } catch (err) {
+        btn.disabled = false;
+        showToast(err.message || 'Could not set classification', 'error');
+      }
+    });
+  });
 
   table?.querySelectorAll('.hd-discovery-name-display').forEach(display => {
     const row = display.closest('tr');

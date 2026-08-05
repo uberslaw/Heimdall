@@ -34,13 +34,25 @@ public class AppsModel(HeimdallDbContext db) : PageModel
         var fromUtc = DateTimeOffset.UtcNow.AddDays(-days);
         var toUtc = DateTimeOffset.UtcNow;
         // SQLite EF DateTimeOffset filters are unreliable; filter in memory for POC.
-        var runs = (await db.ProcessRuns.AsNoTracking().ToListAsync())
+        // Only columns needed for metrics — exclude unused navigation/payload fields from materialization.
+        var runs = (await db.ProcessRuns.AsNoTracking()
+                .Select(r => new ProcessRun
+                {
+                    ProcessName = r.ProcessName,
+                    MachineId = r.MachineId,
+                    Username = r.Username,
+                    StartedAtUtc = r.StartedAtUtc,
+                    EndedAtUtc = r.EndedAtUtc,
+                    LastSeenAtUtc = r.LastSeenAtUtc,
+                    ExternalRunId = r.ExternalRunId
+                })
+                .ToListAsync())
             .Where(r => r.StartedAtUtc < toUtc
                         && (r.EndedAtUtc ?? r.LastSeenAtUtc) >= fromUtc)
             .ToList();
 
-        var known = await db.KnownApps.AsNoTracking().ToListAsync();
-        var displayNames = known.ToDictionary(a => a.ProcessName, a => a.DisplayName, StringComparer.OrdinalIgnoreCase);
+        var displayNames = await db.KnownApps.AsNoTracking()
+            .ToDictionaryAsync(a => a.ProcessName, a => a.DisplayName, StringComparer.OrdinalIgnoreCase);
 
         Apps = runs
             .GroupBy(r => r.ProcessName, StringComparer.OrdinalIgnoreCase)

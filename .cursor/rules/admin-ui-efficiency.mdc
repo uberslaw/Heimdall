@@ -1,0 +1,50 @@
+---
+description: Keep Heimdall admin Razor Pages snappy — small POSTs, AJAX row actions, no full rebuilds
+globs: src/Heimdall.Api/Pages/**/*.{cshtml,cs}
+alwaysApply: false
+---
+
+# Admin UI efficiency (Razor Pages)
+
+Intranet admin consoles must feel instant. Prefer partial updates over full page rebuilds.
+
+## Row / micro actions
+
+- Prefer **small dedicated POST forms** or **`fetch` + JSON** for single-row actions (Approve, Set, Ping, Probe, Enroll).
+- Do **not** put row actions inside a giant SaveAll form via `formaction` — that posts every field and hits `FormOptions.ValueCountLimit` (HTTP 400 once N ≳ 150).
+- Keep bulk-edit fields **`disabled` until Edit mode** so accidental submits omit them (see Discovery).
+- Match existing AJAX patterns: `X-Requested-With: XMLHttpRequest`, antiforgery token, `{ ok, message, … }` JSON; fall back to redirect for non-JS.
+
+```csharp
+// ✅ GOOD — tiny POST, optional AJAX
+public async Task<IActionResult> OnPostApproveAsync(int id) {
+    // mutate one row…
+    if (WantsAjax()) return new JsonResult(new { ok = true, id, removeRow = true, message });
+    TempData["SkipDiscoveryBackfill"] = "1";
+    return RedirectToPage(/* filters only */);
+}
+```
+
+## Expensive GETs after POSTs
+
+- After a micro-action, **do not** re-run catalog backfill, discovery-key scans, fleet aggregates, or full list HTML when a toast + one-row DOM update suffices.
+- Gate heavy work: skip with TempData flags, tab-scoped `LoadAsync`, or section/host query params.
+- Never auto-run `BackfillFromDiscoveriesAsync` (or similar full reprocess) on every GET — use an explicit operator button.
+
+## List-page query cost
+
+On Discovery, App Lists, Remote Machines, Enrollment / Historical Dashboard, Machines:
+
+- Ask: does this click need the **entire** catalog, all ProcessRuns, or period aggregates?
+- Avoid N+1 and “load all assignments to change one name”.
+- Prefer `AsNoTracking` for read paths; count/filter in SQL when lists grow.
+
+## Forms & ValueCountLimit
+
+- Program raises `FormOptions.ValueCountLimit`, but still design so row actions stay **O(1) fields**, not O(rows).
+- Bulk Save is OK as a deliberate Edit → Save flow; do not reuse it for Approve/Set/Ping.
+
+## UX bar
+
+- Single Approve / Set / Ping / Test RDP should feel **sub-second** on the same machine as the API.
+- Bulk ops: Prefer **AJAX batches** for Approve all (chunk size ~40). Full reload is OK for Save all / Import CSV.

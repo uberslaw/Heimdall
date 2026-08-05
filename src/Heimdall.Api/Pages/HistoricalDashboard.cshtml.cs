@@ -70,8 +70,13 @@ public class HistoricalDashboardModel(FleetDashboardService fleet) : PageModel
         Tab = NormalizeTab(Tab);
         Enrolled = await fleet.ListEnrolledAsync(ct);
 
-        if (!string.IsNullOrWhiteSpace(Q))
-            SearchHits = await fleet.SearchMachinesAsync(Q, 25, ct);
+        // Enroll/Unenroll used to rebuild live fleet + historical aggregates on every POST redirect.
+        if (Tab == "enroll")
+        {
+            if (!string.IsNullOrWhiteSpace(Q))
+                SearchHits = await fleet.SearchMachinesAsync(Q, 25, ct);
+            return;
+        }
 
         LiveRows = await fleet.GetLiveFleetAsync(ct);
         if (!string.Equals(StatusFilter, "all", StringComparison.OrdinalIgnoreCase))
@@ -87,6 +92,15 @@ public class HistoricalDashboardModel(FleetDashboardService fleet) : PageModel
                 r.Hostname.Contains(q, StringComparison.OrdinalIgnoreCase)
                 || (r.Username?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
                 || (r.LastIp?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
+        }
+
+        MachinesActiveToday = LiveRows.Count(r => r.TodayActiveHours > 0.01 || r.Status == FleetDashboardService.FleetStatus.Active);
+
+        // Live tab does not need period aggregates.
+        if (Tab == "live")
+        {
+            AvgActiveRuntimePerMachine = 0;
+            return;
         }
 
         IsAveragesMode = string.Equals(HistMode, "averages", StringComparison.OrdinalIgnoreCase);
@@ -111,7 +125,6 @@ public class HistoricalDashboardModel(FleetDashboardService fleet) : PageModel
         TopDisk = ranked.OrderByDescending(p => p.Metrics.DiskReadGb + p.Metrics.DiskWriteGb).Take(5).ToList();
         TopActive = ranked.OrderByDescending(p => p.Metrics.ActiveRuntimeHours).Take(5).ToList();
 
-        MachinesActiveToday = LiveRows.Count(r => r.TodayActiveHours > 0.01 || r.Status == FleetDashboardService.FleetStatus.Active);
         AvgActiveRuntimePerMachine = Enrolled.Count == 0
             ? 0
             : Summary.ActiveRuntimeHours / Enrolled.Count;

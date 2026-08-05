@@ -162,11 +162,13 @@ public class TrackSoftwareModel(HeimdallDbContext db, ConfigService config, Proc
 
         var knownNames = new HashSet<string>(KnownApps.Select(a => a.ProcessName), StringComparer.OrdinalIgnoreCase);
         var ctx = await processGroups.BuildContextAsync(HttpContext.RequestAborted);
-        var runs = await db.ProcessRuns.AsNoTracking()
-            .Select(r => new { r.ProcessName, r.ExecutablePath })
+        // Prefer catalog over raw ProcessRuns — one row per name+path, not every historical run.
+        var catalogRows = await db.ProcessCatalogEntries.AsNoTracking()
+            .Where(e => !e.Ignored)
+            .Select(e => new { e.ProcessName, e.ExecutablePath })
             .ToListAsync();
 
-        Discovered = runs
+        Discovered = catalogRows
             .GroupBy(r => r.ProcessName, StringComparer.OrdinalIgnoreCase)
             .Select(g =>
             {

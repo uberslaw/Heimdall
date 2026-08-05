@@ -1,0 +1,28 @@
+---
+description: Heimdall Razor Pages UI efficiency — small POSTs, skip expensive rebuilds, scoped queries
+globs: src/Heimdall.Api/Pages/**/*.{cshtml,cs}
+alwaysApply: false
+---
+
+# Heimdall web UI efficiency
+
+Cautionary example: **Discovery Approve** used to post every `Edits[*]` field via SaveAll (hit `FormOptions.ValueCountLimit` → HTTP 400), then redirect into a full GET that re-ran catalog backfill. Prefer the fixed pattern: tiny AJAX/handler POSTs, disable SaveAll fields until Edit, skip backfill after micro-actions.
+
+## Do
+
+- Prefer **small targeted POSTs** or `fetch` for row actions (Approve, Set, Move, SaveName) — send only `id` / selected names, not the whole table.
+- After a micro-action POST, **skip expensive work** on the following GET (TempData flags, `skipBackfill`, skip discovery-gap scans). AJAX that returns JSON should not rebuild the page at all.
+- Keep giant edit forms’ fields **`disabled` until Edit** so accidental/action posts omit them (ASP.NET default `FormOptions.ValueCountLimit` is 1024).
+- **Scope DB queries** to the rows being touched (`Where(names.Contains…)`, team members only) — never load full tables to update one item (`AssignGroups` / AssignMachines lessons).
+- On list pages, weigh **query cost** of status banners (discovery-key scans, full ProcessRuns loads). Show banners; don’t auto-run backfill/upsert on every GET.
+
+## Don’t
+
+- Nest row actions inside a SaveAll-sized form / `formaction` that posts the entire page.
+- Auto-`BackfillFromDiscoveriesAsync` (or equivalent full upsert) on every list GET “because something might be missing.”
+- Call `LoadAsync()` before a redirect-only POST success path.
+
+## Reference
+
+- Discovery: `OnPostApproveAsync` + AJAX / `SkipDiscoveryBackfill`
+- App Lists: explicit **Backfill Discovered**; skip discovery-gap scan on machine-focus GETs

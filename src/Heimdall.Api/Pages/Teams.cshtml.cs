@@ -215,8 +215,11 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
         }
 
         var selected = SelectedMachineIds.Distinct().ToHashSet();
-        var all = await db.Machines.ToListAsync();
-        foreach (var m in all)
+        // Only touch machines on this team or newly selected — avoid loading the full fleet.
+        var touched = await db.Machines
+            .Where(m => m.TeamId == AssignTeamId || selected.Contains(m.Id))
+            .ToListAsync();
+        foreach (var m in touched)
         {
             if (selected.Contains(m.Id))
                 m.TeamId = AssignTeamId;

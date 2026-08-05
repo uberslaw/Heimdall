@@ -66,9 +66,14 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
             return 0;
 
         var now = DateTimeOffset.UtcNow;
-        var existingAssignments = await db.ProcessGroupAssignments.ToListAsync(ct);
+        // Only touch rows for the names being assigned (single Approve used to load the full tables).
+        var existingAssignments = await db.ProcessGroupAssignments
+            .Where(a => names.Contains(a.ProcessName))
+            .ToListAsync(ct);
         var assignmentMap = existingAssignments.ToDictionary(a => a.ProcessName, StringComparer.OrdinalIgnoreCase);
-        var soeApps = await db.SoeApps.ToListAsync(ct);
+        var soeApps = await db.SoeApps
+            .Where(s => names.Contains(s.ProcessName))
+            .ToListAsync(ct);
         var soeMap = soeApps.ToDictionary(s => s.ProcessName, StringComparer.OrdinalIgnoreCase);
         var dirty = false;
 
@@ -123,9 +128,14 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
         if (dirty)
             await db.SaveChangesAsync(ct);
 
+        // Keep audit detail bounded — Approve-all can pass hundreds of names.
+        var label = ProcessClassification.GroupLabel(targetGroup);
+        var namePreview = names.Count <= 20
+            ? string.Join(", ", names)
+            : string.Join(", ", names.Take(15)) + $", … (+{names.Count - 15} more)";
         await AuditAsync(
             "group-assign",
-            $"Assigned {names.Count} process(es) to {ProcessClassification.GroupLabel(targetGroup)}: [{string.Join(", ", names)}]");
+            $"Assigned {names.Count} process(es) to {label}: [{namePreview}]");
 
         return names.Count;
     }

@@ -25,8 +25,10 @@ if (staffAccessOpts.RequireWindowsAuth)
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<HeimdallDbConnectionResolver>();
 builder.Services.AddRazorPages();
-// Discovery SaveAll posts Edits[*] for every visible row (6+ fields each). Default FormOptions.ValueCountLimit
-// is 1024 and returns HTTP 400 once the catalog grows past ~150 rows — raise for bulk page posts.
+// Discovery SaveAll posts Edits[*] for every visible row when editing (6+ fields each). Default
+// FormOptions.ValueCountLimit is 1024 and returns HTTP 400 once the catalog grows past ~150 rows.
+// Approve previously used formaction inside SaveAll and hit the same limit — keep this raised, and
+// keep per-row Approve/Set on small forms with edit fields disabled until Edit mode.
 builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
 {
     options.ValueCountLimit = 16_384;

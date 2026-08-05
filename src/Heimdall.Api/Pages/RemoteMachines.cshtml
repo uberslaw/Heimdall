@@ -130,7 +130,7 @@
                 <td class="hd-remote-ip">@(r.LastIp ?? "—")</td>
                 <td class="hd-remote-contact">@RemoteMachinesModel.FormatContact(r.LastSeenUtc)</td>
                 <td class="hd-cell-ping">
-                    <form method="post" asp-page-handler="Ping" class="hd-ping-form">
+                    <form method="post" asp-page-handler="Ping" class="hd-ping-form" data-handler="Ping">
                         <input type="hidden" name="hostname" value="@r.Hostname" />
                         <button type="submit" class="btn btn-ghost btn-sm">Ping</button>
                         @if (r.PingReachable is bool pingOk)
@@ -185,12 +185,12 @@
                         </svg>
                         <span>Connect</span>
                     </a>
-                    <form method="post" asp-page-handler="ProbeRdp" class="hd-action-form">
+                    <form method="post" asp-page-handler="ProbeRdp" class="hd-action-form" data-handler="ProbeRdp">
                         <input type="hidden" name="hostname" value="@r.Hostname" />
                         <button type="submit" class="hd-btn hd-btn-gold hd-btn-sm hd-btn-compact">Test RDP</button>
                     </form>
-                    <form method="post" asp-page-handler="RestartRds" class="hd-action-form"
-                          onsubmit="return confirm('Queue TermService restart on @r.Hostname? Active RDP sessions may disconnect.');">
+                    <form method="post" asp-page-handler="RestartRds" class="hd-action-form" data-handler="RestartRds"
+                          data-confirm="Queue TermService restart on @r.Hostname? Active RDP sessions may disconnect.">
                         <input type="hidden" name="hostname" value="@r.Hostname" />
                         @if (r.IsOnline)
                         {

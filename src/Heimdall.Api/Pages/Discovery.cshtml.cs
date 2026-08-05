@@ -46,7 +46,7 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
 
     public async Task OnGetAsync()
     {
-        await LoadAsync();
+        await LoadAsync(skipBackfill: TempData["SkipDiscoveryBackfill"] as string == "1");
     }
 
     public async Task<IActionResult> OnPostApproveAsync(int id)
@@ -54,22 +54,191 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         var entry = await db.ProcessCatalogEntries.FindAsync([id], HttpContext.RequestAborted);
         if (entry is null)
         {
+            if (WantsAjax())
+                return new JsonResult(new { ok = false, error = "Process not found — it may have been removed." }) { StatusCode = 404 };
             TempData["Error"] = "Process not found — it may have been removed.";
             return RedirectToFilters();
         }
 
         if (entry.SuggestedGroup is null)
         {
+            if (WantsAjax())
+                return new JsonResult(new { ok = false, error = "No pending suggestion to approve — use Set instead." }) { StatusCode = 400 };
             TempData["Error"] = "No pending suggestion to approve — use Set instead.";
             return RedirectToFilters();
         }
 
         var group = entry.SuggestedGroup.Value;
+        var label = ProcessClassification.GroupLabel(group);
         await processGroups.AssignGroupsAsync([entry.ProcessName], group, HttpContext.RequestAborted);
         await catalog.ClearSuggestionsAsync([entry.ProcessName], HttpContext.RequestAborted);
 
-        TempData["Message"] = $"Approved {entry.ProcessName} as {ProcessClassification.GroupLabel(group)}.";
+        var message = $"Approved {entry.ProcessName} as {label}.";
+        if (WantsAjax())
+        {
+            // Cheap counts for header; skip full catalog rebuild / HTML render.
+            var pending = await db.ProcessCatalogEntries.AsNoTracking()
+                .CountAsync(e => !e.Ignored && e.SuggestedGroup != null, HttpContext.RequestAborted);
+            var ctx = await processGroups.BuildContextAsync(HttpContext.RequestAborted);
+            var unclassified = await db.ProcessCatalogEntries.AsNoTracking()
+                .Where(e => !e.Ignored)
+                .Select(e => e.ProcessName)
+                .Distinct()
+                .ToListAsync(HttpContext.RequestAborted);
+            var unclassifiedCount = unclassified.Count(n => ProcessCatalogService.NeedsClassification(n, ctx));
+
+            return new JsonResult(new
+            {
+                ok = true,
+                id,
+                message,
+                group = group.ToString(),
+                groupLabel = label,
+                removeRow = !ShowClassified,
+                pendingSuggestionCount = pending,
+                unclassifiedCount
+            });
+        }
+
+        TempData["Message"] = message;
+        TempData["SkipDiscoveryBackfill"] = "1";
         return RedirectToFilters();
+    }
+
+    /// <summary>
+    /// Approve pending suggestions in small batches (default 40). AJAX clients loop until <c>done</c>;
+    /// avoids one giant request that can starve SQLite / hang Kestrel under hundreds of rows.
+    /// Never runs catalog backfill.
+    /// </summary>
+    public async Task<IActionResult> OnPostApproveAllAsync(int take = 40)
+    {
+        const int defaultTake = 40;
+        const int maxTake = 80;
+        take = Math.Clamp(take <= 0 ? defaultTake : take, 1, maxTake);
+        var ct = HttpContext.RequestAborted;
+
+        try
+        {
+            var batch = await db.ProcessCatalogEntries
+                .Where(e => !e.Ignored && e.SuggestedGroup != null)
+                .OrderBy(e => e.Id)
+                .Take(take)
+                .ToListAsync(ct);
+
+            if (batch.Count == 0)
+            {
+                if (WantsAjax())
+                {
+                    return new JsonResult(new
+                    {
+                        ok = true,
+                        done = true,
+                        approved = 0,
+                        remaining = 0,
+                        approvedIds = Array.Empty<int>(),
+                        pendingSuggestionCount = 0,
+                        unclassifiedCount = await CountUnclassifiedAsync(ct),
+                        message = "No pending suggestions to approve."
+                    });
+                }
+
+                TempData["Error"] = "No pending suggestions to approve.";
+                return RedirectToFilters();
+            }
+
+            var approvedNames = 0;
+            foreach (var chunk in batch.GroupBy(e => e.SuggestedGroup!.Value))
+            {
+                var names = chunk
+                    .Select(e => e.ProcessName)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                await processGroups.AssignGroupsAsync(names, chunk.Key, ct);
+                approvedNames += names.Count;
+            }
+
+            await catalog.ClearSuggestionsAsync(batch.Select(e => e.ProcessName), ct);
+
+            // Detach so repeated AJAX batches do not grow the change tracker.
+            db.ChangeTracker.Clear();
+
+            var remaining = await db.ProcessCatalogEntries.AsNoTracking()
+                .CountAsync(e => !e.Ignored && e.SuggestedGroup != null, ct);
+            var approvedIds = batch.Select(e => e.Id).ToArray();
+            var done = remaining == 0;
+            var message = approvedNames == 1
+                ? "Approved 1 pending suggestion."
+                : $"Approved {approvedNames} pending suggestion(s)" + (done ? "." : $" ({remaining} remaining).");
+
+            if (WantsAjax())
+            {
+                object? unclassifiedCount = done ? await CountUnclassifiedAsync(ct) : null;
+                return new JsonResult(new
+                {
+                    ok = true,
+                    done,
+                    approved = approvedNames,
+                    remaining,
+                    approvedIds,
+                    pendingSuggestionCount = remaining,
+                    unclassifiedCount,
+                    message
+                });
+            }
+
+            // Non-JS: drain further batches in this request with a hard ceiling (no infinite loop).
+            var totalApproved = approvedNames;
+            for (var i = 0; remaining > 0 && i < 24; i++)
+            {
+                var more = await db.ProcessCatalogEntries
+                    .Where(e => !e.Ignored && e.SuggestedGroup != null)
+                    .OrderBy(e => e.Id)
+                    .Take(take)
+                    .ToListAsync(ct);
+                if (more.Count == 0) break;
+
+                foreach (var chunk in more.GroupBy(e => e.SuggestedGroup!.Value))
+                {
+                    var names = chunk
+                        .Select(e => e.ProcessName)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    await processGroups.AssignGroupsAsync(names, chunk.Key, ct);
+                    totalApproved += names.Count;
+                }
+
+                await catalog.ClearSuggestionsAsync(more.Select(e => e.ProcessName), ct);
+                db.ChangeTracker.Clear();
+                remaining = await db.ProcessCatalogEntries.AsNoTracking()
+                    .CountAsync(e => !e.Ignored && e.SuggestedGroup != null, ct);
+            }
+
+            TempData["Message"] = remaining == 0
+                ? (totalApproved == 1 ? "Approved 1 pending suggestion." : $"Approved {totalApproved} pending suggestions.")
+                : $"Approved {totalApproved} suggestion(s); {remaining} still pending — click Approve all again.";
+            TempData["SkipDiscoveryBackfill"] = "1";
+            return RedirectToFilters();
+        }
+        catch (Exception ex) when (WantsAjax())
+        {
+            return new JsonResult(new
+            {
+                ok = false,
+                error = "Approve-all batch failed: " + ex.Message
+            })
+            { StatusCode = 500 };
+        }
+    }
+
+    private async Task<int> CountUnclassifiedAsync(CancellationToken ct)
+    {
+        var ctx = await processGroups.BuildContextAsync(ct);
+        var names = await db.ProcessCatalogEntries.AsNoTracking()
+            .Where(e => !e.Ignored)
+            .Select(e => e.ProcessName)
+            .Distinct()
+            .ToListAsync(ct);
+        return names.Count(n => ProcessCatalogService.NeedsClassification(n, ctx));
     }
 
     public async Task<IActionResult> OnPostSetAsync(int id, string group, string? category, string? subcategory)
@@ -77,12 +246,16 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         var entry = await db.ProcessCatalogEntries.FindAsync([id], HttpContext.RequestAborted);
         if (entry is null)
         {
+            if (WantsAjax())
+                return new JsonResult(new { ok = false, error = "Process not found — it may have been removed." }) { StatusCode = 404 };
             TempData["Error"] = "Process not found — it may have been removed.";
             return RedirectToFilters();
         }
 
         if (!ProcessGroupService.TryParseGroup(group, out var targetGroup))
         {
+            if (WantsAjax())
+                return new JsonResult(new { ok = false, error = "Choose Core Windows, SOE, or Specialization." }) { StatusCode = 400 };
             TempData["Error"] = "Choose Core Windows, SOE, or Specialization.";
             return RedirectToFilters();
         }
@@ -105,7 +278,38 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         }
         await db.SaveChangesAsync(HttpContext.RequestAborted);
 
-        TempData["Message"] = $"Set {entry.ProcessName} to {ProcessClassification.GroupLabel(targetGroup)}.";
+        var label = ProcessClassification.GroupLabel(targetGroup);
+        var message = $"Set {entry.ProcessName} to {label}.";
+        if (WantsAjax())
+        {
+            var pending = await db.ProcessCatalogEntries.AsNoTracking()
+                .CountAsync(e => !e.Ignored && e.SuggestedGroup != null, HttpContext.RequestAborted);
+            var ctx = await processGroups.BuildContextAsync(HttpContext.RequestAborted);
+            var unclassified = await db.ProcessCatalogEntries.AsNoTracking()
+                .Where(e => !e.Ignored)
+                .Select(e => e.ProcessName)
+                .Distinct()
+                .ToListAsync(HttpContext.RequestAborted);
+            var unclassifiedCount = unclassified.Count(n => ProcessCatalogService.NeedsClassification(n, ctx));
+            var stillNeeds = ProcessCatalogService.NeedsClassification(entry.ProcessName, ctx);
+
+            return new JsonResult(new
+            {
+                ok = true,
+                id,
+                message,
+                group = targetGroup.ToString(),
+                groupLabel = label,
+                category = cat,
+                subcategory = sub,
+                removeRow = !ShowClassified && !stillNeeds,
+                pendingSuggestionCount = pending,
+                unclassifiedCount
+            });
+        }
+
+        TempData["Message"] = message;
+        TempData["SkipDiscoveryBackfill"] = "1";
         return RedirectToFilters();
     }
 
@@ -161,6 +365,7 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
             await db.SaveChangesAsync(HttpContext.RequestAborted);
 
         TempData["Message"] = saved == 1 ? "Saved 1 process." : $"Saved {saved} processes.";
+        TempData["SkipDiscoveryBackfill"] = "1";
         return RedirectToFilters();
     }
 
@@ -176,6 +381,7 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         entry.Ignored = false;
         await db.SaveChangesAsync(HttpContext.RequestAborted);
         TempData["Message"] = $"Restored {entry.ProcessName}.";
+        TempData["SkipDiscoveryBackfill"] = "1";
         return RedirectToFilters();
     }
 
@@ -295,6 +501,11 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
             dir = Dir
         });
 
+    private bool WantsAjax() =>
+        string.Equals(Request.Headers.Accept.ToString(), "application/json", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Request.Query["ajax"], "1", StringComparison.OrdinalIgnoreCase)
+        || Request.Headers.XRequestedWith == "XMLHttpRequest";
+
     private List<DiscoveryEditInput> ParseEditsFromForm()
     {
         var edits = new List<DiscoveryEditInput>();
@@ -315,15 +526,25 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         return edits;
     }
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(bool skipBackfill = false)
     {
-        await catalog.BackfillFromDiscoveriesAsync(HttpContext.RequestAborted);
+        // Backfill scans ProcessRuns + inventories + full catalog upsert/suggestion pool — seconds on a warm catalog.
+        // Skip after Approve/Set redirects; AJAX Approve never hits this path.
+        if (!skipBackfill)
+            await catalog.BackfillFromDiscoveriesAsync(HttpContext.RequestAborted);
 
         var entries = await catalog.GetAllAsync(HttpContext.RequestAborted);
+        var ctx = await processGroups.BuildContextAsync(HttpContext.RequestAborted);
+
         TotalCount = entries.Count;
         BlankPathCount = entries.Count(e => string.IsNullOrWhiteSpace(e.ExecutablePath));
         IgnoredCount = entries.Count(e => e.Ignored);
-        UnclassifiedCount = await catalog.CountNeedingClassificationAsync(HttpContext.RequestAborted);
+        // Reuse ctx — CountNeedingClassificationAsync would BuildContext + re-query names.
+        UnclassifiedCount = entries
+            .Where(e => !e.Ignored)
+            .Select(e => e.ProcessName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count(n => ProcessCatalogService.NeedsClassification(n, ctx));
         PendingSuggestionCount = entries.Count(e => !e.Ignored && e.SuggestedGroup is not null);
 
         CategoryOptions = MergeOptionLists(
@@ -332,8 +553,6 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         SubcategoryOptions = MergeOptionLists(
             entries.Select(e => e.Subcategory),
             DefaultSubcategoryTaxonomy);
-
-        var ctx = await processGroups.BuildContextAsync(HttpContext.RequestAborted);
 
         if (HideIgnored)
             entries = entries.Where(e => !e.Ignored).ToList();

@@ -55,7 +55,11 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
     public async Task OnGetAsync(string? host = null, string? section = null)
     {
-        await LoadAsync();
+        // Discovery-gap scan walks ProcessRuns + inventories — only when the CSV/catalog panel needs it,
+        // or on a bare landing (no host/section). Machine-focus and lists/apply redirects skip it.
+        var scanGap = string.Equals(section, "csv-classifications", StringComparison.OrdinalIgnoreCase)
+            || (string.IsNullOrWhiteSpace(host) && string.IsNullOrWhiteSpace(section));
+        await LoadAsync(scanDiscoveryGap: scanGap);
         if (!string.IsNullOrWhiteSpace(host))
         {
             FocusHostname = host.Trim();
@@ -73,10 +77,10 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
     public async Task<IActionResult> OnPostSaveListAsync()
     {
-        await LoadAsync();
         if (string.IsNullOrWhiteSpace(ListName))
         {
             TempData["Error"] = "List name is required.";
+            await LoadAsync();
             return Page();
         }
 
@@ -88,10 +92,10 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
     public async Task<IActionResult> OnPostUploadAsync()
     {
-        await LoadAsync();
         if (UploadFile is null || UploadFile.Length == 0)
         {
             TempData["Error"] = "Choose a CSV or JSON file.";
+            await LoadAsync();
             return Page();
         }
 
@@ -107,17 +111,21 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
     public async Task<IActionResult> OnPostApplyAsync()
     {
-        await LoadAsync();
         if (ApplyAppListId <= 0)
         {
             TempData["Error"] = "Pick an app list to apply.";
+            await LoadAsync();
             return Page();
         }
 
+        // Tree is needed to expand region/office selections into covered hosts.
+        await LoadShellAsync();
         var scopes = BuildScopes();
         if (scopes.Count == 0)
         {
             TempData["Error"] = "Select Global and/or at least one region, office, or machine.";
+            await LoadCatalogStatusAsync();
+            await LoadListsAsync();
             return Page();
         }
 
@@ -135,7 +143,8 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
     public async Task<IActionResult> OnPostAnalyzeAsync()
     {
-        await LoadAsync();
+        // Shell + lists only — skip discovery-gap scan on this round-trip.
+        await LoadAsync(scanDiscoveryGap: false);
         var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
         if (string.IsNullOrWhiteSpace(host))
         {
@@ -167,7 +176,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
     public async Task<IActionResult> OnPostRequestInventoryAsync()
     {
-        await LoadAsync();
+        await LoadAsync(scanDiscoveryGap: false);
         var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
         if (string.IsNullOrWhiteSpace(host))
         {
@@ -215,7 +224,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         if (SelectedProcesses.Count == 0)
         {
             TempData["Error"] = "Check at least one app, or use Approve all.";
-            await LoadAsync();
+            await LoadAsync(scanDiscoveryGap: false);
             FocusHostname = host;
             await LoadFocusAsync(host);
             return Page();
@@ -453,8 +462,6 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
     public async Task<IActionResult> OnPostImportClassificationsAsync()
     {
-        await LoadAsync();
-
         if (ClassificationCsvFile is null || ClassificationCsvFile.Length == 0)
         {
             TempData["Error"] = "Choose a classification CSV file.";
@@ -569,19 +576,30 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         AutoDiscoveredEntryCount = discoveredList?.Entries.Count ?? 0;
     }
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(bool scanDiscoveryGap = true)
     {
-        Teams = await db.Teams.AsNoTracking().OrderBy(t => t.Name).ToListAsync();
-        AllMachines = await db.Machines.AsNoTracking().OrderBy(m => m.Hostname).ToListAsync();
+        await LoadShellAsync();
+        await LoadListsAsync();
+        await LoadCatalogStatusAsync(scanDiscoveryGap);
+    }
+
+    /// <summary>Teams, machines, and hierarchy tree — needed for apply scopes and machine lookup.</summary>
+    private async Task LoadShellAsync()
+    {
+        Teams = await db.Teams.AsNoTracking().OrderBy(t => t.Name).ToListAsync(HttpContext.RequestAborted);
+        AllMachines = await db.Machines.AsNoTracking().OrderBy(m => m.Hostname).ToListAsync(HttpContext.RequestAborted);
         foreach (var m in AllMachines)
             MachineHierarchy.EnsureDefaults(m);
         Tree = MachineHierarchy.BuildTree(AllMachines);
+    }
 
+    private async Task LoadListsAsync()
+    {
         Lists = (await db.AppLists.AsNoTracking()
             .Include(a => a.Team)
             .Include(a => a.Entries)
             .Include(a => a.Assignments)
-            .ToListAsync())
+            .ToListAsync(HttpContext.RequestAborted))
             .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
             .Select(a => new AppListRow(
                 a.Id,
@@ -592,26 +610,33 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
                 a.IsAutoDiscovered,
                 a.UpdatedUtc))
             .ToList();
+    }
 
-        CatalogTotalCount = await catalog.CountAsync(HttpContext.RequestAborted);
-        CatalogUnclassifiedCount = await catalog.CountNeedingClassificationAsync(HttpContext.RequestAborted);
-        var catalogStatus = await catalog.GetCatalogStatusAsync(HttpContext.RequestAborted);
-        CatalogDiscoverySourceCount = catalogStatus.DiscoverySourceCount;
-        CatalogMissingFromDiscoveryCount = catalogStatus.MissingFromCatalog;
-        CatalogBlankPathCount = catalogStatus.BlankPathCount;
-        ShowCatalogBackfill = catalogStatus.ShowBackfill;
-
-        if (ShowCatalogBackfill)
+    /// <summary>
+    /// Catalog banner stats. Never auto-backfill — that re-ran full discovery Upsert on every visit
+    /// (same class of bug as Discovery Approve rebuilding the catalog after each micro-action).
+    /// User clicks Backfill Discovered explicitly.
+    /// </summary>
+    private async Task LoadCatalogStatusAsync(bool scanDiscoveryGap = true)
+    {
+        if (scanDiscoveryGap)
         {
-            await catalog.BackfillFromDiscoveriesAsync(HttpContext.RequestAborted);
-            catalogStatus = await catalog.GetCatalogStatusAsync(HttpContext.RequestAborted);
+            var catalogStatus = await catalog.GetCatalogStatusAsync(HttpContext.RequestAborted);
             CatalogTotalCount = catalogStatus.TotalCount;
             CatalogUnclassifiedCount = catalogStatus.UnclassifiedCount;
             CatalogDiscoverySourceCount = catalogStatus.DiscoverySourceCount;
             CatalogMissingFromDiscoveryCount = catalogStatus.MissingFromCatalog;
             CatalogBlankPathCount = catalogStatus.BlankPathCount;
             ShowCatalogBackfill = catalogStatus.ShowBackfill;
+            return;
         }
+
+        CatalogTotalCount = await catalog.CountAsync(HttpContext.RequestAborted);
+        CatalogBlankPathCount = await catalog.CountBlankPathAsync(HttpContext.RequestAborted);
+        CatalogUnclassifiedCount = 0;
+        CatalogDiscoverySourceCount = 0;
+        CatalogMissingFromDiscoveryCount = 0;
+        ShowCatalogBackfill = false;
     }
 
     private List<(ConfigScope Scope, string? ScopeValue)> BuildScopes()
