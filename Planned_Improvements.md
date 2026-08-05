@@ -73,3 +73,71 @@ Parked work from the Machines level-1 redesign and related fleet UX. Not schedul
 - Show projected growth of local and DB storage based on new settings **before** applying them
 - Allow time-based settings: capture more data for X days/weeks/months then revert to default
 - Individual machine page: local-level tuning with the same functionality
+
+## TUFLOW modelling run control (remote start / graceful stop)
+
+Parked **2026-08-05**. Modelling team need: long TUFLOW runs (often days) started from known batch files; hard to interrupt mid-run for emergency scenario changes without killing processes and wasting days of compute. Goal: Heimdall console can send simple **graceful** Start / Stop for **allowlisted** jobs only (modelling team + DT). Not in current implementation pass — design only.
+
+**Feasibility vs current agent:** Fits the existing allowlisted remote-command pattern (`PendingCommands` / ack + `CommandExecutionReportDto`, today used for `RestartTermService`) plus process-count visibility from inventory/sampling — extend with job-scoped Start/Stop tokens, not a free-form remote shell.
+
+### Problem / goal
+
+- Runs launched via batch calling `TUFLOW_iSP_w64.exe` (high priority, minimized window); concurrent instances capped in-batch by counting that exe
+- Need remote **start** of a known batch and **graceful stop** without arbitrary remote cmd.exe
+- Console restricted to **Modelling** + **DT** roles
+
+### Scope
+
+- **Allowlisted jobs only** — no arbitrary remote shell, no user-supplied command strings at runtime
+- Job definitions curated by admins/DT; agents execute only matching Start/Stop actions for those definitions
+- Stop command details TBD from modelling / TUFLOW docs (placeholder until provided)
+
+### Example start pattern (ops sample)
+
+Typical batch (document as-is; sample contains `@echo offf`):
+
+- Sets `TUFLOWEXE` to the `TUFLOW_iSP_w64.exe` path
+- Starts instances with `start "TUFLOW TEST MODEL" /high /min %TUFLOWEXE% -x -b` plus scenario flags (`-s1`, `-s2`, `-e1`, …) and `.tcf` files
+- Caps concurrency via `:limit_tuflow_instances` counting running `TUFLOW_iSP_w64.exe`
+
+Heimdall should treat the **batch path** (and optional stop script) as the allowlisted unit of work, not re-implement scenario arg assembly in the console unless a later phase needs it.
+
+### Proposed model
+
+**Job definitions** (API / config store):
+
+- Display name
+- Target machine or pool
+- Working directory
+- Start script path (known `.bat` / `.cmd`)
+- Stop command or script path (**TBD** — user will supply official graceful stop)
+- Exe identity for status: `TUFLOW_iSP_w64.exe`
+- Max concurrent instances (align with batch limiter where possible)
+
+**Agent capability:**
+
+- Execute only allowlisted **Start** / **Stop** actions for configured jobs (same delivery style as today’s pending commands + execution reports)
+- Report process count / running status for the job’s exe back to the API (reuse process sampling / inventory patterns)
+
+**Graceful stop:**
+
+- Placeholder for official TUFLOW stop once modelling provides the command/script
+- Hard kill of `TUFLOW_iSP_w64.exe` is last resort only (wastes multi-day runs); do not default UI Stop to kill
+
+**Console UI:**
+
+- Modelling / **Run Control** page: Start / Stop / status per job
+- RBAC: **Modelling** + **DT** only
+
+### Security
+
+- No free-form command entry from the browser
+- Signed or otherwise allowlisted absolute paths for start/stop scripts and working directories
+- Audit log: who started/stopped which job, when, on which host, success/failure detail
+
+### Open questions
+
+- Exact **graceful stop** command/script for TUFLOW (blocking for safe Stop UX)
+- Multi-host farms / pools: one job → one host vs enqueue across a pool
+- Does **Start** mean “run the whole batch as today” or “enqueue the next scenario / one instance under the cap”?
+- Credentials and network drives (`P:\` paths): agent service account must see the same shares the interactive modelling sessions use
