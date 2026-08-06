@@ -329,8 +329,36 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
     public async Task<IActionResult> OnPostTrackTeamAppsAsync()
     {
-        AlsoAssignToMachine = true;
-        return await OnPostAddToAppListAsync();
+        var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            TempData["Error"] = "Pick a machine first.";
+            return RedirectToPage();
+        }
+        if (SelectedTeamAppProcesses.Count == 0)
+        {
+            TempData["Error"] = "Select at least one app.";
+            return RedirectToPage(new { host });
+        }
+
+        try
+        {
+            int? listId = TargetAppListId > 0 ? TargetAppListId : null;
+            var (added, listName, skippedAbsent) = await appLists.TrackTeamAppsAsync(
+                host,
+                SelectedTeamAppProcesses,
+                listId,
+                HttpContext.RequestAborted);
+            var msg = $"Tracked {added} app(s) via “{listName}” on {host}.";
+            if (skippedAbsent > 0)
+                msg += $" Skipped {skippedAbsent} not present on this machine.";
+            TempData["Message"] = msg;
+        }
+        catch (Exception ex)
+        {
+            TempData["Error"] = ex.Message;
+        }
+        return RedirectToPage(new { host });
     }
 
     public async Task<IActionResult> OnPostRemoveFromSpecializationAsync()

@@ -1474,4 +1474,86 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
             .Select(a => new AppListPickerRow(a.Id, a.Name, a.Entries.Count))
             .ToListAsync(ct);
     }
+
+    /// <summary>
+    /// Track selected processes on a host: add to <paramref name="targetAppListId"/> or create/reuse
+    /// “Team – {hostname}”, then assign that list to the machine. Skips processes not present on the host.
+    /// </summary>
+    public async Task<(int Added, string ListName, int SkippedAbsent)> TrackTeamAppsAsync(
+        string hostname,
+        IEnumerable<string> processNames,
+        int? targetAppListId,
+        CancellationToken ct)
+    {
+        var host = hostname.Trim();
+        if (host.Length == 0)
+            throw new InvalidOperationException("Hostname is required.");
+
+        var inventory = await GetMachineInventoryAsync(host, ct);
+        var onMachine = inventory
+            .Select(r => r.ProcessName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var requested = processNames
+            .Select(ConfigService.NormalizeProcessName)
+            .Where(n => n.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var present = requested.Where(onMachine.Contains).ToList();
+        var skippedAbsent = requested.Count - present.Count;
+        if (present.Count == 0)
+            throw new InvalidOperationException(
+                skippedAbsent > 0
+                    ? "None of the selected apps were found on this machine (grey Spec rows cannot be tracked here)."
+                    : "Select at least one app present on this machine.");
+
+        int listId;
+        string listName;
+        if (targetAppListId is int id && id > 0)
+        {
+            var list = await db.AppLists.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id, ct)
+                ?? throw new InvalidOperationException("App list not found.");
+            if (list.IsSystem)
+                throw new InvalidOperationException("Cannot track into a system classification list.");
+            listId = list.Id;
+            listName = list.Name;
+        }
+        else
+        {
+            var created = await GetOrCreateQuickTeamListAsync(host, ct);
+            listId = created.Id;
+            listName = created.Name;
+        }
+
+        var pathByName = inventory.ToDictionary(
+            r => r.ProcessName,
+            r => r.DisplayName,
+            StringComparer.OrdinalIgnoreCase);
+        var entries = present.Select(p => (p, pathByName.TryGetValue(p, out var d) ? d : (string?)null));
+        var added = await AddEntriesToListAsync(listId, entries, host, ct);
+        return (added, listName, skippedAbsent);
+    }
+
+    /// <summary>Find or create a non-system “Team – {hostname}” list for quick Track.</summary>
+    public async Task<AppList> GetOrCreateQuickTeamListAsync(string hostname, CancellationToken ct)
+    {
+        var name = $"Team – {hostname.Trim()}";
+        var existing = await db.AppLists
+            .FirstOrDefaultAsync(a => a.Name == name && !a.IsSystem, ct);
+        if (existing is not null)
+            return existing;
+
+        var now = DateTimeOffset.UtcNow;
+        var list = new AppList
+        {
+            Name = name,
+            Notes = $"Quick team list from machine Track on {hostname.Trim()}",
+            CreatedUtc = now,
+            UpdatedUtc = now
+        };
+        db.AppLists.Add(list);
+        await db.SaveChangesAsync(ct);
+        await AuditAsync("created", $"Created quick team list “{name}”.", list.Id, name, ct: ct);
+        return list;
+    }
 }

@@ -288,7 +288,7 @@
                         <div class="col-md-5">
                             <label class="form-label small">Target app list</label>
                             <select class="form-select form-select-sm" name="TargetAppListId" id="team-apps-target-list">
-                                <option value="">— select list —</option>
+                                <option value="">— select list (Track can create “Team – host”) —</option>
                                 @foreach (var l in teamListOptions)
                                 {
                                     <option value="@l.Id">@l.Name (@l.EntryCount)</option>
@@ -303,7 +303,8 @@
                         </div>
                         <div class="col-md-4 d-flex flex-wrap gap-2">
                             <button type="submit" formaction="?handler=AddToAppList" class="hd-btn hd-btn-silver hd-btn-sm">Add to list</button>
-                            <button type="submit" formaction="?handler=TrackTeamApps" class="hd-btn hd-btn-gold hd-btn-sm" title="Add to list and apply to this machine">Track</button>
+                            <button type="submit" formaction="?handler=TrackTeamApps" class="hd-btn hd-btn-gold hd-btn-sm"
+                                    title="Add to selected list (or create Team – host) and apply to this machine. Skips apps not present here.">Track</button>
                             <button type="submit" formaction="?handler=RemoveFromSpecialization" class="hd-btn hd-btn-silver hd-btn-sm"
                                     onclick="return confirm('Remove selected from Specialization classification?');">Remove Spec</button>
                             <button type="submit" formaction="?handler=IgnoreCatalog" class="hd-btn hd-btn-rose hd-btn-sm"
@@ -336,9 +337,11 @@
                                             ? row.ProcessName
                                             : $"{row.DisplayName} ({row.ProcessName})";
                                         <tr class="@(row.OnMachine ? null : "hd-row-absent")"
+                                            data-on-machine="@(row.OnMachine ? "1" : "0")"
                                             data-filter-text="@($"{row.ProcessName} {row.DisplayName} {row.ExecutablePath}".ToLowerInvariant())">
                                             <td>
-                                                <input class="form-check-input team-app-check" type="checkbox" name="SelectedTeamAppProcesses" value="@row.ProcessName" />
+                                                <input class="form-check-input team-app-check" type="checkbox" name="SelectedTeamAppProcesses" value="@row.ProcessName"
+                                                       title="@(row.OnMachine ? null : "Not on this machine — Remove Spec / Ignore still work; Track skips this row")" />
                                             </td>
                                             <td title="@label"><strong>@row.ProcessName</strong>
                                                 @if (!string.IsNullOrWhiteSpace(row.DisplayName) && row.DisplayName != row.ProcessName)
@@ -845,12 +848,17 @@
   wireSelectAll('spec-select-all', 'spec-overlay-table');
   wireSelectAll('cand-select-all', 'team-candidates-table');
 
-  // Add/Track need a target list; Remove Spec / Ignore do not.
+  // Add needs a target list; Track creates “Team – host” when empty. Remove Spec / Ignore do not need a list.
   document.getElementById('team-apps-form')?.addEventListener('submit', (ev) => {
     const submitter = ev.submitter;
     const action = (submitter?.getAttribute('formaction') || '').toLowerCase();
-    const needsList = action.includes('addtoapplist') || action.includes('trackteamapps');
-    if (!needsList) return;
+    if (action.includes('trackteamapps')) {
+      // Grey Spec rows stay selectable for Remove Spec / Ignore; uncheck them for Track.
+      document.querySelectorAll('#spec-overlay-table tbody tr.hd-row-absent .team-app-check:checked')
+        .forEach((cb) => { cb.checked = false; });
+      return;
+    }
+    if (!action.includes('addtoapplist')) return;
     const list = document.getElementById('team-apps-target-list');
     if (list && !list.value) {
       ev.preventDefault();
