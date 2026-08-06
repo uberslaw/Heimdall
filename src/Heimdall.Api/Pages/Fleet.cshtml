@@ -3,11 +3,70 @@
 @{
     ViewData["Title"] = "Fleet";
     var active = Model.ActiveTabKey;
+    var titleWord = active switch
+    {
+        "machines" => "Computers",
+        "sessions" => "Sessions",
+        "online" => "Online status",
+        "clients" => "Client version",
+        "cost" => "Cost",
+        "stats" => "Stats",
+        _ => "Computers"
+    };
+    var helpFragment = active switch
+    {
+        "machines" => "machines",
+        "sessions" => "sessions",
+        "online" => "remote-machines",
+        "clients" => "client-version",
+        "cost" => "cost",
+        "stats" => "stats",
+        _ => "fleet"
+    };
 }
 
-<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
-    <h1 class="hd-title mb-1">Fleet</h1>
-    <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="fleet">Help</a>
+<div class="hd-fleet-header mb-3">
+    <div class="hd-fleet-header-main">
+        <h1 class="hd-title hd-fleet-title mb-0">
+            <span class="hd-fleet-title-fleet">Fleet</span>
+            <span class="hd-fleet-title-page" data-hd-fleet-title>@titleWord</span>
+        </h1>
+        <ul class="nav nav-tabs hd-ops-tabs mb-0" id="hd-ops-tabs" role="tablist">
+        @foreach (var t in FleetModel.Tabs)
+        {
+            var isActive = t.Key == active;
+            var tabTitle = t.Key switch
+            {
+                "machines" => "Computers",
+                "sessions" => "Sessions",
+                "online" => "Online status",
+                "clients" => "Client version",
+                "cost" => "Cost",
+                "stats" => "Stats",
+                _ => t.Label
+            };
+            <li class="nav-item" role="presentation">
+                <a class="nav-link @(isActive ? "active" : null)"
+                   href="/Fleet?tab=@t.Key"
+                   data-hd-ops-tab="@t.Key"
+                   data-hd-ops-src="@FleetModel.PartialUrl(t.Key, ViewContext.HttpContext.Request)"
+                   data-hd-fleet-title="@tabTitle"
+                   data-hd-fleet-help="@((t.Key) switch {
+                       "machines" => "machines",
+                       "sessions" => "sessions",
+                       "online" => "remote-machines",
+                       "clients" => "client-version",
+                       "cost" => "cost",
+                       "stats" => "stats",
+                       _ => "fleet"
+                   })"
+                   role="tab"
+                   aria-selected="@(isActive ? "true" : "false")">@t.Label</a>
+            </li>
+        }
+        </ul>
+    </div>
+    <a class="btn btn-ghost btn-sm hd-fleet-help" asp-page="/Help" asp-fragment="@helpFragment" data-hd-fleet-help-link>Help</a>
 </div>
 
 @if (TempData["Message"] is string msg)
@@ -19,21 +78,6 @@
     <div class="alert alert-danger">@err</div>
 }
 
-<ul class="nav nav-tabs hd-ops-tabs mb-3" id="hd-ops-tabs" role="tablist">
-@foreach (var t in FleetModel.Tabs)
-{
-    var isActive = t.Key == active;
-    <li class="nav-item" role="presentation">
-        <a class="nav-link @(isActive ? "active" : null)"
-           href="/Fleet?tab=@t.Key"
-           data-hd-ops-tab="@t.Key"
-           data-hd-ops-src="@FleetModel.PartialUrl(t.Key, ViewContext.HttpContext.Request)"
-           role="tab"
-           aria-selected="@(isActive ? "true" : "false")">@t.Label</a>
-    </li>
-}
-</ul>
-
 <div class="hd-ops-pane" id="hd-ops-pane" data-hd-ops-active="@active" aria-live="polite">
     <div class="hd-ops-loading text-secondary py-4" data-hd-ops-loading>Loading…</div>
     <div class="hd-ops-body" data-hd-ops-body hidden></div>
@@ -41,4 +85,21 @@
 
 @section Scripts {
     <script src="~/js/ops-tabs.js" asp-append-version="true"></script>
+    <script>
+    (() => {
+      const titleEl = document.querySelector('[data-hd-fleet-title]');
+      const helpLink = document.querySelector('[data-hd-fleet-help-link]');
+      document.querySelectorAll('[data-hd-ops-tab]').forEach((a) => {
+        a.addEventListener('click', () => {
+          const t = a.getAttribute('data-hd-fleet-title');
+          if (titleEl && t) titleEl.textContent = t;
+          const frag = a.getAttribute('data-hd-fleet-help');
+          if (helpLink && frag) {
+            const href = helpLink.getAttribute('href') || '/Help';
+            helpLink.setAttribute('href', href.split('#')[0] + '#' + frag);
+          }
+        });
+      });
+    })();
+    </script>
 }
