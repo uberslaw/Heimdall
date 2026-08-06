@@ -4,8 +4,9 @@
     ViewData["Title"] = "Discovery & Classification";
     const int colCount = 7; // Name&Location, Version, Cat, SubCat, Classification, Installs, Actions
     var sort = Model.Sort?.ToLowerInvariant() ?? "name";
-    var dir = Model.Dir?.ToLowerInvariant() == "desc" ? "desc" : "asc";
-    string ToggleDir(string col) => sort == col && dir == "asc" ? "desc" : "asc";
+    var dir = Model.Dir?.ToLowerInvariant() == "asc" ? "asc" : "desc";
+    // First click on a column → descending; same column toggles desc ↔ asc.
+    string ToggleDir(string col) => sort == col && dir == "desc" ? "asc" : "desc";
     string SortClass(string col) => sort == col ? (dir == "asc" ? "sorted-asc" : "sorted-desc") : "";
 }
 

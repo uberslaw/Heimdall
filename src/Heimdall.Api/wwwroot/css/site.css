@@ -3044,14 +3044,7 @@ details.hd-panel[data-key="existing-lists"] {
   font-size: 0.78rem;
 }
 
-/* Fixed-width icon column + gap so status words share one left edge across rows. */
-.hd-status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  justify-content: flex-start;
-}
-
+/* Summary count dots (Computers header) — kept as color legend. */
 .hd-status-dot {
   display: inline-block;
   width: 0.55rem;
@@ -3064,9 +3057,15 @@ details.hd-panel[data-key="existing-lists"] {
 .hd-status-dot.hd-status-idle { background: #d4a017; }
 .hd-status-dot.hd-status-off { background: #c45c5c; }
 
-.hd-status-label {
-  font-size: 0.75rem;
+/* Computers table: colored status text (no dots), sized like machine name. */
+.hd-machines-table .hd-status-text {
+  font-weight: 600;
+  color: var(--hd-silver, #c8ced8);
 }
+
+.hd-machines-table .hd-status-text.hd-status-active { color: #3db8a0; }
+.hd-machines-table .hd-status-text.hd-status-idle { color: #d4a017; }
+.hd-machines-table .hd-status-text.hd-status-off { color: #c45c5c; }
 
 .hd-machines-table tr.hd-machine-row td {
   height: 2.35rem;

@@ -6,12 +6,13 @@
         if (th.dataset.sortBound === 'true') return;
         th.dataset.sortBound = 'true';
         th.style.cursor = 'pointer';
-        th.title = 'Sort';
+        if (!th.getAttribute('title')) th.title = 'Sort';
         th.addEventListener('click', () => {
           const type = th.dataset.sort;
           const tbody = table.tBodies[0];
           const rows = [...tbody.querySelectorAll('tr')].filter(r => r.children.length > 1);
-          const asc = th.dataset.dir !== 'asc';
+          // First click / empty dir → descending; then toggle asc ↔ desc.
+          const asc = th.dataset.dir === 'desc';
           headers.forEach(h => {
             h.dataset.dir = '';
             h.classList.remove('sorted-asc', 'sorted-desc');
