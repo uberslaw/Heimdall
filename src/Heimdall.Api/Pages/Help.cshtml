@@ -91,7 +91,7 @@
                         <li><em>Specialization on this machine</em> — every entry on the global Spec system list; rows not found on this host are greyed out.</li>
                         <li><em>On machine — Spec or unlisted</em> — inventory that is Specialization or not in any app list (good place to find team tools).</li>
                         <li>Search filters both tables by process name or path.</li>
-                        <li>Select rows, pick a target (non-system) list, then <em>Add to list</em> or <em>Track</em> (add + apply list to this machine). Optional checkbox controls assign-on-add.</li>
+                        <li>Select rows, pick a target (non-system) list, then <em>Add to list</em> (optional apply-to-machine checkbox) or <em>Track</em> (always applies to this machine; if no list is selected, creates/reuses <code>Team – {hostname}</code>). Track skips Spec rows not present on the host; those grey rows can still be used with Remove Spec / Ignore.</li>
                         <li><em>Remove Spec</em> clears Specialization classification (and re-syncs the Spec system list). <em>Ignore</em> marks the process Ignored in the Discovery catalog so it drops out of pending noise.</li>
                     </ul>
                 </li>
