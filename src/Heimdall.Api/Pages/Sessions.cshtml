@@ -297,7 +297,7 @@ else
     </div>
 </div>
 
-@section Scripts {
+@* Inline (not @section) so Fleet partial fetch still runs these scripts. *@
 <script>
 (function () {
     var selectAll = document.getElementById('select-all-hosts');
@@ -324,4 +324,3 @@ else
 })();
 </script>
 <script src="~/js/session-drilldown.js" asp-append-version="true"></script>
-}

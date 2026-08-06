@@ -430,7 +430,7 @@ else
     </div>
 }
 
-@section Scripts {
+@* Inline (not @section) so Fleet partial fetch still runs these scripts. *@
 <script>
 (() => {
   const options = {
@@ -476,4 +476,3 @@ else
   if (window.HeimdallTable) HeimdallTable.init(document);
 })();
 </script>
-}
