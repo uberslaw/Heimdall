@@ -55,7 +55,7 @@
 </p>
 
 <div class="hd-panel hd-remote-panel">
-    <table class="hd-table hd-remote-table">
+    <table class="hd-table hd-remote-table hd-sortable">
         <colgroup>
             <col class="hd-col-status" />
             <col class="hd-col-machine" />
@@ -68,13 +68,13 @@
         </colgroup>
         <thead>
             <tr>
-                <th>Status</th>
-                <th>Machine</th>
-                <th class="hd-th-stacked"><span>IP</span><span>Address</span></th>
-                <th class="hd-th-contact">Agent last contact</th>
-                <th>Ping</th>
-                <th class="hd-th-stacked"><span>RDS</span><span>Service</span></th>
-                <th>RDP status</th>
+                <th data-sort="text">Status</th>
+                <th data-sort="text">Machine</th>
+                <th class="hd-th-stacked" data-sort="text"><span>IP</span><span>Address</span></th>
+                <th class="hd-th-contact" data-sort="text">Agent last contact</th>
+                <th data-sort="text">Ping</th>
+                <th class="hd-th-stacked" data-sort="text"><span>RDS</span><span>Service</span></th>
+                <th data-sort="text">RDP status</th>
                 <th>Actions</th>
             </tr>
         </thead>

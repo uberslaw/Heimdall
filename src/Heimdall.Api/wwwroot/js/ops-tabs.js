@@ -39,6 +39,9 @@
       }
       old.parentNode.replaceChild(s, old);
     });
+    if (window.HeimdallTable && typeof window.HeimdallTable.init === "function") {
+      window.HeimdallTable.init(container);
+    }
   }
 
   function loadTab(key, src, pushUrl) {

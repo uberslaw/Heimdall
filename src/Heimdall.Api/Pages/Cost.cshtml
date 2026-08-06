@@ -224,21 +224,21 @@
         {
             <hr class="border-secondary opacity-25 my-3" />
             <h3 class="h6">Identity history</h3>
-            <table class="hd-table small">
+            <table class="hd-table small hd-sortable">
                 <thead>
                     <tr>
-                        <th>When</th>
-                        <th>Event</th>
-                        <th>Old Guid</th>
-                        <th>New Guid</th>
-                        <th>Detail</th>
+                        <th data-sort="date">When</th>
+                        <th data-sort="text">Event</th>
+                        <th data-sort="text">Old Guid</th>
+                        <th data-sort="text">New Guid</th>
+                        <th data-sort="text">Detail</th>
                     </tr>
                 </thead>
                 <tbody>
                 @foreach (var e in Model.IdentityHistory)
                 {
                     <tr>
-                        <td>@e.ObservedAtUtc.ToLocalTime().ToString("g")</td>
+                        <td data-sort-value="@e.ObservedAtUtc.ToUnixTimeSeconds()">@e.ObservedAtUtc.ToLocalTime().ToString("g")</td>
                         <td><span class="badge-pill badge-rdp">@e.EventType</span></td>
                         <td><code class="small">@(e.OldMachineGuid ?? "—")</code></td>
                         <td><code class="small">@(e.NewMachineGuid ?? "—")</code></td>
@@ -382,37 +382,7 @@
 @section Scripts {
 <script>
 (() => {
-  document.querySelectorAll('table.hd-sortable').forEach(table => {
-    const headers = [...table.querySelectorAll('thead th[data-sort]')];
-    headers.forEach((th, colIdx) => {
-      th.style.cursor = 'pointer';
-      if (!th.getAttribute('title')) th.title = 'Sort';
-      th.addEventListener('click', () => {
-        const type = th.dataset.sort;
-        const tbody = table.tBodies[0];
-        const rows = [...tbody.querySelectorAll('tr')].filter(r => r.children.length > 1);
-        // First click / empty dir → descending; then toggle asc ↔ desc.
-        const asc = th.dataset.dir === 'desc';
-        headers.forEach(h => { h.dataset.dir = ''; h.classList.remove('sorted-asc', 'sorted-desc'); });
-        th.dataset.dir = asc ? 'asc' : 'desc';
-        th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
-        rows.sort((a, b) => {
-          const ca = a.children[colIdx], cb = b.children[colIdx];
-          let va = ca?.dataset.sortValue ?? ca?.textContent ?? '';
-          let vb = cb?.dataset.sortValue ?? cb?.textContent ?? '';
-          if (type === 'num') {
-            va = parseFloat(va); vb = parseFloat(vb);
-            if (Number.isNaN(va)) va = -Infinity;
-            if (Number.isNaN(vb)) vb = -Infinity;
-            return asc ? va - vb : vb - va;
-          }
-          va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
-          return asc ? va.localeCompare(vb) : vb.localeCompare(va);
-        });
-        rows.forEach(r => tbody.appendChild(r));
-      });
-    });
-  });
+  if (window.HeimdallTable) HeimdallTable.init(document);
 })();
 </script>
 }

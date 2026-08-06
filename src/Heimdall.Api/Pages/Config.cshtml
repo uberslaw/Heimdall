@@ -32,13 +32,13 @@
             <a class="btn btn-ghost btn-sm" asp-page="/Config" asp-route-new="true">New scoped config</a>
         </div>
     </div>
-    <table class="hd-table mb-0">
+    <table class="hd-table hd-sortable mb-0">
         <thead>
             <tr>
-                <th>Name</th>
-                <th>Scope</th>
-                <th>Sample / Upload</th>
-                <th>Min CPU</th>
+                <th data-sort="text">Name</th>
+                <th data-sort="text">Scope</th>
+                <th data-sort="text">Sample / Upload</th>
+                <th data-sort="num">Min CPU</th>
                 <th></th>
             </tr>
         </thead>
@@ -407,14 +407,14 @@
         <span class="text-secondary small">Most specific scope wins for agents · Machine &gt; Office &gt; Country/Region &gt; All</span>
     </div>
 
-    <table class="hd-table mb-0">
+    <table class="hd-table hd-sortable mb-0">
         <thead>
             <tr>
-                <th>Name</th>
-                <th>Metric</th>
-                <th>Thresholds</th>
-                <th>Scope</th>
-                <th>Enabled</th>
+                <th data-sort="text">Name</th>
+                <th data-sort="text">Metric</th>
+                <th data-sort="text">Thresholds</th>
+                <th data-sort="text">Scope</th>
+                <th data-sort="text">Enabled</th>
                 <th></th>
             </tr>
         </thead>

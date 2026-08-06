@@ -94,14 +94,14 @@
             {
                 @* Export form wraps only the footer — row checkboxes use form="…" so Delete forms are not nested (invalid HTML). *@
                 <div class="hd-existing-lists-wrap">
-                    <table class="hd-table hd-existing-lists-table mb-2">
+                    <table class="hd-table hd-existing-lists-table hd-sortable mb-2">
                         <thead>
                             <tr>
                                 <th class="hd-existing-lists-col-check"><input class="form-check-input" type="checkbox" id="lists-select-all" title="Select all" form="lists-export-form" /></th>
-                                <th class="hd-existing-lists-col-name">Name</th>
-                                <th class="hd-existing-lists-col-team">Team</th>
-                                <th class="hd-existing-lists-col-apps">Apps</th>
-                                <th class="hd-existing-lists-col-scopes">Scopes</th>
+                                <th class="hd-existing-lists-col-name" data-sort="text">Name</th>
+                                <th class="hd-existing-lists-col-team" data-sort="text">Team</th>
+                                <th class="hd-existing-lists-col-apps" data-sort="num">Apps</th>
+                                <th class="hd-existing-lists-col-scopes" data-sort="num">Scopes</th>
                                 <th class="hd-existing-lists-col-actions"><span class="visually-hidden">Actions</span></th>
                             </tr>
                         </thead>
@@ -317,13 +317,13 @@
                             <h4 class="h6">Specialization on this machine (@Model.SpecOverlay.Count)</h4>
                             <p class="small text-secondary mb-2">Grey rows are on the global Spec list but not found on this host.</p>
                             <div class="table-responsive">
-                                <table class="hd-table hd-team-apps-table mb-0" id="spec-overlay-table">
+                                <table class="hd-table hd-team-apps-table hd-sortable mb-0" id="spec-overlay-table">
                                     <thead>
                                         <tr>
                                             <th style="width:2rem"><input type="checkbox" id="spec-select-all" title="Select all visible" /></th>
-                                            <th>Process</th>
-                                            <th>Path</th>
-                                            <th>Present</th>
+                                            <th data-sort="text">Process</th>
+                                            <th data-sort="text">Path</th>
+                                            <th data-sort="text">Present</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -361,14 +361,14 @@
                             <h4 class="h6">On machine — Spec or unlisted (@Model.TeamCandidates.Count)</h4>
                             <p class="small text-secondary mb-2">Inventory that is Specialization or not in any app list.</p>
                             <div class="table-responsive">
-                                <table class="hd-table hd-team-apps-table mb-0" id="team-candidates-table">
+                                <table class="hd-table hd-team-apps-table hd-sortable mb-0" id="team-candidates-table">
                                     <thead>
                                         <tr>
                                             <th style="width:2rem"><input type="checkbox" id="cand-select-all" /></th>
-                                            <th>Process</th>
-                                            <th>Path</th>
-                                            <th>Group</th>
-                                            <th>Listed</th>
+                                            <th data-sort="text">Process</th>
+                                            <th data-sort="text">Path</th>
+                                            <th data-sort="text">Group</th>
+                                            <th data-sort="text">Listed</th>
                                         </tr>
                                     </thead>
                                     <tbody>

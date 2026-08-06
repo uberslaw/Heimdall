@@ -87,14 +87,14 @@
             Mark teams public under Admin → Teams (<code>Is public-facing</code>).
         </p>
         <div class="table-responsive">
-            <table class="hd-table mb-0">
+            <table class="hd-table hd-sortable mb-0">
                 <thead>
                     <tr>
-                        <th>Machine</th>
-                        <th>Team</th>
-                        <th>Status</th>
-                        <th>Active User</th>
-                        <th>Booking</th>
+                        <th data-sort="text">Machine</th>
+                        <th data-sort="text">Team</th>
+                        <th data-sort="text">Status</th>
+                        <th data-sort="text">Active User</th>
+                        <th data-sort="text">Booking</th>
                         <th></th>
                     </tr>
                 </thead>
@@ -132,7 +132,7 @@
                             @if (!string.IsNullOrWhiteSpace(r.ActiveUser))
                             {
                                 <span class="badge-pill @StaffAccessModel.ActiveUserBadgeClass(r.HasActiveSession, r.CurrentBooking, r.BookingIsMine)">
-                                    @r.ActiveUser
+                                    @UsernameDisplay.Format(r.ActiveUser)
                                     @if (r.ActiveUserState is SessionState st)
                                     {
                                         <span class="text-secondary"> · @st</span>

@@ -215,7 +215,7 @@ else
                     }))
                 {
                     <tr>
-                        <td><strong>@u.Username</strong></td>
+                        <td><strong>@UsernameDisplay.Format(u.Username)</strong></td>
                         @if (view == "logon-count")
                         {
                             <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
@@ -413,7 +413,7 @@ else
                 @foreach (var p in snap.UsagePatterns)
                 {
                     <tr>
-                        <td><strong>@p.Username</strong></td>
+                        <td><strong>@UsernameDisplay.Format(p.Username)</strong></td>
                         <td>@p.DayOfWeek</td>
                         <td data-sort-value="@p.ActiveMinutes">@p.ActiveMinutes.ToString("0.#")</td>
                         <td data-sort-value="@p.SessionCount">@p.SessionCount</td>
@@ -473,38 +473,7 @@ else
     });
   });
 
-  // Client-side sort
-  document.querySelectorAll('table.hd-sortable').forEach(table => {
-    const headers = [...table.querySelectorAll('thead th[data-sort]')];
-    headers.forEach((th, colIdx) => {
-      th.style.cursor = 'pointer';
-      if (!th.getAttribute('title')) th.title = 'Sort';
-      th.addEventListener('click', () => {
-        const type = th.dataset.sort;
-        const tbody = table.tBodies[0];
-        const rows = [...tbody.querySelectorAll('tr')].filter(r => r.children.length > 1);
-        // First click / empty dir → descending; then toggle asc ↔ desc.
-        const asc = th.dataset.dir === 'desc';
-        headers.forEach(h => { h.dataset.dir = ''; h.classList.remove('sorted-asc', 'sorted-desc'); });
-        th.dataset.dir = asc ? 'asc' : 'desc';
-        th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
-        rows.sort((a, b) => {
-          const ca = a.children[colIdx], cb = b.children[colIdx];
-          let va = ca?.dataset.sortValue ?? ca?.textContent ?? '';
-          let vb = cb?.dataset.sortValue ?? cb?.textContent ?? '';
-          if (type === 'num') {
-            va = parseFloat(va); vb = parseFloat(vb);
-            if (Number.isNaN(va)) va = -Infinity;
-            if (Number.isNaN(vb)) vb = -Infinity;
-            return asc ? va - vb : vb - va;
-          }
-          va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
-          return asc ? va.localeCompare(vb) : vb.localeCompare(va);
-        });
-        rows.forEach(r => tbody.appendChild(r));
-      });
-    });
-  });
+  if (window.HeimdallTable) HeimdallTable.init(document);
 })();
 </script>
 }

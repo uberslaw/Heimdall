@@ -108,7 +108,7 @@
                             <div class="hd-live-ip text-secondary small">@r.LastIp</div>
                         }
                     </td>
-                    <td class="hd-col-user" data-sort-value="@(r.Username ?? "")">@(r.Username ?? "—")</td>
+                    <td class="hd-col-user" data-sort-value="@UsernameDisplay.Format(r.Username)">@UsernameDisplay.FormatOrDash(r.Username)</td>
                     <td data-sort-value="@(r.TuflowRunning ? "Y" : "N")">@(r.TuflowRunning ? "Y" : "N")</td>
                     <td data-sort-value="@HistoricalDashboardModel.ActiveIdleLabel(r.Status)">
                         @if (r.Status is FleetDashboardService.FleetStatus.Active or FleetDashboardService.FleetStatus.Idle)

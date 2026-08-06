@@ -227,7 +227,7 @@ else
                         var durationSec = s.ActiveSeconds + s.DisconnectedSeconds;
                         <tr class="@(s.HadAppActivityWhileDisconnected ? "hd-row-highlight" : null)">
                             <td>@s.Hostname</td>
-                            <td>@(string.IsNullOrEmpty(s.Domain) ? s.Username : $"{s.Domain}\\{s.Username}")</td>
+                            <td data-sort-value="@UsernameDisplay.Format(s.Username, s.Domain)">@UsernameDisplay.FormatOrDash(s.Username, s.Domain)</td>
                             <td>@(s.TeamName ?? "—")</td>
                             <td>
                                 @if (s.SessionType == SessionType.Rdp)
@@ -315,37 +315,7 @@ else
         });
     }
 
-    document.querySelectorAll('table.hd-sortable').forEach(function (table) {
-        var headers = [].slice.call(table.querySelectorAll('thead th[data-sort]'));
-        headers.forEach(function (th, colIdx) {
-            th.style.cursor = 'pointer';
-            th.addEventListener('click', function () {
-                var type = th.dataset.sort;
-                var tbody = table.tBodies[0];
-                var rows = [].slice.call(tbody.querySelectorAll('tr')).filter(function (r) { return r.children.length > 1; });
-                // First click / empty dir → descending; then toggle asc ↔ desc.
-                var asc = th.dataset.dir === 'desc';
-                headers.forEach(function (h) { h.dataset.dir = ''; h.classList.remove('sorted-asc', 'sorted-desc'); });
-                th.dataset.dir = asc ? 'asc' : 'desc';
-                th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
-                rows.sort(function (a, b) {
-                    var ca = a.children[colIdx], cb = b.children[colIdx];
-                    var va = (ca && (ca.dataset.sortValue || ca.textContent)) || '';
-                    var vb = (cb && (cb.dataset.sortValue || cb.textContent)) || '';
-                    if (type === 'num' || type === 'date') {
-                        va = parseFloat(va); vb = parseFloat(vb);
-                        if (Number.isNaN(va)) va = -Infinity;
-                        if (Number.isNaN(vb)) vb = -Infinity;
-                        return asc ? va - vb : vb - va;
-                    }
-                    va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
-                    return asc ? va.localeCompare(vb) : vb.localeCompare(va);
-                });
-                rows.forEach(function (r) { tbody.appendChild(r); });
-            });
-            if (th.dataset.defaultDesc !== undefined) th.click();
-        });
-    });
+    if (window.HeimdallTable) HeimdallTable.init(document);
 
     var log = document.getElementById('session-log');
     if (log) {

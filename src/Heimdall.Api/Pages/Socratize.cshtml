@@ -129,21 +129,21 @@ else if (brief is not null)
                 }
                 else
                 {
-                    <table class="hd-table mb-0">
+                    <table class="hd-table mb-0 hd-sortable">
                         <thead>
                             <tr>
-                                <th>User</th>
-                                <th>Team</th>
-                                <th>Logons</th>
-                                <th>Active</th>
-                                <th>Disconnected</th>
+                                <th data-sort="text">User</th>
+                                <th data-sort="text">Team</th>
+                                <th data-sort="num">Logons</th>
+                                <th data-sort="num">Active</th>
+                                <th data-sort="num">Disconnected</th>
                             </tr>
                         </thead>
                         <tbody>
                         @foreach (var u in brief.Users)
                         {
                             <tr>
-                                <td>@u.Username</td>
+                                <td>@UsernameDisplay.Format(u.Username)</td>
                                 <td>@(u.TeamName ?? "—")</td>
                                 <td>@u.LogonCount</td>
                                 <td>@FormatDur(u.ActiveSeconds)</td>
@@ -198,19 +198,19 @@ else if (brief is not null)
                     </div>
                     @if (brief.Users.Count > 0)
                     {
-                        <table class="hd-table mb-0">
+                        <table class="hd-table mb-0 hd-sortable">
                             <thead>
                                 <tr>
-                                    <th>User</th>
-                                    <th>Local</th>
-                                    <th>Inbound RDP</th>
+                                    <th data-sort="text">User</th>
+                                    <th data-sort="num">Local</th>
+                                    <th data-sort="num">Inbound RDP</th>
                                 </tr>
                             </thead>
                             <tbody>
                             @foreach (var u in brief.Users)
                             {
                                 <tr>
-                                    <td>@u.Username</td>
+                                    <td>@UsernameDisplay.Format(u.Username)</td>
                                     <td><span class="badge-pill badge-local">@u.LocalLogons</span></td>
                                     <td><span class="badge-pill badge-rdp">@u.RdpLogons</span></td>
                                 </tr>
@@ -294,15 +294,15 @@ else if (brief is not null)
                 }
                 else
                 {
-                    <table class="hd-table mb-0">
+                    <table class="hd-table mb-0 hd-sortable">
                         <thead>
                             <tr>
-                                <th>App</th>
-                                <th>Open time</th>
-                                <th>Runs</th>
-                                <th>Share %</th>
-                                <th>Cost / yr</th>
-                                <th>$ / h</th>
+                                <th data-sort="text">App</th>
+                                <th data-sort="num">Open time</th>
+                                <th data-sort="num">Runs</th>
+                                <th data-sort="num">Share %</th>
+                                <th data-sort="num">Cost / yr</th>
+                                <th data-sort="num">$ / h</th>
                             </tr>
                         </thead>
                         <tbody>

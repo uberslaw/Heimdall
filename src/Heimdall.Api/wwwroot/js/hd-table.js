@@ -1,15 +1,38 @@
 (() => {
+  function columnIndex(th) {
+    if (th.dataset.sortCol !== undefined && th.dataset.sortCol !== '') {
+      const n = parseInt(th.dataset.sortCol, 10);
+      if (!Number.isNaN(n)) return n;
+    }
+    return th.cellIndex;
+  }
+
+  function compareRows(type, va, vb, asc) {
+    if (type === 'num' || type === 'date') {
+      let na = parseFloat(va);
+      let nb = parseFloat(vb);
+      if (Number.isNaN(na)) na = -Infinity;
+      if (Number.isNaN(nb)) nb = -Infinity;
+      return asc ? na - nb : nb - na;
+    }
+    const sa = String(va).toLowerCase();
+    const sb = String(vb).toLowerCase();
+    return asc ? sa.localeCompare(sb) : sb.localeCompare(sa);
+  }
+
   function initSort(root) {
     root.querySelectorAll('table.hd-sortable').forEach(table => {
       const headers = [...table.querySelectorAll('thead th[data-sort]')];
-      headers.forEach((th, colIdx) => {
+      headers.forEach(th => {
         if (th.dataset.sortBound === 'true') return;
         th.dataset.sortBound = 'true';
         th.style.cursor = 'pointer';
         if (!th.getAttribute('title')) th.title = 'Sort';
         th.addEventListener('click', () => {
           const type = th.dataset.sort;
+          const colIdx = columnIndex(th);
           const tbody = table.tBodies[0];
+          if (!tbody) return;
           const rows = [...tbody.querySelectorAll('tr')].filter(r => r.children.length > 1);
           // First click / empty dir → descending; then toggle asc ↔ desc.
           const asc = th.dataset.dir === 'desc';
@@ -22,18 +45,9 @@
           rows.sort((a, b) => {
             const ca = a.children[colIdx];
             const cb = b.children[colIdx];
-            let va = ca?.dataset.sortValue ?? ca?.textContent ?? '';
-            let vb = cb?.dataset.sortValue ?? cb?.textContent ?? '';
-            if (type === 'num' || type === 'date') {
-              va = parseFloat(va);
-              vb = parseFloat(vb);
-              if (Number.isNaN(va)) va = -Infinity;
-              if (Number.isNaN(vb)) vb = -Infinity;
-              return asc ? va - vb : vb - va;
-            }
-            va = String(va).toLowerCase();
-            vb = String(vb).toLowerCase();
-            return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+            const va = ca?.dataset.sortValue ?? ca?.textContent ?? '';
+            const vb = cb?.dataset.sortValue ?? cb?.textContent ?? '';
+            return compareRows(type, va, vb, asc);
           });
           rows.forEach(r => tbody.appendChild(r));
         });
@@ -59,5 +73,17 @@
     });
   }
 
-  window.HeimdallTable = { initSort, initTextFilter };
+  function init(root) {
+    const scope = root || document;
+    initSort(scope);
+    initTextFilter(scope);
+  }
+
+  window.HeimdallTable = { initSort, initTextFilter, init };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => init(document));
+  } else {
+    init(document);
+  }
 })();

@@ -32,31 +32,31 @@
         </p>
 
         <div class="table-responsive">
-            <table class="hd-table mb-0">
+            <table class="hd-table mb-0 hd-sortable">
                 <thead>
                     <tr>
-                        <th rowspan="2">Run</th>
-                        <th rowspan="2">Machine</th>
-                        <th rowspan="2">Started by</th>
-                        <th rowspan="2">State</th>
-                        <th rowspan="2">Progress</th>
-                        <th rowspan="2">Elapsed</th>
-                        <th rowspan="2">Est. remaining</th>
+                        <th rowspan="2" data-sort="text" data-sort-col="0">Run</th>
+                        <th rowspan="2" data-sort="text" data-sort-col="1">Machine</th>
+                        <th rowspan="2" data-sort="text" data-sort-col="2">Started by</th>
+                        <th rowspan="2" data-sort="text" data-sort-col="3">State</th>
+                        <th rowspan="2" data-sort="num" data-sort-col="4">Progress</th>
+                        <th rowspan="2" data-sort="text" data-sort-col="5">Elapsed</th>
+                        <th rowspan="2" data-sort="num" data-sort-col="6">Est. remaining</th>
                         <th colspan="4" class="text-secondary small">TUFLOW process (avg)</th>
                         <th colspan="6" class="text-secondary small">Whole machine (avg)</th>
-                        <th rowspan="2">Samples</th>
+                        <th rowspan="2" data-sort="num" data-sort-col="17">Samples</th>
                     </tr>
                     <tr>
-                        <th class="text-secondary small">CPU</th>
-                        <th class="text-secondary small">GPU</th>
-                        <th class="text-secondary small">Disk R</th>
-                        <th class="text-secondary small">Disk W</th>
-                        <th class="text-secondary small">CPU</th>
-                        <th class="text-secondary small">GPU</th>
-                        <th class="text-secondary small">Disk R</th>
-                        <th class="text-secondary small">Disk W</th>
-                        <th class="text-secondary small">Net in</th>
-                        <th class="text-secondary small">Net out</th>
+                        <th class="text-secondary small" data-sort="num" data-sort-col="7">CPU</th>
+                        <th class="text-secondary small" data-sort="num" data-sort-col="8">GPU</th>
+                        <th class="text-secondary small" data-sort="num" data-sort-col="9">Disk R</th>
+                        <th class="text-secondary small" data-sort="num" data-sort-col="10">Disk W</th>
+                        <th class="text-secondary small" data-sort="num" data-sort-col="11">CPU</th>
+                        <th class="text-secondary small" data-sort="num" data-sort-col="12">GPU</th>
+                        <th class="text-secondary small" data-sort="num" data-sort-col="13">Disk R</th>
+                        <th class="text-secondary small" data-sort="num" data-sort-col="14">Disk W</th>
+                        <th class="text-secondary small" data-sort="num" data-sort-col="15">Net in</th>
+                        <th class="text-secondary small" data-sort="num" data-sort-col="16">Net out</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -65,22 +65,22 @@
                     <tr>
                         <td>@row.RunName</td>
                         <td>@(row.FriendlyName ?? row.Hostname)</td>
-                        <td class="text-secondary small">@(row.RequestedBy ?? "—")</td>
+                        <td class="text-secondary small">@UsernameDisplay.FormatOrDash(row.RequestedBy)</td>
                         <td><span class="badge-pill @FleetSimProgressModel.RunStateBadgeClass(row.State)">@row.State</span></td>
-                        <td>@(row.PercentComplete is double pct ? $"{pct:0.#}%" : "—")</td>
-                        <td>@FleetSimProgressModel.FormatSpan(row.Elapsed)</td>
-                        <td>@FleetSimProgressModel.FormatHours(row.EstRemainingHours)</td>
-                        <td class="text-secondary small">@FleetSimProgressModel.FormatPercent(row.ProcessCpuPercentAvg)</td>
-                        <td class="text-secondary small">@FleetSimProgressModel.FormatPercent(row.ProcessGpuPercentAvg)</td>
-                        <td class="text-secondary small">@FleetSimProgressModel.FormatRate(row.ProcessDiskReadMBpsAvg)</td>
-                        <td class="text-secondary small">@FleetSimProgressModel.FormatRate(row.ProcessDiskWriteMBpsAvg)</td>
-                        <td class="text-secondary small">@FleetSimProgressModel.FormatPercent(row.MachineCpuPercentAvg)</td>
-                        <td class="text-secondary small">@FleetSimProgressModel.FormatPercent(row.MachineGpuPercentAvg)</td>
-                        <td class="text-secondary small">@FleetSimProgressModel.FormatRate(row.MachineDiskReadMBpsAvg)</td>
-                        <td class="text-secondary small">@FleetSimProgressModel.FormatRate(row.MachineDiskWriteMBpsAvg)</td>
-                        <td class="text-secondary small">@FleetSimProgressModel.FormatRate(row.MachineNetworkInMBpsAvg)</td>
-                        <td class="text-secondary small">@FleetSimProgressModel.FormatRate(row.MachineNetworkOutMBpsAvg)</td>
-                        <td class="text-secondary small">@row.SampleCount</td>
+                        <td data-sort-value="@(row.PercentComplete ?? -1)">@(row.PercentComplete is double pct ? $"{pct:0.#}%" : "—")</td>
+                        <td data-sort-value="@row.Elapsed.TotalSeconds">@FleetSimProgressModel.FormatSpan(row.Elapsed)</td>
+                        <td data-sort-value="@(row.EstRemainingHours ?? -1)">@FleetSimProgressModel.FormatHours(row.EstRemainingHours)</td>
+                        <td class="text-secondary small" data-sort-value="@(row.ProcessCpuPercentAvg ?? -1)">@FleetSimProgressModel.FormatPercent(row.ProcessCpuPercentAvg)</td>
+                        <td class="text-secondary small" data-sort-value="@(row.ProcessGpuPercentAvg ?? -1)">@FleetSimProgressModel.FormatPercent(row.ProcessGpuPercentAvg)</td>
+                        <td class="text-secondary small" data-sort-value="@(row.ProcessDiskReadMBpsAvg ?? -1)">@FleetSimProgressModel.FormatRate(row.ProcessDiskReadMBpsAvg)</td>
+                        <td class="text-secondary small" data-sort-value="@(row.ProcessDiskWriteMBpsAvg ?? -1)">@FleetSimProgressModel.FormatRate(row.ProcessDiskWriteMBpsAvg)</td>
+                        <td class="text-secondary small" data-sort-value="@(row.MachineCpuPercentAvg ?? -1)">@FleetSimProgressModel.FormatPercent(row.MachineCpuPercentAvg)</td>
+                        <td class="text-secondary small" data-sort-value="@(row.MachineGpuPercentAvg ?? -1)">@FleetSimProgressModel.FormatPercent(row.MachineGpuPercentAvg)</td>
+                        <td class="text-secondary small" data-sort-value="@(row.MachineDiskReadMBpsAvg ?? -1)">@FleetSimProgressModel.FormatRate(row.MachineDiskReadMBpsAvg)</td>
+                        <td class="text-secondary small" data-sort-value="@(row.MachineDiskWriteMBpsAvg ?? -1)">@FleetSimProgressModel.FormatRate(row.MachineDiskWriteMBpsAvg)</td>
+                        <td class="text-secondary small" data-sort-value="@(row.MachineNetworkInMBpsAvg ?? -1)">@FleetSimProgressModel.FormatRate(row.MachineNetworkInMBpsAvg)</td>
+                        <td class="text-secondary small" data-sort-value="@(row.MachineNetworkOutMBpsAvg ?? -1)">@FleetSimProgressModel.FormatRate(row.MachineNetworkOutMBpsAvg)</td>
+                        <td class="text-secondary small" data-sort-value="@row.SampleCount">@row.SampleCount</td>
                     </tr>
                 }
                 </tbody>

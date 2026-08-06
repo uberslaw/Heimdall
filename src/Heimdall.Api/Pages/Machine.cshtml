@@ -85,7 +85,7 @@ else if (d is not null)
         <div class="hd-stat">
             <div class="label">Last user</div>
             <div class="value" style="font-size:1rem;margin-top:0.35rem">
-                @(d.LastUser ?? "—")
+                @UsernameDisplay.FormatOrDash(d.LastUser)
                 @if (d.LastUserDepartedUtc is DateTimeOffset departed)
                 {
                     <div class="text-secondary small">@((d.LastSessionState == SessionState.Disconnected ? "Disconnected" : "Log off")) · @MachineModel.FormatLocalTimestamp(departed)</div>
@@ -225,16 +225,16 @@ else if (d is not null)
             {
                 <h3 class="hd-section-title mt-4" style="font-size:1rem;">Recent runs</h3>
                 <div class="table-responsive">
-                    <table class="hd-table mb-0">
+                    <table class="hd-table mb-0 hd-sortable">
                         <thead>
                             <tr>
-                                <th>Run</th>
-                                <th>By</th>
-                                <th>Requested</th>
-                                <th>.tcf</th>
-                                <th>Outcome</th>
-                                <th>Duration</th>
-                                <th>Detail</th>
+                                <th data-sort="text">Run</th>
+                                <th data-sort="text">By</th>
+                                <th data-sort="text">Requested</th>
+                                <th data-sort="text">.tcf</th>
+                                <th data-sort="text">Outcome</th>
+                                <th data-sort="text">Duration</th>
+                                <th data-sort="text">Detail</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -242,7 +242,7 @@ else if (d is not null)
                             {
                                 <tr>
                                     <td>@run.RunName</td>
-                                    <td class="text-secondary small">@(run.RequestedBy ?? "—")</td>
+                                    <td class="text-secondary small">@UsernameDisplay.FormatOrDash(run.RequestedBy)</td>
                                     <td>@MachineModel.FormatLocalTimestamp(run.RequestedUtc)</td>
                                     <td class="text-secondary small" title="@run.TcfPath">@System.IO.Path.GetFileName(run.TcfPath)</td>
                                     <td><span class="badge-pill @MachineModel.TuflowStateBadgeClass(run.State)">@run.State</span></td>

@@ -112,7 +112,7 @@ else
                     <td class="hd-col-status" data-sort-value="@m.Status">
                         <span class="hd-status-text hd-status-@m.Status.ToString().ToLowerInvariant()" title="@m.Status">@m.Status</span>
                     </td>
-                    <td class="hd-col-user" data-sort-value="@(m.LastUser ?? "")" title="@(m.LastUser ?? "")">@(m.LastUser ?? "—")</td>
+                    <td class="hd-col-user" data-sort-value="@UsernameDisplay.Format(m.LastUser)" title="@UsernameDisplay.Format(m.LastUser)">@UsernameDisplay.FormatOrDash(m.LastUser)</td>
                     <td class="hd-col-pct hd-util-cycle" data-sort-value="@u.ActivePct" title="Period @MachineUtilisationService.PeriodOptions.First(p => p.Key == u.PeriodKey).Label — click to cycle">@MachineUtilisationService.FormatPct(u.ActivePct)</td>
                     <td class="hd-col-pct hd-util-cycle" data-sort-value="@(u.PassivePct ?? -1)" title="Click to cycle period">@MachineUtilisationService.FormatPct(u.PassivePct)</td>
                     <td class="hd-col-pct hd-util-cycle" data-sort-value="@u.FreePct" title="Click to cycle period">@MachineUtilisationService.FormatPct(u.FreePct)</td>

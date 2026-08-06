@@ -79,20 +79,20 @@
 }
 
 <div class="hd-panel hd-remote-panel hd-staff-panel mb-4">
-    <table class="hd-table hd-staff-table">
+    <table class="hd-table hd-staff-table hd-sortable">
         <thead>
             <tr>
-                <th class="hd-staff-th-status">Status</th>
-                <th class="hd-staff-th-machine">Machine</th>
-                <th class="hd-staff-th-ip">IP</th>
-                <th class="hd-staff-th-contact">Last contact</th>
-                <th class="hd-staff-th-rds hd-th-stacked"><span>RDS</span><span>Service</span></th>
-                <th class="hd-staff-th-metric">CPU</th>
-                <th class="hd-staff-th-metric">GPU</th>
-                <th class="hd-staff-th-metric">RAM</th>
-                <th class="hd-staff-th-metric hd-th-stacked"><span>Disk</span><span>Reads</span></th>
-                <th class="hd-staff-th-metric hd-th-stacked"><span>Disk</span><span>Writes</span></th>
-                <th class="hd-staff-th-sampling">Sampling</th>
+                <th class="hd-staff-th-status" data-sort="text">Status</th>
+                <th class="hd-staff-th-machine" data-sort="text">Machine</th>
+                <th class="hd-staff-th-ip" data-sort="text">IP</th>
+                <th class="hd-staff-th-contact" data-sort="text">Last contact</th>
+                <th class="hd-staff-th-rds hd-th-stacked" data-sort="text"><span>RDS</span><span>Service</span></th>
+                <th class="hd-staff-th-metric" data-sort="num">CPU</th>
+                <th class="hd-staff-th-metric" data-sort="num">GPU</th>
+                <th class="hd-staff-th-metric" data-sort="num">RAM</th>
+                <th class="hd-staff-th-metric hd-th-stacked" data-sort="text"><span>Disk</span><span>Reads</span></th>
+                <th class="hd-staff-th-metric hd-th-stacked" data-sort="text"><span>Disk</span><span>Writes</span></th>
+                <th class="hd-staff-th-sampling" data-sort="text">Sampling</th>
             </tr>
         </thead>
         <tbody>
@@ -137,7 +137,7 @@
                         <span class="text-secondary">—</span>
                     }
                 </td>
-                <td class="hd-metric-cell hd-staff-metric" data-hd-metric="cpu">
+                <td class="hd-metric-cell hd-staff-metric" data-hd-metric="cpu" data-sort-value="@(m.CpuPercent ?? -1)">
                     <div class="hd-metric-value">@StaffModel.FormatPercent(m.CpuPercent)</div>
                     <ul class="hd-metric-top hd-staff-metric-top" data-hd-top="cpu">
                         @foreach (var p in m.TopCpuProcesses)
@@ -146,7 +146,7 @@
                         }
                     </ul>
                 </td>
-                <td class="hd-metric-cell hd-staff-metric" data-hd-metric="gpu">
+                <td class="hd-metric-cell hd-staff-metric" data-hd-metric="gpu" data-sort-value="@(m.GpuPercent ?? -1)">
                     <div class="hd-metric-value">@StaffModel.FormatPercent(m.GpuPercent)</div>
                     <ul class="hd-metric-top hd-staff-metric-top" data-hd-top="gpu">
                         @foreach (var p in m.TopGpuProcesses)
@@ -159,7 +159,7 @@
                         <div class="text-secondary small">n/a on this host</div>
                     }
                 </td>
-                <td class="hd-metric-cell hd-staff-metric" data-hd-metric="ram">
+                <td class="hd-metric-cell hd-staff-metric" data-hd-metric="ram" data-sort-value="@(m.RamPercent ?? -1)">
                     <div class="hd-metric-value">@StaffModel.FormatRam(m)</div>
                     <ul class="hd-metric-top hd-staff-metric-top" data-hd-top="ram">
                         @foreach (var p in m.TopRamProcesses)

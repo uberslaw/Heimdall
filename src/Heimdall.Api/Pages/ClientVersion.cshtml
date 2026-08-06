@@ -112,19 +112,19 @@
             <span class="text-secondary small" id="selected-count">0 selected</span>
             <button type="button" class="btn btn-ghost btn-sm" id="btn-select-outdated">Select out of date</button>
         </div>
-        <table class="hd-table">
+        <table class="hd-table hd-sortable">
             <thead>
                 <tr>
                     <th style="width:2rem"></th>
-                    <th>Status</th>
-                    <th>Machine</th>
-                    <th>Online</th>
-                    <th>In use</th>
-                    <th>Active User</th>
-                    <th>Client version</th>
-                    <th>Behind</th>
-                    <th>Deploy</th>
-                    <th>Last contact</th>
+                    <th data-sort="text">Status</th>
+                    <th data-sort="text">Machine</th>
+                    <th data-sort="text">Online</th>
+                    <th data-sort="text">In use</th>
+                    <th data-sort="text">Active User</th>
+                    <th data-sort="num">Client version</th>
+                    <th data-sort="num">Behind</th>
+                    <th data-sort="text">Deploy</th>
+                    <th data-sort="date">Last contact</th>
                 </tr>
             </thead>
             <tbody>
@@ -140,17 +140,17 @@
                         <input type="checkbox" class="form-check-input host-check" name="SelectedHostnames" value="@r.Hostname"
                                @(r.IsOnline ? null : "title=\"Offline — queue when agent is back\"") />
                     </td>
-                    <td>
+                    <td data-sort-value="@((int)r.Status)">
                         <span class="badge-pill @ClientVersionModel.StatusBadgeClass(r.Status)"
                               title="@(r.AgentVersion ?? "")">
                             @ClientVersionModel.StatusLabel(r.Status)
                         </span>
                     </td>
-                    <td>
+                    <td data-sort-value="@r.Hostname">
                         <a asp-page="/Machine" asp-route-hostname="@r.Hostname"><strong>@r.Hostname</strong></a>
                         <div class="text-secondary small">@(string.IsNullOrWhiteSpace(r.LastIp) ? "—" : r.LastIp.Trim())</div>
                     </td>
-                    <td>
+                    <td data-sort-value="@(r.IsOnline ? 1 : 0)">
                         @if (r.IsOnline)
                         {
                             <span class="badge-pill badge-active">Online</span>
@@ -160,19 +160,19 @@
                             <span class="badge-pill badge-ended">Offline</span>
                         }
                     </td>
-                    <td>@(r.IsInUse ? "Yes" : "No")</td>
-                    <td>
+                    <td data-sort-value="@(r.IsInUse ? 1 : 0)">@(r.IsInUse ? "Yes" : "No")</td>
+                    <td data-sort-value="@UsernameDisplay.Format(r.ActiveUser)">
                         @if (!string.IsNullOrWhiteSpace(r.ActiveUser))
                         {
                             <span class="badge-pill @ClientVersionModel.ActiveUserBadgeClass(r.ActiveUserState)"
-                                  title="@ClientVersionModel.ActiveUserLabel(r.ActiveUserState)">@r.ActiveUser</span>
+                                  title="@ClientVersionModel.ActiveUserLabel(r.ActiveUserState)">@UsernameDisplay.Format(r.ActiveUser)</span>
                         }
                         else
                         {
                             <span class="text-secondary">—</span>
                         }
                     </td>
-                    <td>
+                    <td data-sort-value="@(r.SimpleVersion ?? -1)">
                         @if (r.SimpleVersion is int sv)
                         {
                             <code>@sv</code>
@@ -186,7 +186,7 @@
                             <code>—</code>
                         }
                     </td>
-                    <td>
+                    <td data-sort-value="@(r.VersionsBehind ?? 0)">
                         @if (r.VersionsBehind is int behind and > 0)
                         {
                             <span class="badge-pill badge-expired">@behind version@(behind == 1 ? "" : "s") behind</span>
@@ -199,7 +199,7 @@
                     <td class="small text-secondary" title="@(r.ClientUpdateProgressJson ?? "")">
                         @(ClientVersionModel.FormatUpdateProgress(r.ClientUpdateProgressJson) ?? "—")
                     </td>
-                    <td>@ClientVersionModel.FormatContact(r.LastSeenUtc)</td>
+                    <td data-sort-value="@r.LastSeenUtc.ToUnixTimeSeconds()">@ClientVersionModel.FormatContact(r.LastSeenUtc)</td>
                 </tr>
             }
             </tbody>

@@ -30,8 +30,9 @@ public static class TeamPageHelpers
             yield return $"{dom}\\{user}";
     }
 
+    /// <summary>UI display form — bare username (strips Global\ / DOMAIN\).</summary>
     public static string FormatUser(string username, string? domain) =>
-        string.IsNullOrWhiteSpace(domain) ? username : $"{domain}\\{username}";
+        Heimdall.Shared.UsernameDisplay.Format(username, domain);
 
     public static string NormalizeKey(string username, string? domain)
     {
