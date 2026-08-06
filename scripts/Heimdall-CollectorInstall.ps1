@@ -35,6 +35,7 @@ function Import-HeimdallVersionCompare {
         . $helperPath
         foreach ($fn in @(
                 'Get-HeimdallCoreProductVersion',
+                'Get-HeimdallSimpleClientVersion',
                 'Test-HeimdallProductVersionMatch',
                 'Format-HeimdallVersionCompareLine'
             )) {
@@ -63,14 +64,24 @@ function Write-HeimdallVersionCompareInlineFallback {
         }
         return $v.Trim()
     }
+    function Get-HeimdallSimpleClientVersion {
+        param([string]$Version)
+        $core = Get-HeimdallCoreProductVersion -Version $Version
+        if ([string]::IsNullOrWhiteSpace($core)) { return $null }
+        $n = 0
+        if ([int]::TryParse($core, [ref]$n) -and $n -ge 0 -and ($core -match '^\d+$')) {
+            return $n
+        }
+        return 1
+    }
     function Test-HeimdallProductVersionMatch {
         param(
             [string]$VersionA,
             [string]$VersionB
         )
-        $a = Get-HeimdallCoreProductVersion -Version $VersionA
-        $b = Get-HeimdallCoreProductVersion -Version $VersionB
-        if ([string]::IsNullOrWhiteSpace($a) -or [string]::IsNullOrWhiteSpace($b)) {
+        $a = Get-HeimdallSimpleClientVersion -Version $VersionA
+        $b = Get-HeimdallSimpleClientVersion -Version $VersionB
+        if ($null -eq $a -or $null -eq $b) {
             return $true
         }
         return ($a -eq $b)
@@ -84,17 +95,20 @@ function Write-HeimdallVersionCompareInlineFallback {
         )
         $coreA = Get-HeimdallCoreProductVersion -Version $VersionA
         $coreB = Get-HeimdallCoreProductVersion -Version $VersionB
+        $simpleA = Get-HeimdallSimpleClientVersion -Version $VersionA
+        $simpleB = Get-HeimdallSimpleClientVersion -Version $VersionB
         $match = Test-HeimdallProductVersionMatch -VersionA $VersionA -VersionB $VersionB
         if ($match) {
             if ($VersionA -ne $VersionB) {
-                return "$LabelA=$VersionA | $LabelB=$VersionB | core=$coreA (match; build metadata ignored)"
+                return "$LabelA=$VersionA | $LabelB=$VersionB | simple=$simpleA (match; legacy SemVer maps to 1)"
             }
             return "$LabelA=$VersionA | $LabelB=$VersionB | match"
         }
-        return "$LabelA=$VersionA (core=$coreA) | $LabelB=$VersionB (core=$coreB) | MISMATCH"
+        return "$LabelA=$VersionA (core=$coreA simple=$simpleA) | $LabelB=$VersionB (core=$coreB simple=$simpleB) | MISMATCH"
     }
     foreach ($fn in @(
             'Get-HeimdallCoreProductVersion',
+            'Get-HeimdallSimpleClientVersion',
             'Test-HeimdallProductVersionMatch',
             'Format-HeimdallVersionCompareLine'
         )) {
@@ -276,34 +290,76 @@ function Get-HeimdallInstallWorkstationCollectorLogTail {
     return Get-HeimdallInstallAgentLogTail -LineCount $LineCount -LogRoot $LogRoot
 }
 
+function Resolve-HeimdallProductVersionExpected {
+    param(
+        [Parameter(Mandatory)][string]$ScriptDir,
+        [string]$RepoRoot = $null,
+        # Legacy integer when no VERSION.json (pre-integer packs map to 1 in VersionCompare).
+        [string]$Fallback = "1"
+    )
+    $candidates = @(
+        (Join-Path $ScriptDir "VERSION.json")
+    )
+    if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $candidates += (Join-Path $RepoRoot "dist\Heimdall-Client\VERSION.json")
+        $candidates += (Join-Path $RepoRoot "dist\workstation-collector\VERSION.json")
+    }
+    foreach ($c in $candidates) {
+        if (-not (Test-Path -LiteralPath $c)) { continue }
+        try {
+            $obj = Get-Content -Raw -LiteralPath $c | ConvertFrom-Json
+            $pv = [string]$obj.productVersion
+            if (-not [string]::IsNullOrWhiteSpace($pv)) {
+                return $pv.Trim()
+            }
+        }
+        catch { }
+    }
+    return $Fallback
+}
+
 function Test-HeimdallProductVersionAccept {
     param(
         [string]$LocalVersion,
-        [string]$ServerVersion,
+        # Client pack baseline (ProductVersionExpected from local VERSION.json).
+        # Do NOT pass API /api/health productVersion — that is API SemVer and is independent.
+        [string]$ExpectedClientVersion = $null,
         [scriptblock]$Log = $null,
         [scriptblock]$ConfirmMismatch = $null
     )
     $localPv = [string]$LocalVersion
-    $serverPv = [string]$ServerVersion
-    $verLine = Format-HeimdallVersionCompareLine -LabelA "Pack" -VersionA $localPv -LabelB "Server" -VersionB $serverPv
+    $expectedPv = [string]$ExpectedClientVersion
+
+    # Guard: never treat API SemVer (e.g. 0.1.0+hash) as a client pack baseline.
+    if (-not [string]::IsNullOrWhiteSpace($expectedPv)) {
+        $coreExpected = Get-HeimdallCoreProductVersion -Version $expectedPv
+        if ($coreExpected -notmatch '^\d+$') {
+            if ($Log) {
+                & $Log "Ignoring non-integer ExpectedClientVersion '$expectedPv' (API /api/health SemVer is reachability-only; not compared to client pack)." "WARN"
+            }
+            return $true
+        }
+    }
+
+    $verLine = Format-HeimdallVersionCompareLine -LabelA "Pack" -VersionA $localPv -LabelB "Expected" -VersionB $expectedPv
     if ($Log) { & $Log "Version: $verLine" "INFO" }
 
-    if (Test-HeimdallProductVersionMatch -VersionA $localPv -VersionB $serverPv) {
-        $core = Get-HeimdallCoreProductVersion -Version $localPv
-        if ($localPv -ne $serverPv) {
-            if ($Log) { & $Log "Version match (core $core; server build metadata ignored)" "INFO" }
+    if (Test-HeimdallProductVersionMatch -VersionA $localPv -VersionB $expectedPv) {
+        $simple = Get-HeimdallSimpleClientVersion -Version $localPv
+        if ($localPv -ne $expectedPv) {
+            if ($Log) { & $Log "Client version match (simple=$simple; legacy SemVer maps to 1)" "INFO" }
         }
         else {
-            if ($Log) { & $Log "Product versions match (core SemVer)." "OK" }
+            if ($Log) { & $Log "Client pack version matches expected ($localPv)." "OK" }
         }
         return $true
     }
 
-    $coreA = Get-HeimdallCoreProductVersion -Version $localPv
-    $coreB = Get-HeimdallCoreProductVersion -Version $serverPv
-    if ($Log) { & $Log "Product version MISMATCH: pack core=$coreA server core=$coreB" "WARN" }
+    $simpleA = Get-HeimdallSimpleClientVersion -Version $localPv
+    $simpleB = Get-HeimdallSimpleClientVersion -Version $expectedPv
+    if ($Log) { & $Log "Client version MISMATCH: pack=$localPv (simple=$simpleA) expected=$expectedPv (simple=$simpleB)" "WARN" }
     if ($ConfirmMismatch) {
-        return [bool](& $ConfirmMismatch $localPv $serverPv)
+        return [bool](& $ConfirmMismatch $localPv $expectedPv)
     }
     return $false
 }

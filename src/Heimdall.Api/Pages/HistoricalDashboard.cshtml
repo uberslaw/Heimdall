@@ -40,18 +40,49 @@
     <div class="hd-panel mb-4">
         <h2 class="h5 mb-2">Enroll machines</h2>
         <p class="text-secondary small mb-3">
-            Only enrolled machines receive always-on 30s history. Search by hostname or last-known IP, then add.
+            Only enrolled machines receive always-on 30s history (and appear on TUFLOW Runs). Search by hostname, friendly name, or last-known IP, or pick from the list below.
             Agents pick up enrollment on their next config refresh (typically within a few minutes).
         </p>
         <form method="get" class="row g-2 align-items-end mb-3">
             <input type="hidden" name="tab" value="enroll" />
             <div class="col-md-6">
-                <label class="form-label small" for="q">Search hostname or IP</label>
-                <input class="form-control" id="q" name="q" value="@Model.Q" placeholder="e.g. SYDDT1234 or 10.1.2.3" />
+                <label class="form-label small" for="q">Search hostname, friendly name, or IP</label>
+                <input class="form-control" id="q" name="q" value="@Model.Q" placeholder="e.g. SYDDT1234, Flood-01, or 10.1.2.3" />
             </div>
             <div class="col-auto">
                 <button type="submit" class="hd-btn hd-btn-gold">Search</button>
             </div>
+        </form>
+
+        <form method="post" asp-page-handler="Enroll" class="row g-2 align-items-end mb-4">
+            <input type="hidden" name="Q" value="@Model.Q" />
+            <div class="col-md-8">
+                <label class="form-label small" for="enroll-pick">Or select a machine</label>
+                <select class="form-select" id="enroll-pick" name="EnrollMachineId" required>
+                    <option value="">— hostname - friendly name - IP —</option>
+                    @foreach (var m in Model.PickerMachines.Where(x => !x.AlreadyEnrolled))
+                    {
+                        var friendly = string.IsNullOrWhiteSpace(m.FriendlyName) ? "—" : m.FriendlyName.Trim();
+                        var ip = string.IsNullOrWhiteSpace(m.LastIp) ? "—" : m.LastIp.Trim();
+                        <option value="@m.MachineId">@m.Hostname - @friendly - @ip</option>
+                    }
+                </select>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="hd-btn hd-btn-gold">Add</button>
+            </div>
+            @if (Model.PickerMachines.Count == 0)
+            {
+                <div class="col-12">
+                    <p class="text-secondary small mb-0">No machines in the database yet — wait for an agent heartbeat first.</p>
+                </div>
+            }
+            else if (Model.PickerMachines.All(x => x.AlreadyEnrolled))
+            {
+                <div class="col-12">
+                    <p class="text-secondary small mb-0">Every known machine is already enrolled.</p>
+                </div>
+            }
         </form>
 
         @if (!string.IsNullOrWhiteSpace(Model.Q))
@@ -66,6 +97,7 @@
                     <thead>
                         <tr>
                             <th data-sort="text">Hostname</th>
+                            <th data-sort="text">Friendly name</th>
                             <th data-sort="text">IP</th>
                             <th data-sort="date">Last seen</th>
                             <th>Action</th>
@@ -76,6 +108,7 @@
                     {
                         <tr>
                             <td>@hit.Hostname</td>
+                            <td>@(string.IsNullOrWhiteSpace(hit.FriendlyName) ? "—" : hit.FriendlyName)</td>
                             <td>@(hit.LastIp ?? "—")</td>
                             <td data-sort-value="@hit.LastSeenUtc.ToUnixTimeSeconds()">@HistoricalDashboardModel.FormatContact(hit.LastSeenUtc)</td>
                             <td>
@@ -104,7 +137,7 @@
         <h2 class="h5 mb-2">Enrolled (@Model.Enrolled.Count)</h2>
         @if (Model.Enrolled.Count == 0)
         {
-            <p class="text-secondary mb-0">No machines enrolled yet. Search above to add hosts — empty enrollment means no 30s history is collected.</p>
+            <p class="text-secondary mb-0">No machines enrolled yet. Search or pick a machine above — empty enrollment means no 30s history is collected.</p>
         }
         else
         {
@@ -112,6 +145,7 @@
                 <thead>
                     <tr>
                         <th data-sort="text">Hostname</th>
+                        <th data-sort="text">Friendly name</th>
                         <th data-sort="text">IP</th>
                         <th data-sort="date">Added</th>
                         <th data-sort="date">Agent last seen</th>
@@ -126,6 +160,7 @@
                         <td>
                             <a asp-page="/HistoricalDashboardMachine" asp-route-id="@e.MachineId">@e.Hostname</a>
                         </td>
+                        <td>@(string.IsNullOrWhiteSpace(e.FriendlyName) ? "—" : e.FriendlyName)</td>
                         <td>@(e.LastIp ?? "—")</td>
                         <td data-sort-value="@e.AddedUtc.ToUnixTimeSeconds()">@e.AddedUtc.ToLocalTime().ToString("g")</td>
                         <td data-sort-value="@e.LastSeenUtc.ToUnixTimeSeconds()">@HistoricalDashboardModel.FormatContact(e.LastSeenUtc)</td>

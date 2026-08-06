@@ -17,7 +17,8 @@
         <a class="btn btn-ghost btn-sm" href="#track-software">Track Software</a>
         <a class="btn btn-ghost btn-sm" href="#socratize">Socratize</a>
         <a class="btn btn-ghost btn-sm" href="#sessions">Sessions</a>
-        <a class="btn btn-ghost btn-sm" href="#remote-machines">Remote Machines</a>
+        <a class="btn btn-ghost btn-sm" href="#remote-machines">Online Status</a>
+        <a class="btn btn-ghost btn-sm" href="#tuflow-runs">TUFLOW Runs</a>
         <a class="btn btn-ghost btn-sm" href="#historical-dashboard">Historical Dashboard</a>
         <a class="btn btn-ghost btn-sm" href="#staff-access">Staff Access</a>
         <a class="btn btn-ghost btn-sm" href="#remote-access-groups">Remote Access Groups</a>
@@ -26,7 +27,7 @@
         <a class="btn btn-ghost btn-sm" href="#utilization">Utilization criteria</a>
         <a class="btn btn-ghost btn-sm" href="#cost">Cost</a>
         <a class="btn btn-ghost btn-sm" href="#stats">Stats</a>
-        <a class="btn btn-ghost btn-sm" href="#clients">Clients</a>
+        <a class="btn btn-ghost btn-sm" href="#client-version">Client Version</a>
         <a class="btn btn-ghost btn-sm" href="#admin-preferences">Theme &amp; database mode</a>
     </div>
 </nav>
@@ -60,7 +61,8 @@
         <strong>Purpose:</strong> named schemas of processes (e.g. a team's toolset). Discovering apps on a machine never auto-tracks them — you approve first.
     </p>
     <ol class="small">
-        <li><strong>Existing lists</strong> — browse, edit, or select several and <em>Export Selected</em> (App list CSV/JSON, or Classification CSV for the AI workflow below).</li>
+        <li><strong>Existing lists</strong> — browse, edit, or select several and <em>Export Selected</em> (App list CSV/JSON, or Classification CSV for the AI workflow below).
+            Three <strong>System</strong> lists (<em>Core Windows</em>, <em>SOE</em>, <em>Specialization</em>) sync from approved classifications on page load — editable and applicable to scopes, but not deletable. Other lists show <em>Delete</em> (rose).</li>
         <li><strong>Create app list</strong> — name it, optionally link a team, and paste process names (one per line, or <code>DisplayName,ProcessName</code>). <em>Create List</em> / <em>Save List</em> (silver); <em>Cancel</em> (rose).</li>
         <li><strong>Upload CSV / JSON</strong> — <em>Choose File</em> then <em>Upload File</em>; same shape as Export Selected for round-tripping.</li>
         <li><strong>Apply list to scope</strong> — pick a list, optionally tick <em>Global</em>, or select regions/offices/machines in the tree, then <em>Apply List</em>.</li>
@@ -157,13 +159,31 @@
 </section>
 
 <section id="remote-machines" class="hd-panel mb-4 hd-help-section">
-    <h2 class="h5">Remote Machines</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> RDP/RDS health at a glance — service status, reachability, and a way to restart RDS remotely.</p>
+    <h2 class="h5">Online Status</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> RDP/RDS health at a glance — service status, reachability, and a way to restart RDS remotely. (Route: <code>/RemoteMachines</code>.)</p>
     <ol class="small mb-0">
         <li>Review per-machine RDP health, ping, and Terminal Services status (refreshed by the agent, plus on-demand from the API server).</li>
         <li>Use <em>Connect</em> to download a small <code>.rdp</code> file for that hostname (opens with Windows Remote Desktop / mstsc). Browsers cannot run <code>mstsc /v:</code> directly.</li>
         <li>Use <em>Restart RDS</em> to queue a remote restart command for the agent to pick up; progress shows inline.</li>
     </ol>
+</section>
+
+<section id="tuflow-runs" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">TUFLOW Runs</h2>
+    <p class="text-secondary small mb-2">
+        <strong>Purpose:</strong> queue a TUFLOW start or graceful stop from the console on Historical Dashboard–enrolled fleet machines
+        (see <a asp-page="/TuflowRuns">TUFLOW Runs</a> and <a asp-page="/FleetSimProgress">Fleet Sim Progress</a>).
+    </p>
+    <ol class="small">
+        <li>Enroll the modelling host on <strong>Historical Dashboard → Enrollment</strong> first.</li>
+        <li>On <strong>TUFLOW Runs</strong>, enter exe path, <code>.tcf</code>, optional scenarios/events/run name, then Start. The agent picks up within ~20s.</li>
+        <li><strong>Stop gracefully</strong> asks the launcher to send a process-group break so TUFLOW can finish the current checkpoint (resume-friendly if your <code>.tcf</code> writes restart files — see <code>tuflow-automation/tcf/</code>).</li>
+        <li>Progress comes from TUFLOW’s own <code>.tsf</code>; crashes from <code>.tlf</code> ERROR lines. Machine detail also shows a TUFLOW panel + recent run history.</li>
+        <li>Agent needs <code>%ProgramFiles%\Heimdall\Agent\TuflowLauncher\TuflowLauncher.exe</code> (included when you pack/install the client or run <code>Install-Agent</code>).</li>
+    </ol>
+    <p class="text-secondary small mb-0">
+        POC uses free-form paths (not allowlisted batches yet). Modelling+DT RBAC is a follow-up.
+    </p>
 </section>
 
 <section id="historical-dashboard" class="hd-panel mb-4 hd-help-section">
@@ -256,12 +276,14 @@
     </ol>
 </section>
 
-<section id="clients" class="hd-panel mb-4 hd-help-section">
-    <h2 class="h5">Clients (agent versions)</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> the agent build reported per host (from its last heartbeat) vs. the currently published client pack version — a fleet-upgrade view.</p>
+<section id="client-version" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Client Version</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> under <strong>Machines</strong> — agent build vs. published version, online / in use / <strong>Active User</strong> (green = Active, red = Disconnected), and silent <strong>Deploy Client</strong> when the pack on this API host matches source.</p>
     <ol class="small mb-0">
-        <li>Hosts behind the published version are flagged so you know who still needs to pick up an upgrade.</li>
-        <li>Agents self-update from the published client pack on their normal refresh cycle — no manual push needed once it's published.</li>
+        <li>On load the page checks source vs pack fingerprints; <strong>Deploy Client</strong> stays locked until the pack is Ready. <strong>Pack client</strong> always rebuilds and bumps version (N+1), even when already Ready (requires <code>Heimdall:RepoRoot</code> on D8R).</li>
+        <li>Deploy queues a silent agent self-update (download + service restart only). Updates defer while any interactive session is Active — no logoff or reboot. Agents below version <code>3</code> do not support <code>UpdateClient</code> — Deploy marks them Failed with bootstrap guidance.</li>
+        <li><strong>Bootstrap once:</strong> first upgrade from pre-3 / legacy clients needs Launch Control push or <code>Install.lnk</code> from the pack. After that, silent Deploy works for subsequent versions.</li>
+        <li>Legacy SemVer builds count as version <code>1</code>; current packs use simple integers (baseline <code>3</code> = first UpdateClient-capable). Old <code>/Clients</code> URLs redirect here.</li>
     </ol>
 </section>
 

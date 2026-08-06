@@ -38,7 +38,6 @@ if (Test-Path -LiteralPath $installApiTimingPath) {
 }
 Import-HeimdallVersionCompare -ScriptDir $script:ScriptDirEarly
 
-$script:ProductVersionExpected = "0.1.0"
 $script:ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:IsPackedLayout = Test-Path (Join-Path $script:ScriptDir "payload\Heimdall.Agent.exe")
 $script:RepoRoot = if ($script:IsPackedLayout) {
@@ -47,6 +46,8 @@ $script:RepoRoot = if ($script:IsPackedLayout) {
     # scripts\ -> repo root
     Split-Path -Parent $script:ScriptDir
 }
+# Track auto-bumped pack productVersion from VERSION.json (never hardcode 2/3/…).
+$script:ProductVersionExpected = Resolve-HeimdallProductVersionExpected -ScriptDir $script:ScriptDir -RepoRoot $script:RepoRoot -Fallback "1"
 
 $script:LogRoot = Join-Path $env:ProgramData "Heimdall\logs"
 $script:DataRoot = Join-Path $env:ProgramData "Heimdall"
@@ -2397,6 +2398,57 @@ function Invoke-PrerequisiteCheck {
 # Guided flows
 # ---------------------------------------------------------------------------
 
+function Start-RedeployApi {
+    Set-UiSteps @(
+        "[ ] 1. Locate republish script",
+        "[ ] 2. Elevated republish (preserves appsettings.json)",
+        "[ ] 3. Verify /api/health"
+    )
+    Set-UiStatus "Redeploy API (preserve config)"
+
+    $ps1 = Join-Path $script:ScriptDir "_tuflow-republish-api.ps1"
+    if (-not (Test-Path -LiteralPath $ps1) -and $script:RepoRoot) {
+        $ps1 = Join-Path $script:RepoRoot "scripts\_tuflow-republish-api.ps1"
+    }
+    if (-not (Test-Path -LiteralPath $ps1)) {
+        Update-UiStep 0 "[X] 1. Republish script missing"
+        [System.Windows.Forms.MessageBox]::Show(
+            "Redeploy script not found:`r`n$ps1`r`n`r`nUse a full repo clone, or run Install API for a full install.",
+            "Redeploy API",
+            "OK",
+            "Warning") | Out-Null
+        return
+    }
+    Update-UiStep 0 "[OK] 1. Script: $ps1"
+
+    Write-HeimdallLog "Launching elevated republish (excludes appsettings.json)..." -Level STEP
+    Update-UiStep 1 "[...] 2. Elevated republish"
+    $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$ps1`""
+    $p = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $arg -PassThru
+    $exit = Wait-ProcessWithUiPump -Process $p -StatusText "Redeploying API (accept UAC; preserves config)..."
+    if ($exit -ne 0) {
+        Update-UiStep 1 "[X] 2. Republish failed (exit $exit)"
+        Write-HeimdallLog "Redeploy API exited with code $exit" -Level ERROR
+        Set-UiStatus "Redeploy API failed (exit $exit)"
+        return
+    }
+    Update-UiStep 1 "[OK] 2. Republish finished"
+
+    $healthUrl = "http://127.0.0.1:5080/api/health"
+    try {
+        $h = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 10
+        Update-UiStep 2 "[OK] 3. Health OK ($($h.status))"
+        Write-HeimdallLog "Health $healthUrl -> $($h | ConvertTo-Json -Compress)" -Level OK
+        Set-UiStatus "API redeployed. Health OK."
+        Update-HeimdallServiceStatusUi
+    }
+    catch {
+        Update-UiStep 2 "[X] 3. Health check failed: $($_.Exception.Message)"
+        Write-HeimdallLog "Health check failed after redeploy: $($_.Exception.Message)" -Level ERROR
+        Set-UiStatus "Redeploy finished but health check failed — check service / port."
+    }
+}
+
 function Start-GuidedApiInstall {
     Set-UiSteps @(
         "[ ] 1. Prerequisites (.NET 10 SDK, admin, repo)",
@@ -2497,8 +2549,8 @@ function Get-BuiltAgentProductVersion {
     <#
     Reads the ProductVersion Win32 resource straight off the just-published Heimdall.Agent.exe — this is
     exactly what Worker.cs reports as AgentVersion on heartbeat (AssemblyInformationalVersionAttribute,
-    e.g. "0.1.0+<gitsha>"), so it is the most accurate "what did we actually build" value. Falls back to
-    VERSION.json's productVersion (Directory.Build.props core version only, no build metadata) if the exe
+    e.g. simple integer "2"), so it is the most accurate "what did we actually build" value. Falls back to
+    VERSION.json's productVersion if the exe
     can't be read.
     #>
     param(
@@ -2531,9 +2583,9 @@ function Get-BuiltAgentProductVersion {
 
 function Publish-ClientVersionToApi {
     <#
-    Best-effort: tells the API "this is the current published client version" (see Clients page /
-    PublishedVersionService). Never blocks or fails the pack — a skip here just means the Clients page
-    keeps its previous baseline (or stays unset) until someone sets it manually.
+    Best-effort: tells the API "this is the current published client version" (see Client Version page /
+    PublishedVersionService). Never blocks or fails the pack — a skip here just means the Client Version page
+    keeps its previous baseline (or stays on the default) until someone sets it manually.
     #>
     param(
         [Parameter(Mandatory)][string]$Version,
@@ -2555,7 +2607,7 @@ function Publish-ClientVersionToApi {
     if (-not $ApiKey) { $ApiKey = "heimdall-poc-key" }
 
     if ([string]::IsNullOrWhiteSpace($ApiUrl)) {
-        Write-HeimdallLog "Skipped publishing client version to API (no known API URL yet). Set it manually on the Clients page once the API is known." -Level WARN
+        Write-HeimdallLog "Skipped publishing client version to API (no known API URL yet). Set it manually on the Client Version page once the API is known." -Level WARN
         return [pscustomobject]@{ Ok = $false; Uri = $null; Error = "No API URL known" }
     }
 
@@ -2641,10 +2693,10 @@ function Start-GuidedPack {
         if ($builtVersion) {
             $publishResult = Publish-ClientVersionToApi -Version $builtVersion
             $publishNote = if ($publishResult.Ok) {
-                "`r`n`r`nPublished version $builtVersion to the API's Clients page ($($publishResult.Uri))."
+                "`r`n`r`nPublished version $builtVersion to the API's Client Version page ($($publishResult.Uri))."
             }
             else {
-                "`r`n`r`nCould not auto-publish version $builtVersion to the API ($($publishResult.Error)). Set it manually on the Clients page once the API URL is known."
+                "`r`n`r`nCould not auto-publish version $builtVersion to the API ($($publishResult.Error)). Set it manually on the Client Version page once the API URL is known."
             }
         }
         else {
@@ -2770,27 +2822,33 @@ function Start-GuidedCollectorInstall {
     $localPv = if ($localVer -and $localVer.productVersion) { $localVer.productVersion } else { $script:ProductVersionExpected }
 
     if ($health.Ok) {
-        $serverPv = [string]$health.Payload.productVersion
-        Write-HeimdallLog "API reachable. productVersion=$serverPv machine=$($health.Payload.machineName)" -Level OK
-        $versionOk = Test-HeimdallProductVersionAccept -LocalVersion $localPv -ServerVersion $serverPv -Log {
+        $apiPv = [string]$health.Payload.productVersion
+        # Pack vs ProductVersionExpected only — never compare to API health SemVer ($apiPv).
+        $expectedPv = if ($localVer -and $localVer.productVersion) {
+            [string]$localVer.productVersion
+        }
+        else {
+            $script:ProductVersionExpected
+        }
+        Write-HeimdallLog "API reachable. apiProductVersion=$apiPv (API SemVer; independent of client pack) machine=$($health.Payload.machineName)" -Level OK
+        $versionOk = Test-HeimdallProductVersionAccept -LocalVersion $localPv -ExpectedClientVersion $expectedPv -Log {
             param([string]$Message, [string]$Level)
             Write-HeimdallLog $Message -Level $Level
         } -ConfirmMismatch {
-            param([string]$PackPv, [string]$SrvPv)
+            param([string]$PackPv, [string]$ExpectedPv)
             $r = [System.Windows.Forms.MessageBox]::Show(
-                "API is reachable, but product versions differ (core SemVer).`r`n`r`nPack:   $PackPv`r`nServer: $SrvPv`r`n`r`nInstall anyway?",
+                "API is reachable, but this pack's client version differs from the expected client version.`r`n`r`nPack:     $PackPv`r`nExpected: $ExpectedPv`r`n`r`n(API SemVer is not compared.)`r`n`r`nInstall anyway?",
                 "Version mismatch",
                 [System.Windows.Forms.MessageBoxButtons]::YesNo,
                 [System.Windows.Forms.MessageBoxIcon]::Warning)
             return ($r -eq [System.Windows.Forms.DialogResult]::Yes)
         }
         if (-not $versionOk) { return }
-        if (Test-HeimdallProductVersionMatch -VersionA $localPv -VersionB $serverPv) {
-            $corePv = Get-HeimdallCoreProductVersion -Version $localPv
-            Update-UiStep 2 "[OK] 3. Health OK - productVersion=$corePv"
+        if (Test-HeimdallProductVersionMatch -VersionA $localPv -VersionB $expectedPv) {
+            Update-UiStep 2 "[OK] 3. Health OK - clientVersion=$localPv"
         }
         else {
-            Update-UiStep 2 "[!] 3. Health OK - version mismatch pack=$localPv server=$serverPv"
+            Update-UiStep 2 "[!] 3. Health OK - client version mismatch pack=$localPv expected=$expectedPv"
         }
 
         $auth = Test-ApiConfigAuth -ApiUrl $inputs.ApiUrl -ApiKey $inputs.ApiKey
@@ -3023,7 +3081,7 @@ Where things live after pack:
 On the build PC (full Heimdall repo):
 
 1. Open scripts\Heimdall-Setup.lnk (this window).
-2. Click left: Create client pack.
+2. Operations tab → Republish → Create client pack.
 3. Wait for the console publish to finish (first run can take several minutes).
 4. Success creates: dist\Heimdall-Client\
    - Install.lnk  ← what clients run
@@ -3046,7 +3104,7 @@ If pack fails (NU1101): nuget.org blocked or only offline VS feeds — fix NuGet
             Detail = @'
 Preferred (from this Setup window):
 
-1. Click left: Push client pack to PC...
+1. Click Operations → Setup → Push client pack to PC(s)...
 2. Type the target hostname or IP (C$ required).
 3. Click Push.
 4. Setup copies to \\HOST\C$\Temp\Heimdall-Client and opens that folder in Explorer.
@@ -3126,11 +3184,13 @@ This Setup window must be opened from the repo (scripts\Heimdall-Setup.lnk), not
             Title  = "2. Install API on this PC"
             Detail = @'
 1. Open scripts\Heimdall-Setup.lnk on the server.
-2. Click left: Install API on this PC.
+2. On the Operations tab, under Setup: Install API on this PC (first time / full install).
 3. Confirm port and API key when prompted. Accept UAC.
 4. Wait for publish + Windows service HeimdallApi to start.
 
-What it does:
+Later updates (code only, keep existing appsettings): Operations → Republish → Redeploy API (preserve config).
+
+What full Install does:
 - Stops HeimdallApi if running (no manual stop needed), publishes, then recreates and starts the service
 - Publishes to %ProgramFiles%\Heimdall\Api\
 - SQLite DB: %ProgramData%\Heimdall\heimdall.db
@@ -3139,7 +3199,8 @@ What it does:
 
 Look for:
 - Setup verify step succeeds against /api/health
-- productVersion in health matches your build (core SemVer, e.g. 0.1.0)
+- API health productVersion is API SemVer (independent of client pack version)
+- Client install compares pack vs expected client version (e.g. 2), not API SemVer
 
 '@
         },
@@ -3247,73 +3308,123 @@ function Show-LaunchControl {
     $sub.Height = 22
     $form.Controls.Add($sub)
 
+    $tabs = New-Object System.Windows.Forms.TabControl
+    $tabs.Left = 8
+    $tabs.Top = 64
+    $tabs.Width = 1070
+    $tabs.Height = 720
+    $tabs.Anchor = "Top, Bottom, Left, Right"
+    $form.Controls.Add($tabs)
+
+    $tabOps = New-Object System.Windows.Forms.TabPage
+    $tabOps.Text = "Operations"
+    $tabs.TabPages.Add($tabOps)
+
+    $tabHelp = New-Object System.Windows.Forms.TabPage
+    $tabHelp.Text = "Help"
+    $tabs.TabPages.Add($tabHelp)
+
     $btnPanel = New-Object System.Windows.Forms.Panel
-    $btnPanel.Left = 12
-    $btnPanel.Top = 72
-    $btnPanel.Width = 280
-    $btnPanel.Height = 560
+    $btnPanel.Left = 8
+    $btnPanel.Top = 8
+    $btnPanel.Width = 300
+    $btnPanel.Height = 520
     $btnPanel.AutoScroll = $true
     $btnPanel.HorizontalScroll.Enabled = $false
     $btnPanel.HorizontalScroll.Visible = $false
     $btnPanel.AutoScrollMargin = New-Object System.Drawing.Size(0, 8)
     $btnPanel.Anchor = "Top, Bottom, Left"
-    $form.Controls.Add($btnPanel)
+    $tabOps.Controls.Add($btnPanel)
 
-    function New-ActionButton($text, $top, $enabled = $true) {
+    $script:LaunchControlBtnStackY = 0
+    function Add-SectionHeading([string]$Text) {
+        if ($script:LaunchControlBtnStackY -gt 0) {
+            $script:LaunchControlBtnStackY += 10
+        }
+        $lbl = New-Object System.Windows.Forms.Label
+        $lbl.Text = $Text
+        $lbl.Left = 0
+        $lbl.Top = $script:LaunchControlBtnStackY
+        $lbl.Width = [Math]::Max(200, $btnPanel.ClientSize.Width - 8)
+        $lbl.Height = 22
+        $lbl.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 9)
+        $lbl.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+        $btnPanel.Controls.Add($lbl)
+        $script:LaunchControlBtnStackY += 24
+    }
+    function New-ActionButton([string]$text, [bool]$enabled = $true) {
         $b = New-Object System.Windows.Forms.Button
         $b.Text = $text
         $b.Left = 0
-        $b.Top = $top
+        $b.Top = $script:LaunchControlBtnStackY
         $b.Width = [Math]::Max(200, $btnPanel.ClientSize.Width - 8)
-        $b.Height = 40
+        $b.Height = 36
         $b.Enabled = $enabled
         $b.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
         $b.Padding = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
         $b.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $btnPanel.Controls.Add($b)
+        $script:LaunchControlBtnStackY += 40
         return $b
     }
 
-    if ($script:IsPackedLayout) {
-        $btnAgent = New-ActionButton "1. Install agent on this PC" 0 $true
-        $btnPush = New-ActionButton "2. Push client pack to PC(s)..." 48 $true
-        $btnClientCheck = New-ActionButton "3. Client health check" 96 $true
-        $btnLogs = New-ActionButton "4. Open logs folder" 144 $true
-        $btnRemoteLogs = New-ActionButton "5. Open remote logs folder..." 192 $true
-        $btnBackupDb = New-ActionButton "6. Backup API database..." 240 $true
-        $btnDash = New-ActionButton "7. Open dashboard..." 288 $true
-        $btnPre = New-ActionButton "Check prerequisites" 336 $true
-        $btnApi = $null
-        $btnPack = $null
-        $btnRemoveDemos = $null
-        $btnDiag = $null
+    $btnApi = $null
+    $btnRedeployApi = $null
+    $btnPack = $null
+    $btnRemoveDemos = $null
+    $btnDiag = $null
+
+    Add-SectionHeading "Setup"
+    if (-not $script:IsPackedLayout) {
+        $btnApi = New-ActionButton "Install API on this PC" $true
+    }
+    $btnAgent = New-ActionButton "Install agent on this PC" $true
+    $btnPush = New-ActionButton "Push client pack to PC(s)..." $true
+
+    Add-SectionHeading "Republish"
+    if (-not $script:IsPackedLayout) {
+        $btnRedeployApi = New-ActionButton "Redeploy API (preserve config)" $true
+        $btnPack = New-ActionButton "Create client pack" $true
     }
     else {
-        $btnApi = New-ActionButton "1. Install API on this PC" 0 $true
-        $btnPack = New-ActionButton "2. Create client pack" 48 $true
-        $btnPush = New-ActionButton "3. Push client pack to PC(s)..." 96 $true
-        $btnAgent = New-ActionButton "4. Install agent on this PC" 144 $true
-        $btnClientCheck = New-ActionButton "5. Client health check" 192 $true
-        $btnLogs = New-ActionButton "6. Open logs folder" 240 $true
-        $btnRemoteLogs = New-ActionButton "7. Open remote logs folder..." 288 $true
-        $btnBackupDb = New-ActionButton "8. Backup API database..." 336 $true
-        $btnRemoveDemos = New-ActionButton "9. Remove seed/demo machines..." 384 $true
-        $btnDiag = New-ActionButton "10. Collect diagnostics" 432 $true
-        $btnDash = New-ActionButton "11. Open dashboard..." 480 $true
-        $btnPre = New-ActionButton "Check prerequisites" 528 $true
+        $hintPack = New-Object System.Windows.Forms.Label
+        $hintPack.Text = "(Create pack / Redeploy API need full repo)"
+        $hintPack.Left = 0
+        $hintPack.Top = $script:LaunchControlBtnStackY
+        $hintPack.Width = [Math]::Max(200, $btnPanel.ClientSize.Width - 8)
+        $hintPack.Height = 32
+        $hintPack.ForeColor = [System.Drawing.Color]::DimGray
+        $btnPanel.Controls.Add($hintPack)
+        $script:LaunchControlBtnStackY += 36
     }
 
-    foreach ($btn in @($btnApi, $btnPack, $btnPush, $btnAgent, $btnClientCheck, $btnLogs, $btnRemoteLogs, $btnBackupDb, $btnRemoveDemos, $btnDiag, $btnDash, $btnPre)) {
+    Add-SectionHeading "Diagnostics"
+    $btnClientCheck = New-ActionButton "Client health check" $true
+    if (-not $script:IsPackedLayout) {
+        $btnDiag = New-ActionButton "Collect diagnostics" $true
+    }
+    $btnPre = New-ActionButton "Check prerequisites" $true
+    $btnLogs = New-ActionButton "Open logs folder" $true
+    $btnRemoteLogs = New-ActionButton "Open remote logs folder..." $true
+    $btnDash = New-ActionButton "Open dashboard..." $true
+
+    Add-SectionHeading "Recovery"
+    $btnBackupDb = New-ActionButton "Backup API database..." $true
+    if (-not $script:IsPackedLayout) {
+        $btnRemoveDemos = New-ActionButton "Remove seed/demo machines..." $true
+    }
+
+    foreach ($btn in @($btnApi, $btnRedeployApi, $btnPack, $btnPush, $btnAgent, $btnClientCheck, $btnLogs, $btnRemoteLogs, $btnBackupDb, $btnRemoveDemos, $btnDiag, $btnDash, $btnPre)) {
         if ($btn) { Register-LaunchControlActionButton -Button $btn }
     }
 
     $servicesGroup = New-Object System.Windows.Forms.GroupBox
     $servicesGroup.Text = "Windows services"
-    $servicesGroup.Left = 12
-    $servicesGroup.Width = 280
+    $servicesGroup.Left = 8
+    $servicesGroup.Width = 300
     $servicesGroup.Height = 148
     $servicesGroup.Anchor = "Bottom, Left"
-    $form.Controls.Add($servicesGroup)
+    $tabOps.Controls.Add($servicesGroup)
 
     function New-ServiceControlButton {
         param(
@@ -3400,117 +3511,123 @@ function Show-LaunchControl {
     $btnAgentRestart.Add_Click({ Invoke-LaunchControlAction { Invoke-HeimdallServiceControl -ServiceName "HeimdallAgent" -Action "Restart" } })
     $btnSvcRefresh.Add_Click({ Update-HeimdallServiceStatusUi; Set-UiStatus "Service status refreshed." })
 
-    $guideBranchLabel = New-Object System.Windows.Forms.Label
-    $guideBranchLabel.Text = "Steps branch"
-    $guideBranchLabel.Left = 310
-    $guideBranchLabel.Top = 72
-    $guideBranchLabel.Width = 200
-    $form.Controls.Add($guideBranchLabel)
-
-    $radioClient = New-Object System.Windows.Forms.RadioButton
-    $radioClient.Text = "1. Client install"
-    $radioClient.Left = 310
-    $radioClient.Top = 94
-    $radioClient.Width = 150
-    $radioClient.Checked = $true
-    $form.Controls.Add($radioClient)
-
-    $radioServer = New-Object System.Windows.Forms.RadioButton
-    $radioServer.Text = "2. Server install"
-    $radioServer.Left = 470
-    $radioServer.Top = 94
-    $radioServer.Width = 150
-    $radioServer.Checked = $false
-    $form.Controls.Add($radioServer)
-
-    $guideStepsLabel = New-Object System.Windows.Forms.Label
-    $guideStepsLabel.Text = "Steps (click for details)"
-    $guideStepsLabel.Left = 310
-    $guideStepsLabel.Top = 122
-    $guideStepsLabel.Width = 280
-    $form.Controls.Add($guideStepsLabel)
-
-    $guideList = New-Object System.Windows.Forms.ListBox
-    $guideList.Left = 310
-    $guideList.Top = 146
-    $guideList.Width = 300
-    $guideList.Height = 150
-    $form.Controls.Add($guideList)
-    $script:UiGuideList = $guideList
-
-    $guideDetailLabel = New-Object System.Windows.Forms.Label
-    $guideDetailLabel.Text = "Step details"
-    $guideDetailLabel.Left = 620
-    $guideDetailLabel.Top = 122
-    $guideDetailLabel.Width = 200
-    $form.Controls.Add($guideDetailLabel)
-
-    $guideDetail = New-Object System.Windows.Forms.TextBox
-    $guideDetail.Left = 620
-    $guideDetail.Top = 146
-    $guideDetail.Width = 450
-    $guideDetail.Height = 150
-    $guideDetail.Multiline = $true
-    $guideDetail.ScrollBars = "Vertical"
-    $guideDetail.ReadOnly = $true
-    $guideDetail.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-    $guideDetail.BackColor = [System.Drawing.Color]::White
-    $form.Controls.Add($guideDetail)
-    $script:UiGuideDetail = $guideDetail
-
     $actionStepsLabel = New-Object System.Windows.Forms.Label
-    $actionStepsLabel.Text = "Action progress (updates when you run a left-side action)"
-    $actionStepsLabel.Left = 310
-    $actionStepsLabel.Top = 304
-    $actionStepsLabel.Width = 500
-    $form.Controls.Add($actionStepsLabel)
+    $actionStepsLabel.Text = "Action progress"
+    $actionStepsLabel.Left = 320
+    $actionStepsLabel.Top = 8
+    $actionStepsLabel.Width = 400
+    $tabOps.Controls.Add($actionStepsLabel)
 
     $steps = New-Object System.Windows.Forms.ListBox
-    $steps.Left = 310
-    $steps.Top = 328
-    $steps.Width = 760
-    $steps.Height = 72
-    $form.Controls.Add($steps)
+    $steps.Left = 320
+    $steps.Top = 32
+    $steps.Width = 720
+    $steps.Height = 88
+    $steps.Anchor = "Top, Left, Right"
+    $tabOps.Controls.Add($steps)
     $script:UiSteps = $steps
 
     $logLabel = New-Object System.Windows.Forms.Label
     $logLabel.Text = "Progress log (also saved to disk)"
-    $logLabel.Left = 310
-    $logLabel.Top = 408
+    $logLabel.Left = 320
+    $logLabel.Top = 128
     $logLabel.Width = 400
-    $form.Controls.Add($logLabel)
+    $tabOps.Controls.Add($logLabel)
 
     $logBox = New-Object System.Windows.Forms.RichTextBox
-    $logBox.Left = 310
-    $logBox.Top = 432
-    $logBox.Width = 760
-    $logBox.Height = 180
+    $logBox.Left = 320
+    $logBox.Top = 152
+    $logBox.Width = 720
+    $logBox.Height = 480
     $logBox.ReadOnly = $true
     $logBox.Font = New-Object System.Drawing.Font("Consolas", 9)
     $logBox.BackColor = [System.Drawing.Color]::WhiteSmoke
-    $form.Controls.Add($logBox)
+    $logBox.Anchor = "Top, Bottom, Left, Right"
+    $tabOps.Controls.Add($logBox)
     $script:UiLogBox = $logBox
-
-    $status = New-Object System.Windows.Forms.Label
-    $status.Text = "Ready"
-    $status.Left = 16
-    $status.Top = 650
-    $status.Width = 600
-    $status.Anchor = "Bottom, Left"
-    $form.Controls.Add($status)
-    $script:UiStatus = $status
 
     $logPathLbl = New-Object System.Windows.Forms.LinkLabel
     $logPathLbl.Text = $script:LogPath
-    $logPathLbl.Left = 310
-    $logPathLbl.Top = 620
-    $logPathLbl.Width = 760
+    $logPathLbl.Left = 320
+    $logPathLbl.Top = 640
+    $logPathLbl.Width = 720
+    $logPathLbl.Anchor = "Bottom, Left, Right"
     $logPathLbl.Add_LinkClicked({
         if ($script:LogPath -and (Test-Path $script:LogPath)) {
             Start-Process notepad.exe $script:LogPath
         }
     })
-    $form.Controls.Add($logPathLbl)
+    $tabOps.Controls.Add($logPathLbl)
+
+    # --- Help tab (was the right-side instruction panels) ---
+    $guideBranchLabel = New-Object System.Windows.Forms.Label
+    $guideBranchLabel.Text = "Guide"
+    $guideBranchLabel.Left = 12
+    $guideBranchLabel.Top = 12
+    $guideBranchLabel.Width = 200
+    $tabHelp.Controls.Add($guideBranchLabel)
+
+    $radioClient = New-Object System.Windows.Forms.RadioButton
+    $radioClient.Text = "Client install"
+    $radioClient.Left = 12
+    $radioClient.Top = 36
+    $radioClient.Width = 140
+    $radioClient.Checked = $true
+    $tabHelp.Controls.Add($radioClient)
+
+    $radioServer = New-Object System.Windows.Forms.RadioButton
+    $radioServer.Text = "Server install"
+    $radioServer.Left = 160
+    $radioServer.Top = 36
+    $radioServer.Width = 140
+    $radioServer.Checked = $false
+    $tabHelp.Controls.Add($radioServer)
+
+    $guideStepsLabel = New-Object System.Windows.Forms.Label
+    $guideStepsLabel.Text = "Steps (click for details)"
+    $guideStepsLabel.Left = 12
+    $guideStepsLabel.Top = 68
+    $guideStepsLabel.Width = 280
+    $tabHelp.Controls.Add($guideStepsLabel)
+
+    $guideList = New-Object System.Windows.Forms.ListBox
+    $guideList.Left = 12
+    $guideList.Top = 92
+    $guideList.Width = 320
+    $guideList.Height = 520
+    $guideList.Anchor = "Top, Bottom, Left"
+    $tabHelp.Controls.Add($guideList)
+    $script:UiGuideList = $guideList
+
+    $guideDetailLabel = New-Object System.Windows.Forms.Label
+    $guideDetailLabel.Text = "Step details"
+    $guideDetailLabel.Left = 350
+    $guideDetailLabel.Top = 68
+    $guideDetailLabel.Width = 200
+    $tabHelp.Controls.Add($guideDetailLabel)
+
+    $guideDetail = New-Object System.Windows.Forms.TextBox
+    $guideDetail.Left = 350
+    $guideDetail.Top = 92
+    $guideDetail.Width = 680
+    $guideDetail.Height = 520
+    $guideDetail.Multiline = $true
+    $guideDetail.ScrollBars = "Vertical"
+    $guideDetail.ReadOnly = $true
+    $guideDetail.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $guideDetail.BackColor = [System.Drawing.Color]::White
+    $guideDetail.Anchor = "Top, Bottom, Left, Right"
+    $tabHelp.Controls.Add($guideDetail)
+    $script:UiGuideDetail = $guideDetail
+
+    $status = New-Object System.Windows.Forms.Label
+    $status.Text = "Ready"
+    $status.Left = 16
+    $status.Top = 800
+    $status.Width = 900
+    $status.Anchor = "Bottom, Left"
+    $form.Controls.Add($status)
+    $script:UiStatus = $status
 
     $script:GuideStepsByBranch = Get-HeimdallGuideBranches
     $guideList.Add_SelectedIndexChanged({
@@ -3524,53 +3641,53 @@ function Show-LaunchControl {
     })
 
     function Update-LaunchControlLeftColumnLayout {
-        $servicesTop = $form.ClientSize.Height - 188
+        $servicesTop = $tabOps.ClientSize.Height - 164
         $servicesGroup.Top = $servicesTop
         $btnPanel.Height = [Math]::Max(80, $servicesTop - $btnPanel.Top - 8)
+        $logPathLbl.Top = $tabOps.ClientSize.Height - 28
+        $logBox.Height = [Math]::Max(100, $logPathLbl.Top - $logBox.Top - 8)
     }
 
-    # Layout resize
     $form.Add_Resize({
-        $rightWidth = $form.ClientSize.Width - 330
-        $half = [Math]::Max(200, [int](($rightWidth - 20) / 2))
-        $guideList.Width = $half
-        $guideDetail.Left = 310 + $half + 10
-        $guideDetail.Width = [Math]::Max(200, $rightWidth - $half - 10)
-        $guideDetailLabel.Left = $guideDetail.Left
-        $steps.Width = $rightWidth
-        $logBox.Width = $rightWidth
-        $logBox.Height = [Math]::Max(100, $form.ClientSize.Height - 520)
+        $tabs.Width = $form.ClientSize.Width - 16
+        $tabs.Height = $form.ClientSize.Height - 100
+        $rightWidth = $tabOps.ClientSize.Width - 336
+        $steps.Width = [Math]::Max(200, $rightWidth)
+        $logBox.Width = [Math]::Max(200, $rightWidth)
+        $logPathLbl.Width = [Math]::Max(200, $rightWidth)
+        $guideDetail.Width = [Math]::Max(200, $tabHelp.ClientSize.Width - $guideDetail.Left - 16)
+        $guideDetail.Height = [Math]::Max(100, $tabHelp.ClientSize.Height - $guideDetail.Top - 16)
+        $guideList.Height = $guideDetail.Height
         Update-LaunchControlLeftColumnLayout
-        $status.Top = $form.ClientSize.Height - 36
-        $logPathLbl.Top = $form.ClientSize.Height - 48
-        $logPathLbl.Width = $rightWidth
+        $status.Top = $form.ClientSize.Height - 28
     })
 
     Write-HeimdallLog "Setup UI ready. PackedLayout=$($script:IsPackedLayout) Admin=$(Test-IsAdministrator)" -Level OK
     Update-HeimdallServiceStatusUi
     $form.Add_Shown({
         Update-HeimdallServiceStatusUi
+        Update-LaunchControlLeftColumnLayout
     })
     Show-GuideBranch -Branch Client
     if ($script:IsPackedLayout) {
         Write-HeimdallLog "Client pack mode: use Install agent (opens Install.lnk wizard)." -Level INFO
         Set-UiSteps @(
             "Packed folder ready.",
-            "Use Client install steps on the right.",
+            "See Help tab for client install steps.",
             "Or click: Install agent on this PC"
         )
         $radioServer.Enabled = $false
-        $radioServer.Text = "2. Server install (need full repo)"
+        $radioServer.Text = "Server install (need full repo)"
     }
     else {
         Set-UiSteps @(
-            "Select Client or Server branch above.",
-            "Click a step for full instructions.",
-            "Use left buttons to run each action."
+            "Use Setup / Republish / Diagnostics / Recovery on the left.",
+            "See the Help tab for guided Client or Server instructions."
         )
     }
 
     if ($btnApi) { $btnApi.Add_Click({ Invoke-LaunchControlAction { Start-GuidedApiInstall } }) }
+    if ($btnRedeployApi) { $btnRedeployApi.Add_Click({ Invoke-LaunchControlAction { Start-RedeployApi } }) }
     if ($btnPack) { $btnPack.Add_Click({ Invoke-LaunchControlAction { Start-GuidedPack -OfferInstallAfter } }) }
     $btnPush.Add_Click({ Invoke-LaunchControlAction { Push-ClientPackToMachine } })
     $btnAgent.Add_Click({ Invoke-LaunchControlAction { Start-GuidedCollectorInstall } })

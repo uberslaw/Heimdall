@@ -72,6 +72,7 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         var label = ProcessClassification.GroupLabel(group);
         await processGroups.AssignGroupsAsync([entry.ProcessName], group, HttpContext.RequestAborted);
         await catalog.ClearSuggestionsAsync([entry.ProcessName], HttpContext.RequestAborted);
+        await appLists.SyncSystemListsFromClassificationsAsync(HttpContext.RequestAborted);
 
         var message = $"Approved {entry.ProcessName} as {label}.";
         if (WantsAjax())
@@ -108,7 +109,7 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
     /// <summary>
     /// Approve pending suggestions in small batches (default 40). AJAX clients loop until <c>done</c>;
     /// avoids one giant request that can starve SQLite / hang Kestrel under hundreds of rows.
-    /// Never runs catalog backfill.
+    /// Approves the global pending queue (not only currently visible/filtered rows). Never runs catalog backfill.
     /// </summary>
     public async Task<IActionResult> OnPostApproveAllAsync(int take = 40)
     {
@@ -146,25 +147,10 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
                 return RedirectToFilters();
             }
 
-            var approvedNames = 0;
-            foreach (var chunk in batch.GroupBy(e => e.SuggestedGroup!.Value))
-            {
-                var names = chunk
-                    .Select(e => e.ProcessName)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-                await processGroups.AssignGroupsAsync(names, chunk.Key, ct);
-                approvedNames += names.Count;
-            }
-
-            await catalog.ClearSuggestionsAsync(batch.Select(e => e.ProcessName), ct);
-
-            // Detach so repeated AJAX batches do not grow the change tracker.
-            db.ChangeTracker.Clear();
+            var (approvedNames, approvedIds) = await ApplySuggestionBatchAsync(batch, ct);
 
             var remaining = await db.ProcessCatalogEntries.AsNoTracking()
                 .CountAsync(e => !e.Ignored && e.SuggestedGroup != null, ct);
-            var approvedIds = batch.Select(e => e.Id).ToArray();
             var done = remaining == 0;
             var message = approvedNames == 1
                 ? "Approved 1 pending suggestion."
@@ -197,18 +183,8 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
                     .ToListAsync(ct);
                 if (more.Count == 0) break;
 
-                foreach (var chunk in more.GroupBy(e => e.SuggestedGroup!.Value))
-                {
-                    var names = chunk
-                        .Select(e => e.ProcessName)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-                    await processGroups.AssignGroupsAsync(names, chunk.Key, ct);
-                    totalApproved += names.Count;
-                }
-
-                await catalog.ClearSuggestionsAsync(more.Select(e => e.ProcessName), ct);
-                db.ChangeTracker.Clear();
+                var (moreNames, _) = await ApplySuggestionBatchAsync(more, ct);
+                totalApproved += moreNames;
                 remaining = await db.ProcessCatalogEntries.AsNoTracking()
                     .CountAsync(e => !e.Ignored && e.SuggestedGroup != null, ct);
             }
@@ -229,6 +205,216 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
             { StatusCode = 500 };
         }
     }
+
+    /// <summary>
+    /// Approve suggested groups for the selected catalog row IDs (AJAX batch; max 80).
+    /// </summary>
+    public async Task<IActionResult> OnPostBatchApproveAsync(int[]? ids)
+    {
+        var ct = HttpContext.RequestAborted;
+        var idList = NormalizeIdList(ids);
+        if (idList.Count == 0)
+            return new JsonResult(new { ok = false, error = "Select at least one row." }) { StatusCode = 400 };
+
+        try
+        {
+            var batch = await db.ProcessCatalogEntries
+                .Where(e => idList.Contains(e.Id) && !e.Ignored && e.SuggestedGroup != null)
+                .ToListAsync(ct);
+            if (batch.Count == 0)
+                return new JsonResult(new { ok = false, error = "No pending suggestions on the selected rows." }) { StatusCode = 400 };
+
+            var (approvedNames, approvedIds) = await ApplySuggestionBatchAsync(batch, ct);
+            var pending = await db.ProcessCatalogEntries.AsNoTracking()
+                .CountAsync(e => !e.Ignored && e.SuggestedGroup != null, ct);
+            var unclassifiedCount = await CountUnclassifiedAsync(ct);
+            return new JsonResult(new
+            {
+                ok = true,
+                approved = approvedNames,
+                approvedIds,
+                pendingSuggestionCount = pending,
+                unclassifiedCount,
+                removeRow = !ShowClassified,
+                message = approvedNames == 1
+                    ? "Approved 1 selected suggestion."
+                    : $"Approved {approvedNames} selected suggestion(s)."
+            });
+        }
+        catch (Exception ex)
+        {
+            return new JsonResult(new { ok = false, error = "Batch approve failed: " + ex.Message }) { StatusCode = 500 };
+        }
+    }
+
+    /// <summary>
+    /// Set Classification (+ optional Category/Subcategory) for selected rows (AJAX; max 80).
+    /// </summary>
+    public async Task<IActionResult> OnPostBatchSetAsync(int[]? ids, string group, string? category, string? subcategory)
+    {
+        var ct = HttpContext.RequestAborted;
+        var idList = NormalizeIdList(ids);
+        if (idList.Count == 0)
+            return new JsonResult(new { ok = false, error = "Select at least one row." }) { StatusCode = 400 };
+
+        if (!ProcessGroupService.TryParseGroup(group, out var targetGroup))
+            return new JsonResult(new { ok = false, error = "Choose Core Windows, SOE, or Specialization." }) { StatusCode = 400 };
+
+        try
+        {
+            var entries = await db.ProcessCatalogEntries
+                .Where(e => idList.Contains(e.Id) && !e.Ignored)
+                .ToListAsync(ct);
+            if (entries.Count == 0)
+                return new JsonResult(new { ok = false, error = "No editable rows in the selection." }) { StatusCode = 400 };
+
+            var names = entries.Select(e => e.ProcessName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            await processGroups.AssignGroupsAsync(names, targetGroup, ct);
+            await appLists.SyncSystemListsFromClassificationsAsync(ct);
+
+            var cat = string.IsNullOrWhiteSpace(category) ? null : category.Trim();
+            var sub = string.IsNullOrWhiteSpace(subcategory) ? null : subcategory.Trim();
+            // Stamp all path variants for each name (same as single Set).
+            var allForNames = await db.ProcessCatalogEntries
+                .Where(e => names.Contains(e.ProcessName))
+                .ToListAsync(ct);
+            foreach (var e in allForNames)
+            {
+                e.Category = cat;
+                e.Subcategory = sub;
+                e.SuggestedGroup = null;
+                e.SuggestionReason = null;
+            }
+            await db.SaveChangesAsync(ct);
+            db.ChangeTracker.Clear();
+
+            var ctx = await processGroups.BuildContextAsync(ct);
+            var pending = await db.ProcessCatalogEntries.AsNoTracking()
+                .CountAsync(e => !e.Ignored && e.SuggestedGroup != null, ct);
+            var unclassifiedCount = await CountUnclassifiedAsync(ct);
+            var label = ProcessClassification.GroupLabel(targetGroup);
+            var affectedIds = allForNames.Select(e => e.Id).Distinct().ToArray();
+            var removeIds = !ShowClassified
+                ? allForNames.Where(e => !ProcessCatalogService.NeedsClassification(e.ProcessName, ctx)).Select(e => e.Id).Distinct().ToArray()
+                : Array.Empty<int>();
+
+            return new JsonResult(new
+            {
+                ok = true,
+                updated = names.Count,
+                approvedIds = affectedIds,
+                removeIds,
+                group = targetGroup.ToString(),
+                groupLabel = label,
+                category = cat,
+                subcategory = sub,
+                pendingSuggestionCount = pending,
+                unclassifiedCount,
+                removeRow = !ShowClassified,
+                message = names.Count == 1
+                    ? $"Set 1 process to {label}."
+                    : $"Set {names.Count} processes to {label}."
+            });
+        }
+        catch (Exception ex)
+        {
+            return new JsonResult(new { ok = false, error = "Batch set failed: " + ex.Message }) { StatusCode = 500 };
+        }
+    }
+
+    /// <summary>
+    /// Apply Category and/or Subcategory to selected rows without changing Classification (AJAX; max 80).
+    /// </summary>
+    public async Task<IActionResult> OnPostBatchTaxonomyAsync(int[]? ids, string? category, string? subcategory, bool setCategory = true, bool setSubcategory = true)
+    {
+        var ct = HttpContext.RequestAborted;
+        var idList = NormalizeIdList(ids);
+        if (idList.Count == 0)
+            return new JsonResult(new { ok = false, error = "Select at least one row." }) { StatusCode = 400 };
+        if (!setCategory && !setSubcategory)
+            return new JsonResult(new { ok = false, error = "Nothing to apply." }) { StatusCode = 400 };
+
+        try
+        {
+            var entries = await db.ProcessCatalogEntries
+                .Where(e => idList.Contains(e.Id) && !e.Ignored)
+                .ToListAsync(ct);
+            if (entries.Count == 0)
+                return new JsonResult(new { ok = false, error = "No editable rows in the selection." }) { StatusCode = 400 };
+
+            var cat = string.IsNullOrWhiteSpace(category) ? null : category.Trim();
+            var sub = string.IsNullOrWhiteSpace(subcategory) ? null : subcategory.Trim();
+            foreach (var e in entries)
+            {
+                if (setCategory) e.Category = cat;
+                if (setSubcategory) e.Subcategory = sub;
+            }
+            await db.SaveChangesAsync(ct);
+
+            return new JsonResult(new
+            {
+                ok = true,
+                updated = entries.Count,
+                updatedIds = entries.Select(e => e.Id).ToArray(),
+                category = setCategory ? cat : null,
+                subcategory = setSubcategory ? sub : null,
+                setCategory,
+                setSubcategory,
+                message = entries.Count == 1
+                    ? "Updated Category/Subcategory on 1 row."
+                    : $"Updated Category/Subcategory on {entries.Count} rows."
+            });
+        }
+        catch (Exception ex)
+        {
+            return new JsonResult(new { ok = false, error = "Batch taxonomy failed: " + ex.Message }) { StatusCode = 500 };
+        }
+    }
+
+    /// <summary>
+    /// Assign suggested groups then clear suggestions for every path variant of those process names.
+    /// Returns distinct name count + all catalog IDs whose suggestion was cleared.
+    /// </summary>
+    private async Task<(int ApprovedNames, int[] ApprovedIds)> ApplySuggestionBatchAsync(
+        List<ProcessCatalogEntry> batch, CancellationToken ct)
+    {
+        var nameSet = batch
+            .Select(e => e.ProcessName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var chunk in batch.GroupBy(e => e.SuggestedGroup!.Value))
+        {
+            var names = chunk
+                .Select(e => e.ProcessName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            await processGroups.AssignGroupsAsync(names, chunk.Key, ct);
+        }
+
+        // Clear every path variant for these names (AssignGroups is name-scoped).
+        var toClear = await db.ProcessCatalogEntries
+            .Where(e => nameSet.Contains(e.ProcessName) && (e.SuggestedGroup != null || e.SuggestionReason != null))
+            .ToListAsync(ct);
+        foreach (var e in toClear)
+        {
+            e.SuggestedGroup = null;
+            e.SuggestionReason = null;
+        }
+        if (toClear.Count > 0)
+            await db.SaveChangesAsync(ct);
+
+        db.ChangeTracker.Clear();
+        await appLists.SyncSystemListsFromClassificationsAsync(ct);
+        return (nameSet.Count, toClear.Select(e => e.Id).Distinct().ToArray());
+    }
+
+    private static List<int> NormalizeIdList(int[]? ids) =>
+        (ids ?? [])
+            .Where(id => id > 0)
+            .Distinct()
+            .Take(80)
+            .ToList();
 
     private async Task<int> CountUnclassifiedAsync(CancellationToken ct)
     {
@@ -261,6 +447,7 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         }
 
         await processGroups.AssignGroupsAsync([entry.ProcessName], targetGroup, HttpContext.RequestAborted);
+        await appLists.SyncSystemListsFromClassificationsAsync(HttpContext.RequestAborted);
 
         // Re-load after AssignGroups (may have saved); update category fields on all name matches.
         // Empty dropdown ("—") clears Category/Subcategory.
@@ -531,7 +718,15 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         // Backfill scans ProcessRuns + inventories + full catalog upsert/suggestion pool — seconds on a warm catalog.
         // Skip after Approve/Set redirects; AJAX Approve never hits this path.
         if (!skipBackfill)
+        {
+            await catalog.PurgeIneligibleEntriesAsync(HttpContext.RequestAborted);
             await catalog.BackfillFromDiscoveriesAsync(HttpContext.RequestAborted);
+        }
+        else
+        {
+            // Still strip temp/.tmp junk even when skipping the expensive backfill.
+            await catalog.PurgeIneligibleEntriesAsync(HttpContext.RequestAborted);
+        }
 
         var entries = await catalog.GetAllAsync(HttpContext.RequestAborted);
         var ctx = await processGroups.BuildContextAsync(HttpContext.RequestAborted);

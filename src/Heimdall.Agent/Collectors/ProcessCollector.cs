@@ -116,6 +116,8 @@ public sealed class ProcessCollector
                 var name = process.ProcessName;
                 if (string.IsNullOrWhiteSpace(name)) continue;
                 var path = ProcessPathResolver.TryGetPath(process, wmiPaths);
+                if (!Heimdall.Shared.DiscoveryCatalogFilter.IsEligible(name, path))
+                    continue;
                 if (map.TryGetValue(name, out var existing))
                 {
                     if (string.IsNullOrWhiteSpace(existing.ExecutablePath) && !string.IsNullOrWhiteSpace(path))

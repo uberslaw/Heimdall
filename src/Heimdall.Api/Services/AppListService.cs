@@ -2,6 +2,7 @@ using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using Heimdall.Api.Data;
+using Heimdall.Shared;
 using Heimdall.Shared.Contracts;
 using Microsoft.EntityFrameworkCore;
 namespace Heimdall.Api.Services;
@@ -68,7 +69,9 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         {
             list = await db.AppLists.Include(a => a.Entries).FirstAsync(a => a.Id == existingId, ct);
             oldDetail = SummarizeList(list);
-            list.Name = name.Trim();
+            // System lists keep their canonical name so sync identity stays stable.
+            if (!list.IsSystem)
+                list.Name = name.Trim();
             list.TeamId = teamId;
             list.Notes = string.IsNullOrWhiteSpace(notes) ? null : notes.Trim();
             list.UpdatedUtc = now;
@@ -114,6 +117,181 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
             list.Id, list.Name, actor: ResolveActor(), ct: ct);
 
         return list;
+    }
+
+    public static readonly (string SystemKey, string Name, AppGroup Group)[] SystemListDefinitions =
+    [
+        ("CoreWindows", "Core Windows", AppGroup.CoreWindows),
+        ("Soe", "SOE", AppGroup.Soe),
+        ("Specialization", "Specialization", AppGroup.Specialization)
+    ];
+
+    /// <summary>
+    /// Ensure the three classification-backed system lists exist and upsert their entries from
+    /// ProcessGroupAssignment / SoeApps (plus catalog display names). Idempotent.
+    /// </summary>
+    public async Task SyncSystemListsFromClassificationsAsync(CancellationToken ct = default)
+    {
+        var assignments = await db.ProcessGroupAssignments.AsNoTracking().ToListAsync(ct);
+        var soeApps = await db.SoeApps.AsNoTracking().ToListAsync(ct);
+        var catalogNames = assignments.Select(a => a.ProcessName)
+            .Concat(soeApps.Select(s => s.ProcessName))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var catalogByName = catalogNames.Count == 0
+            ? new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            : (await catalog.GetForProcessNamesAsync(catalogNames, ct))
+                .GroupBy(e => e.ProcessName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.Select(e => e.DisplayName).FirstOrDefault(d => !string.IsNullOrWhiteSpace(d)),
+                    StringComparer.OrdinalIgnoreCase);
+
+        var now = DateTimeOffset.UtcNow;
+        var anyChange = false;
+
+        foreach (var (systemKey, canonicalName, group) in SystemListDefinitions)
+        {
+            var list = await db.AppLists.Include(a => a.Entries)
+                .FirstOrDefaultAsync(a => a.SystemKey == systemKey, ct);
+
+            // Adopt a pre-existing list with the same name if it wasn't marked system yet.
+            if (list is null)
+            {
+                list = await db.AppLists.Include(a => a.Entries)
+                    .FirstOrDefaultAsync(a => a.Name == canonicalName && !a.IsAutoDiscovered, ct);
+            }
+
+            if (list is null)
+            {
+                list = new AppList
+                {
+                    Name = canonicalName,
+                    IsSystem = true,
+                    SystemKey = systemKey,
+                    Notes = $"System list synced from {canonicalName} classifications.",
+                    CreatedUtc = now,
+                    UpdatedUtc = now
+                };
+                db.AppLists.Add(list);
+                anyChange = true;
+            }
+            else
+            {
+                if (!list.IsSystem || list.SystemKey != systemKey || list.Name != canonicalName)
+                {
+                    list.IsSystem = true;
+                    list.SystemKey = systemKey;
+                    list.Name = canonicalName;
+                    anyChange = true;
+                }
+            }
+
+            var desired = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var a in assignments.Where(a => a.Group == group))
+            {
+                var proc = ConfigService.NormalizeProcessName(a.ProcessName);
+                if (proc.Length == 0) continue;
+                var display = FirstNonEmpty(a.DisplayName, catalogByName.GetValueOrDefault(proc), proc);
+                desired[proc] = display == proc ? null : display;
+            }
+
+            if (group == AppGroup.Soe)
+            {
+                foreach (var s in soeApps)
+                {
+                    var proc = ConfigService.NormalizeProcessName(s.ProcessName);
+                    if (proc.Length == 0) continue;
+                    if (desired.ContainsKey(proc)) continue;
+                    var display = FirstNonEmpty(s.DisplayName, catalogByName.GetValueOrDefault(proc), proc);
+                    desired[proc] = display == proc ? null : display;
+                }
+            }
+
+            var existingByName = list.Entries.ToDictionary(e => e.ProcessName, StringComparer.OrdinalIgnoreCase);
+            var listChanged = false;
+
+            foreach (var (proc, display) in desired)
+            {
+                if (existingByName.TryGetValue(proc, out var entry))
+                {
+                    // Preserve user-edited display names; only fill when blank.
+                    if (string.IsNullOrWhiteSpace(entry.DisplayName) && !string.IsNullOrWhiteSpace(display))
+                    {
+                        entry.DisplayName = display;
+                        listChanged = true;
+                    }
+                }
+                else
+                {
+                    list.Entries.Add(new AppListEntry
+                    {
+                        ProcessName = proc,
+                        DisplayName = display
+                    });
+                    listChanged = true;
+                }
+            }
+
+            var stale = list.Entries.Where(e => !desired.ContainsKey(e.ProcessName)).ToList();
+            if (stale.Count > 0)
+            {
+                db.AppListEntries.RemoveRange(stale);
+                listChanged = true;
+            }
+
+            if (listChanged)
+            {
+                list.UpdatedUtc = now;
+                anyChange = true;
+            }
+        }
+
+        if (anyChange)
+        {
+            await db.SaveChangesAsync(ct);
+            await AuditAsync("system-lists-synced",
+                "Synced Core Windows / SOE / Specialization system lists from classifications.",
+                actor: "system", ct: ct);
+        }
+    }
+
+    /// <summary>Delete a user list and its entries/assignments. Refuses system lists.</summary>
+    public async Task DeleteListAsync(int appListId, CancellationToken ct = default)
+    {
+        var list = await db.AppLists
+            .Include(a => a.Entries)
+            .Include(a => a.Assignments)
+            .FirstOrDefaultAsync(a => a.Id == appListId, ct)
+            ?? throw new InvalidOperationException("List not found.");
+
+        if (list.IsSystem)
+            throw new InvalidOperationException($"“{list.Name}” is a system list and cannot be deleted.");
+
+        var name = list.Name;
+        var id = list.Id;
+        var entryCount = list.Entries.Count;
+        var assignmentCount = list.Assignments.Count;
+
+        db.AppListAssignments.RemoveRange(list.Assignments);
+        db.AppListEntries.RemoveRange(list.Entries);
+        db.AppLists.Remove(list);
+        await db.SaveChangesAsync(ct);
+
+        await AuditAsync("deleted",
+            $"Deleted list “{name}” ({entryCount} entr(y/ies), {assignmentCount} assignment(s)).",
+            id, name, ct: ct);
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        foreach (var v in values)
+        {
+            if (!string.IsNullOrWhiteSpace(v))
+                return v.Trim();
+        }
+        return "";
     }
 
     /// <summary>Render a process selection in the same CSV shape the Upload box accepts, for round-tripping back in.</summary>
@@ -468,6 +646,7 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         {
             var name = ConfigService.NormalizeProcessName(r.ProcessName);
             if (name.Length == 0) continue;
+            if (!DiscoveryCatalogFilter.IsEligible(name, r.ExecutablePath)) continue;
             MergeCandidate(candidates, name, name, r.ExecutablePath, "ProcessRuns");
         }
 
@@ -477,6 +656,7 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
             {
                 var name = ConfigService.NormalizeProcessName(d.ProcessName);
                 if (name.Length == 0) continue;
+                if (!DiscoveryCatalogFilter.IsEligible(name, d.ExecutablePath)) continue;
                 var display = string.IsNullOrWhiteSpace(d.DisplayName) ? name : d.DisplayName.Trim();
                 MergeCandidate(candidates, name, display, d.ExecutablePath, "AgentInventory",
                     d.FileVersion, d.ProductVersion, d.CompanyName, d.FileDescription);
@@ -699,14 +879,21 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         {
             var name = ConfigService.NormalizeProcessName(r.ProcessName);
             if (name.Length == 0) continue;
+            if (!DiscoveryCatalogFilter.IsEligible(name, r.ExecutablePath)) continue;
             MergeCandidate(map, name, name, r.ExecutablePath, "ProcessRuns");
         }
 
         foreach (var snap in DeserializeInventorySnapshot(machine.DiscoveredInventoryJson))
+        {
+            if (!DiscoveryCatalogFilter.IsEligible(snap.ProcessName, snap.ExecutablePath)) continue;
             MergeCandidate(map, snap.ProcessName, snap.DisplayName ?? snap.ProcessName, snap.ExecutablePath, snap.Source ?? "AgentInventory");
+        }
 
         foreach (var p in proposals.Values)
+        {
+            if (!DiscoveryCatalogFilter.IsEligible(p.ProcessName, p.ExecutablePath)) continue;
             MergeCandidate(map, p.ProcessName, p.DisplayName, p.ExecutablePath, p.Source);
+        }
 
         var catalogEntries = await catalog.GetForProcessNamesAsync(map.Keys, ct);
         var suggestions = catalogEntries

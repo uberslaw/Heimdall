@@ -1,6 +1,6 @@
 <Project>
+  <!-- API / shared product version for health endpoint. Agent overrides InformationalVersion in its csproj (simple int). -->
   <PropertyGroup>
-    <!-- Single product version for API health, agent heartbeat, and pack VERSION.json -->
     <Version>0.1.0</Version>
     <AssemblyVersion>0.1.0.0</AssemblyVersion>
     <FileVersion>0.1.0.0</FileVersion>

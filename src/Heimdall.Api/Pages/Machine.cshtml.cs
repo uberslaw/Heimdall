@@ -8,7 +8,8 @@ namespace Heimdall.Api.Pages;
 public class MachineModel(
     StatsQueryService stats,
     AppListService appLists,
-    ConfigService config) : PageModel
+    ConfigService config,
+    TuflowRunService tuflowRuns) : PageModel
 {
     [BindProperty(SupportsGet = true)]
     public string? Hostname { get; set; }
@@ -37,8 +38,32 @@ public class MachineModel(
     public IReadOnlyList<AppListService.AppListPickerRow> AppListPicker { get; private set; } = [];
     public IReadOnlyList<string> MachineExcludedProcesses { get; private set; } = [];
 
+    /// <summary>Null-if-not-Flood-enrolled — the .cshtml hides the whole TUFLOW panel when this is null
+    /// or FloodEnrolled is false. See TuflowRunService.GetMachineViewAsync.</summary>
+    public TuflowMachineView? Tuflow { get; private set; }
+
     public static string FormatLocalTimestamp(DateTimeOffset utc) =>
         RemoteMachineService.FormatAgentContact(utc);
+
+    public static string TuflowStateBadgeClass(string? state) => state switch
+    {
+        TuflowRunStates.Running => "badge-active",
+        TuflowRunStates.Starting or TuflowRunStates.StopRequested => "badge-ended",
+        TuflowRunStates.Completed or TuflowRunStates.Stopped => "badge-local",
+        TuflowRunStates.Failed => "badge-expired",
+        _ => "badge-ended"
+    };
+
+    public static string FormatDuration(DateTimeOffset? startedUtc, DateTimeOffset? endedUtc)
+    {
+        if (startedUtc is not DateTimeOffset start)
+            return "—";
+        var end = endedUtc ?? DateTimeOffset.UtcNow;
+        var span = end - start;
+        return span.TotalHours >= 1
+            ? $"{(int)span.TotalHours}h {span.Minutes}m"
+            : $"{(int)span.TotalMinutes}m {span.Seconds}s";
+    }
 
     public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
@@ -130,6 +155,7 @@ public class MachineModel(
         AppListsView = await appLists.GetEffectiveForHostAsync(host, ct);
         AppListPicker = await appLists.ListForPickerAsync(ct);
         MachineExcludedProcesses = await config.GetMachineExcludeProcessesAsync(host, ct);
+        Tuflow = await tuflowRuns.GetMachineViewAsync(host, ct);
     }
 
     private IActionResult RedirectToMachine(string? host) =>

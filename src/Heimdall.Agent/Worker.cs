@@ -43,6 +43,12 @@ public sealed class Worker(
     private DateTimeOffset _nextFleetSample = DateTimeOffset.MinValue;
     private static readonly TimeSpan FleetSampleInterval = TimeSpan.FromSeconds(30);
 
+    // Fast TUFLOW start/stop poll — independent of ConfigRefreshSeconds (default 300s) so a queued
+    // start or graceful-stop reaches the agent in ~20s instead of up to 5 minutes. Always-on, same as
+    // fleet sampling above (no "someone is viewing a page" gate the way live resource sampling has).
+    private DateTimeOffset _nextTuflowPoll = DateTimeOffset.MinValue;
+    private static readonly TimeSpan TuflowPollInterval = TimeSpan.FromSeconds(20);
+
     [SupportedOSPlatform("windows")]
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -73,6 +79,13 @@ public sealed class Worker(
                     if (remote.PendingAppAnalysis)
                         _sendInventoryNextUpload = true;
                     ProcessPendingCommands(remote.PendingCommands);
+                    TuflowRunHelper.TryStartIfRequested(remote.PendingTuflowStart, logger);
+                    if (remote.PendingClientUpdate is not null
+                        && remote.PendingCommands.Any(c =>
+                            string.Equals(c, RemoteMachineCommands.UpdateClient, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        await TryProcessClientUpdateAsync(remote.PendingClientUpdate, stoppingToken);
+                    }
                     logger.LogInformation("Config refreshed v{Version}; tracking {Count} processes{Inventory}{Commands}",
                         _config.ConfigVersion, _config.IncludeProcesses.Count + _config.KnownApps.Count(a => a.Enabled),
                         remote.PendingAppAnalysis ? "; inventory requested" : "",
@@ -115,6 +128,7 @@ public sealed class Worker(
 
             await RunResourceSamplingTickAsync(hostname, now, stoppingToken);
             await RunFleetSamplingTickAsync(hostname, now, stoppingToken);
+            await RunTuflowPollTickAsync(hostname, now, stoppingToken);
 
             await Task.Delay(1000, stoppingToken);
         }
@@ -206,7 +220,7 @@ public sealed class Worker(
                     .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
                     ?.InformationalVersion
                     ?? System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString()
-                    ?? "0.1.0",
+                    ?? "2",
                 HardwareSerialNumber = hw?.PreferredSerial,
                 HardwareBrand = hw?.Brand,
                 HardwareModel = hw?.Model,
@@ -224,6 +238,7 @@ public sealed class Worker(
                 WindowsFolderCreatedUtc = hw?.WindowsFolderCreatedUtc,
                 PrimaryIpAddress = NetworkInfoHelper.TryGetPrimaryIPv4(),
                 TermServiceStatus = TermServiceHelper.GetStatus(),
+                TuflowRunStatus = TuflowRunHelper.ReadCurrentStatus(),
                 AcknowledgedCommands = acks,
                 CommandExecutionReports = reports
             },
@@ -512,6 +527,72 @@ public sealed class Worker(
         return (cpu, gpu, diskRead, diskWrite);
     }
 
+    private async Task RunTuflowPollTickAsync(string hostname, DateTimeOffset now, CancellationToken ct)
+    {
+        if (now < _nextTuflowPoll)
+            return;
+
+        _nextTuflowPoll = now.Add(TuflowPollInterval);
+
+        var pending = await api.GetTuflowPendingAsync(hostname, ct);
+        if (pending is null)
+            return; // transient failure — next tick (or the slower config-refresh path) will catch it
+
+        if (pending.PendingTuflowStart is not null)
+            TuflowRunHelper.TryStartIfRequested(pending.PendingTuflowStart, logger);
+
+        if (pending.StopRequested)
+            TryExecuteTuflowStopFastPath();
+    }
+
+    /// <summary>
+    /// Shares _executedPendingCommands/_commandsToAck with ProcessPendingCommands on purpose —
+    /// both this fast tick and the slower config-refresh path can see TuflowStopGraceful and race to
+    /// execute it; the shared dedupe set means whichever gets there first wins and the other is a no-op.
+    /// Failures are logged at Debug on this path — "no run tracked yet" is expected most of the time.
+    /// </summary>
+    private void TryExecuteTuflowStopFastPath()
+    {
+        const string command = RemoteMachineCommands.TuflowStopGraceful;
+        if (_executedPendingCommands.Contains(command))
+            return;
+
+        if (!TuflowRunHelper.TryExecuteCommand(command, logger, out var detail))
+        {
+            logger.LogDebug("TUFLOW stop not actioned yet on fast poll: {Detail}", detail);
+            return;
+        }
+
+        _executedPendingCommands.Add(command);
+        lock (_commandsToAck)
+        {
+            if (!_commandsToAck.Contains(command, StringComparer.OrdinalIgnoreCase))
+                _commandsToAck.Add(command);
+        }
+        RecordCommandReport(command, success: true, detail);
+    }
+
+    private async Task TryProcessClientUpdateAsync(ClientUpdateRequestDto request, CancellationToken ct)
+    {
+        const string command = RemoteMachineCommands.UpdateClient;
+        if (_executedPendingCommands.Contains(command))
+            return;
+
+        var (ack, success, detail) = await ClientUpdateHelper.TryApplyAsync(
+            request, _sessions, api, configuration, logger, ct);
+
+        RecordCommandReport(command, success, detail);
+        if (!ack)
+            return;
+
+        _executedPendingCommands.Add(command);
+        lock (_commandsToAck)
+        {
+            if (!_commandsToAck.Contains(command, StringComparer.OrdinalIgnoreCase))
+                _commandsToAck.Add(command);
+        }
+    }
+
     private void ProcessPendingCommands(IReadOnlyList<string> commands)
     {
         if (commands.Count == 0)
@@ -520,6 +601,10 @@ public sealed class Worker(
         foreach (var command in commands)
         {
             if (_executedPendingCommands.Contains(command))
+                continue;
+
+            // Handled asynchronously via PendingClientUpdate payload
+            if (string.Equals(command, RemoteMachineCommands.UpdateClient, StringComparison.OrdinalIgnoreCase))
                 continue;
 
             if (TermServiceHelper.TryExecuteCommand(command, logger, out var detail))
@@ -534,8 +619,21 @@ public sealed class Worker(
             }
             else
             {
-                logger.LogWarning("Pending command failed: {Command} — {Detail}", command, detail);
-                RecordCommandReport(command, success: false, detail);
+                if (TuflowRunHelper.TryExecuteCommand(command, logger, out detail))
+                {
+                    _executedPendingCommands.Add(command);
+                    lock (_commandsToAck)
+                    {
+                        if (!_commandsToAck.Contains(command, StringComparer.OrdinalIgnoreCase))
+                            _commandsToAck.Add(command);
+                    }
+                    RecordCommandReport(command, success: true, detail);
+                }
+                else
+                {
+                    logger.LogWarning("Pending command failed: {Command} — {Detail}", command, detail);
+                    RecordCommandReport(command, success: false, detail);
+                }
             }
         }
     }

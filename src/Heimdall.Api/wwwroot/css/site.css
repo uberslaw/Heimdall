@@ -667,6 +667,7 @@ table.hd-table th {
 .badge-warn { background: rgba(212, 160, 23, 0.28); color: #e8c04a; }
 .badge-ended { background: rgba(143, 163, 181, 0.2); color: var(--hd-muted); }
 .badge-expired { background: rgba(200, 80, 80, 0.25); color: #e8a0a0; }
+/* Active User on Client Version: disconnected = red (reuse expired palette) */
 
 .util-bar {
   height: 8px;
@@ -1530,6 +1531,47 @@ body.hd-col-resizing {
   display: none;
 }
 
+.hd-discovery-batch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.65rem;
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--hd-gold, #c9a227) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--hd-panel, #1a1f2e) 88%, var(--hd-gold, #c9a227) 12%);
+}
+
+.hd-discovery-batch-bar.d-none {
+  display: none !important;
+}
+
+.hd-discovery-batch-count {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-right: 0.25rem;
+  min-width: 5.5rem;
+}
+
+.hd-discovery-batch-field {
+  margin: 0;
+}
+
+.hd-discovery-batch-field .form-select {
+  min-width: 8.5rem;
+  max-width: 12rem;
+}
+
+#discovery-table tbody tr.hd-discovery-main.hd-discovery-selected > td {
+  background: color-mix(in srgb, var(--hd-gold, #c9a227) 18%, transparent);
+  box-shadow: inset 3px 0 0 var(--hd-gold, #c9a227);
+}
+
+#discovery-table tbody tr.hd-discovery-main.hd-discovery-selected + tr.hd-discovery-desc > td {
+  background: color-mix(in srgb, var(--hd-gold, #c9a227) 10%, transparent);
+}
+
 /* Application Usage */
 .hd-apps-panel {
   overflow-x: hidden;
@@ -2310,9 +2352,16 @@ details.hd-panel[data-key="existing-lists"] {
 }
 
 .hd-existing-lists-table .hd-existing-lists-col-actions {
-  width: 4.75rem;
+  width: 6.5rem;
   text-align: right;
   white-space: nowrap;
+}
+
+.hd-existing-lists-table .hd-existing-lists-col-actions .hd-btn-icon-round + form,
+.hd-existing-lists-table .hd-existing-lists-col-actions form {
+  display: inline-block;
+  margin-left: 0.2rem;
+  vertical-align: middle;
 }
 
 .hd-existing-lists-truncate {

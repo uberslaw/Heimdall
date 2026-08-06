@@ -5,14 +5,18 @@ using Microsoft.EntityFrameworkCore;
 namespace Heimdall.Api.Services;
 
 /// <summary>
-/// Tracks the "current published" client pack version so the Clients admin page can flag hosts running
+/// Tracks the "current published" client pack version so the Client Version page can flag hosts running
 /// an older or unknown agent build. Backed by the existing SystemFlags key/value table (see
 /// IngestService.EnsureSchemaPatchesAsync) — additive, no new table needed.
 /// Set either by Launch Control (best-effort HTTP call after "Create client pack" — see
-/// Publish-ClientVersionToApi in Heimdall-LaunchControl.ps1) or manually from the Clients page.
+/// Publish-ClientVersionToApi in Heimdall-LaunchControl.ps1) or manually from the Client Version page.
+/// When unset, the effective baseline defaults to <see cref="DefaultVersion"/> (simple integer baseline).
 /// </summary>
 public class PublishedVersionService(HeimdallDbContext db)
 {
+    /// <summary>Default published client version when none has been stored yet.</summary>
+    public const string DefaultVersion = "3";
+
     private const string VersionFlagKey = "PublishedClientVersion";
     private const string SetAtFlagKey = "PublishedClientVersionSetUtc";
     private const string SetByFlagKey = "PublishedClientVersionSetBy";
@@ -24,18 +28,25 @@ public class PublishedVersionService(HeimdallDbContext db)
         var setBy = await ReadFlagAsync(SetByFlagKey, ct);
 
         DateTimeOffset? setAtUtc = DateTimeOffset.TryParse(setAtRaw, out var parsed) ? parsed : null;
+        var stored = string.IsNullOrWhiteSpace(version) ? null : version.Trim();
+        var isDefault = stored is null;
         return new PublishedVersionInfo(
-            string.IsNullOrWhiteSpace(version) ? null : version,
+            stored ?? DefaultVersion,
             setAtUtc,
-            string.IsNullOrWhiteSpace(setBy) ? null : setBy);
+            string.IsNullOrWhiteSpace(setBy) ? null : setBy,
+            isDefault);
     }
 
     public async Task SetAsync(string version, string? setBy, CancellationToken ct = default)
     {
         var trimmed = version.Trim();
+        // Normalize SemVer / legacy strings to simple ints when storing so the UI stays on integers.
+        var simple = VersionCompare.TryGetSimpleVersion(trimmed);
+        var toStore = simple?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? trimmed;
+
         await db.Database.ExecuteSqlRawAsync(
             "INSERT OR REPLACE INTO SystemFlags (Key, Value) VALUES ({0}, {1});",
-            [VersionFlagKey, trimmed], ct);
+            [VersionFlagKey, toStore], ct);
         await db.Database.ExecuteSqlRawAsync(
             "INSERT OR REPLACE INTO SystemFlags (Key, Value) VALUES ({0}, {1});",
             [SetAtFlagKey, DateTimeOffset.UtcNow.ToString("o")], ct);
@@ -69,4 +80,8 @@ public class PublishedVersionService(HeimdallDbContext db)
     }
 }
 
-public sealed record PublishedVersionInfo(string? Version, DateTimeOffset? SetUtc, string? SetBy);
+public sealed record PublishedVersionInfo(
+    string? Version,
+    DateTimeOffset? SetUtc,
+    string? SetBy,
+    bool IsDefault = false);

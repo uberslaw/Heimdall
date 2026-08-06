@@ -53,6 +53,9 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     [BindProperty] public IFormFile? ClassificationCsvFile { get; set; }
     [BindProperty] public List<int> SelectedListIds { get; set; } = [];
 
+    /// <summary>True while editing a system classification list (name locked).</summary>
+    public bool EditingIsSystem { get; private set; }
+
     public async Task OnGetAsync(string? host = null, string? section = null)
     {
         // Discovery-gap scan walks ProcessRuns + inventories — only when the CSV/catalog panel needs it,
@@ -87,6 +90,20 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         var entries = ParseProcessesText(ProcessesText);
         await appLists.CreateOrUpdateListAsync(EditId, ListName, TeamId, Notes, entries, HttpContext.RequestAborted);
         TempData["Message"] = EditId is null ? $"Created app list “{ListName}”." : $"Updated app list “{ListName}”.";
+        return RedirectToPage(new { section = "lists" });
+    }
+
+    public async Task<IActionResult> OnPostDeleteListAsync(int id)
+    {
+        try
+        {
+            await appLists.DeleteListAsync(id, HttpContext.RequestAborted);
+            TempData["Message"] = "App list deleted.";
+        }
+        catch (Exception ex)
+        {
+            TempData["Error"] = ex.Message;
+        }
         return RedirectToPage(new { section = "lists" });
     }
 
@@ -530,6 +547,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
         var count = await processGroups.AssignGroupsAsync(SelectedGroupProcesses, targetGroup, HttpContext.RequestAborted);
         await catalog.ClearSuggestionsAsync(SelectedGroupProcesses, HttpContext.RequestAborted);
+        await appLists.SyncSystemListsFromClassificationsAsync(HttpContext.RequestAborted);
         var label = ProcessClassification.GroupLabel(targetGroup);
         TempData["Message"] = $"Moved {count} process(es) to {label}. Re-run Analyze to refresh pending proposals.";
 
@@ -554,6 +572,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
             list.Entries.Select(e => string.IsNullOrWhiteSpace(e.DisplayName)
                 ? e.ProcessName
                 : $"{e.DisplayName},{e.ProcessName}"));
+        EditingIsSystem = list.IsSystem;
         return Page();
     }
 
@@ -595,12 +614,15 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
     private async Task LoadListsAsync()
     {
+        await appLists.SyncSystemListsFromClassificationsAsync(HttpContext.RequestAborted);
+
         Lists = (await db.AppLists.AsNoTracking()
             .Include(a => a.Team)
             .Include(a => a.Entries)
             .Include(a => a.Assignments)
             .ToListAsync(HttpContext.RequestAborted))
-            .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(a => a.IsSystem)
+            .ThenBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
             .Select(a => new AppListRow(
                 a.Id,
                 a.Name,
@@ -608,6 +630,8 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
                 a.Entries.Count,
                 a.Assignments.Count(x => x.IsEnabled),
                 a.IsAutoDiscovered,
+                a.IsSystem,
+                a.SystemKey,
                 a.UpdatedUtc))
             .ToList();
     }
@@ -702,7 +726,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         return result;
     }
 
-    public record AppListRow(int Id, string Name, string? TeamName, int EntryCount, int AssignmentCount, bool IsAutoDiscovered, DateTimeOffset UpdatedUtc);
+    public record AppListRow(int Id, string Name, string? TeamName, int EntryCount, int AssignmentCount, bool IsAutoDiscovered, bool IsSystem, string? SystemKey, DateTimeOffset UpdatedUtc);
 
     public static string GroupLabel(AppGroup group) => ProcessClassification.GroupLabel(group);
 

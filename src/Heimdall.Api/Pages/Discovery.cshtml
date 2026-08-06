@@ -134,6 +134,52 @@
     </form>
 }
 
+<form method="post" id="discovery-batch-token-form" class="d-none">
+    @Html.AntiForgeryToken()
+    <input type="hidden" name="hideIgnored" value="@Model.HideIgnored" />
+    <input type="hidden" name="blankPathOnly" value="@Model.BlankPathOnly" />
+    <input type="hidden" name="showClassified" value="@Model.ShowClassified" />
+    <input type="hidden" name="q" value="@Model.Q" />
+    <input type="hidden" name="sort" value="@sort" />
+    <input type="hidden" name="dir" value="@dir" />
+</form>
+
+<div id="discovery-batch-bar" class="hd-discovery-batch-bar d-none" aria-live="polite">
+    <span class="hd-discovery-batch-count" id="discovery-batch-count">0 selected</span>
+    <label class="hd-discovery-batch-field">
+        <span class="visually-hidden">Batch category</span>
+        <select id="discovery-batch-category" class="form-select form-select-sm" aria-label="Batch category">
+            <option value="">Category —</option>
+            @foreach (var opt in Model.CategoryOptions)
+            {
+                <option value="@opt">@opt</option>
+            }
+        </select>
+    </label>
+    <label class="hd-discovery-batch-field">
+        <span class="visually-hidden">Batch subcategory</span>
+        <select id="discovery-batch-subcategory" class="form-select form-select-sm" aria-label="Batch subcategory">
+            <option value="">Subcategory —</option>
+            @foreach (var opt in Model.SubcategoryOptions)
+            {
+                <option value="@opt">@opt</option>
+            }
+        </select>
+    </label>
+    <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="discovery-batch-apply-tax" title="Apply Category/Subcategory to selected rows">Apply labels</button>
+    <label class="hd-discovery-batch-field">
+        <span class="visually-hidden">Batch classification</span>
+        <select id="discovery-batch-group" class="form-select form-select-sm" aria-label="Batch classification">
+            <option value="CoreWindows">Core Windows</option>
+            <option value="Soe">SOE</option>
+            <option value="Specialization" selected>Specialization</option>
+        </select>
+    </label>
+    <button type="button" class="hd-btn hd-btn-gold hd-btn-sm" id="discovery-batch-approve" title="Approve pending suggestions on selected rows">Approve</button>
+    <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="discovery-batch-set" title="Set Classification (+ labels) on selected rows">Set</button>
+    <button type="button" class="hd-btn hd-btn-black hd-btn-sm" id="discovery-batch-clear">Clear</button>
+</div>
+
 <div class="hd-panel">
     <form method="post" asp-page-handler="SaveAll" id="discovery-save-form">
         @Html.AntiForgeryToken()
@@ -258,8 +304,10 @@
                     <tr class="hd-discovery-main @(r.Ignored ? "hd-row-muted" : null)"
                         data-discovery-id="@r.Id"
                         data-has-description="@(hasDescription ? "true" : "false")"
+                        data-has-suggestion="@(hasSuggestion ? "true" : "false")"
                         data-name="@r.Name"
-                        data-exe="@r.ExeName">
+                        data-exe="@r.ExeName"
+                        title="Ctrl+click to multi-select · Shift+click for a range">
                         <td class="hd-discovery-location-cell" title="@locationTip">
                             @* disabled until Edit mode so accidental/action posts never include ~6 fields × N rows
                                (ASP.NET FormOptions.ValueCountLimit → HTTP 400 once N ≳ 150). *@
@@ -540,7 +588,8 @@
 
     <p class="text-secondary small mt-3 mb-0">
         Default list is unclassified apps plus pending suggestions. <strong>Approve</strong> commits one import/AI suggestion;
-        <strong>Approve all</strong> commits pending suggestions in small batches (API stays responsive).
+        <strong>Approve all</strong> commits every pending suggestion in small batches (not only the current filter).
+        <strong>Ctrl+click</strong> / <strong>Shift+click</strong> rows to multi-select, then use the batch bar for Category/Subcategory, Approve, or Set.
         Pick <strong>Classification</strong>, <strong>Category</strong>, and <strong>Subcategory</strong>, then click <strong>Set</strong> to apply all three.
         Double-click a name to rename. <strong>Installs</strong> is machines that reported the process (hover for hosts).
         <strong>Find missing paths</strong> reuses agent-reported paths from samples/inventories (and can request inventory where still unknown).
@@ -750,22 +799,20 @@
     const pendingEl = document.getElementById('discovery-pending-count');
     const pendingWrap = document.getElementById('discovery-pending-wrap');
     const unclassifiedEl = document.getElementById('discovery-unclassified-count');
-    const approveAllBtn = document.getElementById('discovery-approve-all-btn');
-    const approveAllCount = document.getElementById('discovery-approve-all-count');
+    let approveAllBtn = document.getElementById('discovery-approve-all-btn');
     if (typeof pending === 'number') {
       if (pendingEl) pendingEl.textContent = String(pending);
       if (pendingWrap) pendingWrap.style.display = pending > 0 ? '' : 'none';
-      if (approveAllCount) approveAllCount.textContent = String(pending);
       if (approveAllBtn) {
-        if (pending <= 0) approveAllBtn.remove();
-        else {
+        if (pending <= 0) {
+          approveAllBtn.remove();
+          document.getElementById('discovery-approve-all-form')?.remove();
+          approveAllBtn = null;
+        } else {
           approveAllBtn.dataset.pending = String(pending);
-          const label = approveAllBtn.querySelector('#discovery-approve-all-count');
-          if (label) label.textContent = String(pending);
+          restoreApproveAllLabel(approveAllBtn, pending);
         }
       }
-      const approveAllForm = document.getElementById('discovery-approve-all-form');
-      if (approveAllForm && pending <= 0) approveAllForm.remove();
     }
     if (typeof unclassified === 'number' && unclassifiedEl) {
       unclassifiedEl.textContent = String(unclassified);
@@ -774,15 +821,25 @@
     }
   }
 
-  function applyRowActionResult(id, data, form) {
+  function restoreApproveAllLabel(btn, pending) {
+    if (!btn) return;
+    btn.innerHTML = `Approve all (<span id="discovery-approve-all-count">${pending}</span>)`;
+    btn.dataset.pending = String(pending);
+  }
+
+  function applyRowActionResult(id, data, form, opts) {
+    const quiet = opts && opts.quiet;
+    const forceRemove = opts && opts.forceRemove;
     const row = table?.querySelector(`tr.hd-discovery-main[data-discovery-id="${id}"]`);
     const desc = descRowFor(id);
-    if (data.removeRow) {
+    const shouldRemove = forceRemove || data.removeRow;
+    if (shouldRemove) {
       row?.remove();
       desc?.remove();
       form?.remove();
       document.getElementById(`discovery-set-${id}`)?.remove();
       document.getElementById(`discovery-approve-${id}`)?.remove();
+      selectedIds.delete(String(id));
       if (table && !table.querySelector('tbody tr.hd-discovery-main')) {
         const tbody = table.querySelector('tbody');
         if (tbody) {
@@ -792,6 +849,7 @@
         }
       }
     } else if (row) {
+      row.dataset.hasSuggestion = 'false';
       row.querySelector('.badge-pill.badge-group-specialization')?.remove();
       row.querySelector('.hd-discovery-approve-btn')?.remove();
       document.getElementById(`discovery-approve-${id}`)?.remove();
@@ -799,17 +857,19 @@
         const sel = row.querySelector('.hd-discovery-group-select');
         if (sel) sel.value = data.group;
       }
-      if ('category' in data) {
+      if (data.setCategory !== false && 'category' in data) {
         const cat = row.querySelector('.hd-discovery-tax-select[data-field="category"]');
         if (cat) cat.value = data.category || '';
       }
-      if ('subcategory' in data) {
+      if (data.setSubcategory !== false && 'subcategory' in data) {
         const sub = row.querySelector('.hd-discovery-tax-select[data-field="subcategory"]');
         if (sub) sub.value = data.subcategory || '';
       }
     }
-    updateDiscoveryCounts(data.pendingSuggestionCount, data.unclassifiedCount);
-    if (data.message) showToast(data.message, 'success');
+    if (!quiet) {
+      updateDiscoveryCounts(data.pendingSuggestionCount, data.unclassifiedCount);
+      if (data.message) showToast(data.message, 'success');
+    }
   }
 
   function antiforgeryToken(form) {
@@ -818,12 +878,205 @@
       || '';
   }
 
+  function appendFilterFields(body, form) {
+    for (const name of ['hideIgnored', 'blankPathOnly', 'showClassified', 'q', 'sort', 'dir']) {
+      const el = form?.querySelector(`[name="${name}"]`);
+      if (el) body.set(name, el.value);
+    }
+  }
+
+  async function postDiscovery(handler, bodyBuilder) {
+    const form = document.getElementById('discovery-batch-token-form')
+      || document.getElementById('discovery-approve-all-form')
+      || document.getElementById('discovery-save-form');
+    const token = antiforgeryToken(form);
+    const body = new URLSearchParams();
+    body.set('ajax', '1');
+    appendFilterFields(body, form);
+    if (token) body.set('__RequestVerificationToken', token);
+    bodyBuilder(body);
+    const res = await fetch(`?handler=${handler}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'RequestVerificationToken': token,
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json'
+      },
+      body
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || `Request failed (HTTP ${res.status})`);
+    return data;
+  }
+
+  // --- Multi-select (Ctrl+click toggle, Shift+click range) ---
+  const selectedIds = new Set();
+  let selectionAnchorId = null;
+  const batchBar = document.getElementById('discovery-batch-bar');
+  const batchCountEl = document.getElementById('discovery-batch-count');
+
+  function syncSelectionUi() {
+    mainRows().forEach(row => {
+      const id = row.dataset.discoveryId;
+      row.classList.toggle('hd-discovery-selected', selectedIds.has(id));
+      row.setAttribute('aria-selected', selectedIds.has(id) ? 'true' : 'false');
+    });
+    const n = selectedIds.size;
+    if (batchBar) batchBar.classList.toggle('d-none', n === 0);
+    if (batchCountEl) batchCountEl.textContent = n === 1 ? '1 selected' : `${n} selected`;
+  }
+
+  function clearSelection() {
+    selectedIds.clear();
+    selectionAnchorId = null;
+    syncSelectionUi();
+  }
+
+  function isInteractiveTarget(el) {
+    return !!el.closest('a, button, input, select, textarea, label, .hd-col-resize, .hd-discovery-action-btn');
+  }
+
+  table?.addEventListener('click', (e) => {
+    const row = e.target.closest('tr.hd-discovery-main');
+    if (!row || !table.contains(row)) return;
+    if (isInteractiveTarget(e.target)) return;
+    if (!(e.ctrlKey || e.metaKey || e.shiftKey)) return;
+
+    e.preventDefault();
+    const id = row.dataset.discoveryId;
+    if (!id) return;
+    const rows = mainRows();
+    const ids = rows.map(r => r.dataset.discoveryId);
+
+    if (e.shiftKey && selectionAnchorId) {
+      const a = ids.indexOf(selectionAnchorId);
+      const b = ids.indexOf(id);
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        if (!(e.ctrlKey || e.metaKey)) selectedIds.clear();
+        for (let i = lo; i <= hi; i++) selectedIds.add(ids[i]);
+      }
+    } else if (e.ctrlKey || e.metaKey) {
+      if (selectedIds.has(id)) selectedIds.delete(id);
+      else selectedIds.add(id);
+      selectionAnchorId = id;
+    }
+    syncSelectionUi();
+  });
+
+  document.getElementById('discovery-batch-clear')?.addEventListener('click', clearSelection);
+
+  document.getElementById('discovery-batch-apply-tax')?.addEventListener('click', async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    const cat = document.getElementById('discovery-batch-category')?.value ?? '';
+    const sub = document.getElementById('discovery-batch-subcategory')?.value ?? '';
+    try {
+      const data = await postDiscovery('BatchTaxonomy', body => {
+        for (const id of ids) body.append('ids', id);
+        body.set('category', cat);
+        body.set('subcategory', sub);
+        body.set('setCategory', 'true');
+        body.set('setSubcategory', 'true');
+      });
+      for (const id of (data.updatedIds || ids)) {
+        applyRowActionResult(id, {
+          category: data.category,
+          subcategory: data.subcategory,
+          setCategory: data.setCategory,
+          setSubcategory: data.setSubcategory,
+          removeRow: false
+        }, null, { quiet: true });
+      }
+      showToast(data.message || 'Labels updated.', 'success');
+    } catch (err) {
+      showToast(err.message || 'Batch label update failed', 'error');
+    }
+  });
+
+  document.getElementById('discovery-batch-approve')?.addEventListener('click', async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    const withSuggestion = ids.filter(id => {
+      const row = table?.querySelector(`tr.hd-discovery-main[data-discovery-id="${id}"]`);
+      return row?.dataset.hasSuggestion === 'true';
+    });
+    if (withSuggestion.length === 0) {
+      showToast('No pending suggestions on the selected rows.', 'error');
+      return;
+    }
+    try {
+      const data = await postDiscovery('BatchApprove', body => {
+        for (const id of withSuggestion) body.append('ids', id);
+      });
+      const showClassified = /^(true|1)$/i.test(String(
+        document.getElementById('discovery-batch-token-form')?.querySelector('[name="showClassified"]')?.value || ''));
+      for (const id of (data.approvedIds || withSuggestion)) {
+        applyRowActionResult(id, {
+          removeRow: data.removeRow && !showClassified,
+          pendingSuggestionCount: data.pendingSuggestionCount,
+          unclassifiedCount: data.unclassifiedCount
+        }, document.getElementById(`discovery-approve-${id}`), { quiet: true });
+      }
+      updateDiscoveryCounts(data.pendingSuggestionCount, data.unclassifiedCount);
+      syncSelectionUi();
+      showToast(data.message || 'Approved selection.', 'success');
+    } catch (err) {
+      showToast(err.message || 'Batch approve failed', 'error');
+    }
+  });
+
+  document.getElementById('discovery-batch-set')?.addEventListener('click', async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    const group = document.getElementById('discovery-batch-group')?.value || 'Specialization';
+    const cat = document.getElementById('discovery-batch-category')?.value ?? '';
+    const sub = document.getElementById('discovery-batch-subcategory')?.value ?? '';
+    try {
+      const data = await postDiscovery('BatchSet', body => {
+        for (const id of ids) body.append('ids', id);
+        body.set('group', group);
+        body.set('category', cat);
+        body.set('subcategory', sub);
+      });
+      const removeSet = new Set((data.removeIds || data.approvedIds || ids).map(String));
+      for (const id of removeSet) {
+        applyRowActionResult(id, {
+          removeRow: !!data.removeRow,
+          group: data.group,
+          groupLabel: data.groupLabel,
+          category: data.category,
+          subcategory: data.subcategory,
+          pendingSuggestionCount: data.pendingSuggestionCount,
+          unclassifiedCount: data.unclassifiedCount
+        }, document.getElementById(`discovery-set-${id}`), { quiet: true, forceRemove: !!data.removeRow });
+      }
+      for (const id of ids) {
+        if (removeSet.has(String(id))) continue;
+        applyRowActionResult(id, {
+          removeRow: false,
+          group: data.group,
+          groupLabel: data.groupLabel,
+          category: data.category,
+          subcategory: data.subcategory
+        }, null, { quiet: true });
+      }
+      updateDiscoveryCounts(data.pendingSuggestionCount, data.unclassifiedCount);
+      clearSelection();
+      showToast(data.message || 'Set selection.', 'success');
+    } catch (err) {
+      showToast(err.message || 'Batch set failed', 'error');
+    }
+  });
+
   // Approve all via AJAX batches — never one giant POST that can lock SQLite / drop the listener.
+  // Progress uses server remaining counts (never btn.textContent, which destroyed #discovery-approve-all-count).
   document.getElementById('discovery-approve-all-btn')?.addEventListener('click', async (e) => {
     e.preventDefault();
     const btn = e.currentTarget;
     if (btn.disabled) return;
-    const pending = Number(btn.dataset.pending || document.getElementById('discovery-approve-all-count')?.textContent || '0');
+    let pending = Number(btn.dataset.pending || document.getElementById('discovery-approve-all-count')?.textContent || '0');
     if (pending <= 0) return;
     if (!confirm(`Approve all ${pending} pending suggestion(s) in batches?`)) return;
 
@@ -832,10 +1085,15 @@
     const showClassified = /^(true|1)$/i.test(String(form?.querySelector('[name="showClassified"]')?.value || ''));
     btn.disabled = true;
     let totalApproved = 0;
+    let remaining = pending;
     const batchSize = 40;
+    const statusEl = document.createElement('span');
+    statusEl.className = 'hd-discovery-approve-all-status';
+    statusEl.setAttribute('aria-live', 'polite');
 
     const setBusyLabel = (text) => {
-      btn.textContent = text;
+      btn.replaceChildren(statusEl);
+      statusEl.textContent = text;
     };
 
     try {
@@ -843,15 +1101,12 @@
         const body = new URLSearchParams();
         body.set('take', String(batchSize));
         body.set('ajax', '1');
-        for (const name of ['hideIgnored', 'blankPathOnly', 'showClassified', 'q', 'sort', 'dir']) {
-          const el = form?.querySelector(`[name="${name}"]`);
-          if (el) body.set(name, el.value);
-        }
+        appendFilterFields(body, form);
         if (token) body.set('__RequestVerificationToken', token);
 
         setBusyLabel(totalApproved === 0
           ? 'Approving…'
-          : `Approving… ${totalApproved} done`);
+          : `Approving… ${totalApproved} done, ${remaining} left`);
 
         const res = await fetch('?handler=ApproveAll', {
           method: 'POST',
@@ -867,20 +1122,18 @@
         if (!res.ok || !data.ok) throw new Error(data.error || `Approve-all batch failed (HTTP ${res.status})`);
 
         totalApproved += Number(data.approved || 0);
+        remaining = Number(data.remaining ?? data.pendingSuggestionCount ?? 0);
+        btn.dataset.pending = String(remaining);
+
         const ids = Array.isArray(data.approvedIds) ? data.approvedIds : [];
         for (const id of ids) {
           applyRowActionResult(id, {
             removeRow: !showClassified,
-            pendingSuggestionCount: data.pendingSuggestionCount,
+            pendingSuggestionCount: remaining,
             unclassifiedCount: data.unclassifiedCount
-          }, document.getElementById(`discovery-approve-${id}`));
+          }, document.getElementById(`discovery-approve-${id}`), { quiet: true });
         }
-        updateDiscoveryCounts(data.pendingSuggestionCount, data.unclassifiedCount);
-
-        const remaining = Number(data.remaining ?? data.pendingSuggestionCount ?? 0);
-        if (remaining > 0) {
-          setBusyLabel(`Approving… ${totalApproved} done, ${remaining} left`);
-        }
+        updateDiscoveryCounts(remaining, data.unclassifiedCount);
 
         if (data.done || remaining <= 0) {
           showToast(
@@ -893,22 +1146,18 @@
         }
       }
     } catch (err) {
-      const left = Number(document.getElementById('discovery-approve-all-count')?.textContent || '0');
       btn.disabled = false;
-      btn.innerHTML = `Approve all (<span id="discovery-approve-all-count">${left}</span>)`;
-      btn.dataset.pending = String(left);
+      restoreApproveAllLabel(btn, remaining);
       showToast(err.message || 'Approve all failed — try again (progress is saved).', 'error');
       return;
     }
 
-    const left = Number(document.getElementById('discovery-approve-all-count')?.textContent || '0');
-    if (left <= 0) {
+    if (remaining <= 0) {
       btn.remove();
       form?.remove();
     } else {
       btn.disabled = false;
-      btn.innerHTML = `Approve all (<span id="discovery-approve-all-count">${left}</span>)`;
-      btn.dataset.pending = String(left);
+      restoreApproveAllLabel(btn, remaining);
     }
   });
 

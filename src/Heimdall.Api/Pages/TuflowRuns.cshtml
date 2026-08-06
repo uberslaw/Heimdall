@@ -1,0 +1,128 @@
+@page
+@model Heimdall.Api.Pages.TuflowRunsModel
+@{
+    ViewData["Title"] = "TUFLOW Runs";
+}
+
+<div class="hd-panel mb-3">
+    <h2 class="hd-section-title">TUFLOW Runs</h2>
+    <p class="text-secondary small mb-0"><a asp-page="/FleetSimProgress">View Fleet Sim Progress →</a> (who's running what, where, and how it's tracking)</p>
+</div>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-message">@msg</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-error">@err</div>
+}
+
+@if (Model.EnrolledCount == 0)
+{
+    <div class="hd-panel mb-3">
+        <p class="text-secondary mb-0">
+            No Flood machines are enrolled yet. Enroll machines from the Historical Dashboard enrollment
+            page (the same list that already powers TUFLOW fleet sampling) — this page only ever shows and
+            acts on that list.
+        </p>
+    </div>
+}
+else
+{
+    <div class="hd-panel mb-3">
+        <p class="mb-0">
+            <strong>@Model.RunningCount</strong> of <strong>@Model.EnrolledCount</strong> Flood machines
+            currently running TUFLOW
+            <span class="text-secondary small">
+                (≈ @Model.RunningCount licence@(Model.RunningCount == 1 ? "" : "s") in use —
+                counts any running TUFLOW instance detected by fleet sampling, not just runs queued from this page)
+            </span>
+        </p>
+    </div>
+}
+
+<div class="hd-panel mb-3">
+    <div class="table-responsive">
+        <table class="hd-table mb-0">
+            <thead>
+                <tr>
+                    <th>Machine</th>
+                    <th>Licence / process</th>
+                    <th>Heimdall run status</th>
+                    <th>Run</th>
+                    <th>Last checkpoint</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var row in Model.Rows)
+            {
+                <tr>
+                    <td>@(row.FriendlyName ?? row.Hostname)</td>
+                    <td><span class="badge-pill @TuflowRunsModel.FleetStatusBadgeClass(row.FleetStatus)">@TuflowRunsModel.FleetStatusLabel(row.FleetStatus)</span></td>
+                    <td><span class="badge-pill @TuflowRunsModel.RunStateBadgeClass(row.Status?.State)">@(row.Status?.State ?? "No run")</span></td>
+                    <td>
+                        @if (row.Status is not null)
+                        {
+                            <div>@(row.Status.RunName ?? row.Status.TcfPath)</div>
+                            <div class="text-secondary small">@row.Status.TcfPath</div>
+                            <div class="text-secondary small">run @row.Status.RunId</div>
+                        }
+                    </td>
+                    <td>
+                        @if (row.Status?.LastCheckpointUtc is DateTimeOffset cp)
+                        {
+                            @cp.ToLocalTime().ToString("dd/MM/yyyy HH:mm")
+                            <div class="text-secondary small">@row.Status.LastCheckpointFile</div>
+                        }
+                    </td>
+                    <td>
+                        @if (TuflowRunsModel.CanStop(row))
+                        {
+                            <form method="post" asp-page-handler="StopGraceful" style="display:inline">
+                                <input type="hidden" name="hostname" value="@row.Hostname" />
+                                <button type="submit" class="btn btn-ghost btn-sm"
+                                        onclick="return confirm('Send a graceful stop to TUFLOW on @row.Hostname? It will finish its current checkpoint, release the licence and exit — resume later from the last checkpoint written.');">
+                                    Stop gracefully
+                                </button>
+                            </form>
+                        }
+                        else if (TuflowRunsModel.CanStart(row))
+                        {
+                            <button type="button" class="btn btn-hd btn-sm" onclick="document.getElementById('start-@row.Hostname').showModal()">
+                                Start…
+                            </button>
+                            <dialog id="start-@row.Hostname">
+                                <form method="post" asp-page-handler="Start" class="hd-panel mb-0">
+                                    <input type="hidden" name="hostname" value="@row.Hostname" />
+                                    <label class="d-block mb-2">Run name (optional — shown on the Fleet Sim Progress page; defaults to the .tcf filename if left blank)
+                                        <input class="form-control" name="runName" placeholder="e.g. sim1, 100yr ARI" /></label>
+                                    <label class="d-block mb-2">Your name (who's kicking this off)
+                                        <input class="form-control" name="requestedBy" value="@Model.SuggestedRequestedBy" placeholder="e.g. C.Smith" /></label>
+                                    <label class="d-block mb-2">TUFLOW .exe path <input class="form-control" name="exePath" required placeholder="C:\TUFLOW\Releases\...\TUFLOW_iSP_w64.exe" /></label>
+                                    <label class="d-block mb-2">.tcf path <input class="form-control" name="tcfPath" required placeholder="C:\Models\...\runs\MR_H99_C25_Q100.tcf" /></label>
+                                    <label class="d-block mb-2">Working directory (optional) <input class="form-control" name="workingDirectory" /></label>
+                                    <label class="d-block mb-2">Scenarios (space/comma separated, optional) <input class="form-control" name="scenarios" placeholder="e.g. RESUME" /></label>
+                                    <label class="d-block mb-2">Events (space/comma separated, optional) <input class="form-control" name="events" /></label>
+                                    <label class="d-block mb-3">Results folder (optional, else auto-detected) <input class="form-control" name="resultsFolder" /></label>
+                                    <button type="submit" class="btn btn-hd btn-sm">Queue start</button>
+                                    <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('start-@row.Hostname').close()">Cancel</button>
+                                </form>
+                            </dialog>
+                        }
+                        else if (TuflowRunsModel.IsHeimdallTrackedRunActive(row))
+                        {
+                            <span class="text-secondary small">Starting…</span>
+                        }
+                        else
+                        {
+                            <span class="text-secondary small">TUFLOW is running on this machine outside Heimdall — stop it manually before queuing a run here.</span>
+                        }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+</div>

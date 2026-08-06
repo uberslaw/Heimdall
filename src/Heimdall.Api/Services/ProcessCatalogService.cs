@@ -264,6 +264,8 @@ public sealed class ProcessCatalogService(HeimdallDbContext db, ProcessGroupServ
             var name = ConfigService.NormalizeProcessName(rawName);
             if (name.Length == 0 || string.IsNullOrWhiteSpace(rawPath))
                 return;
+            if (!DiscoveryCatalogFilter.IsEligible(name, rawPath))
+                return;
             if (!index.TryGetValue(name, out var list))
             {
                 list = [];
@@ -356,7 +358,8 @@ public sealed class ProcessCatalogService(HeimdallDbContext db, ProcessGroupServ
                 string.IsNullOrWhiteSpace(i.ExecutablePath) ? "" : i.ExecutablePath.Trim(),
                 string.IsNullOrWhiteSpace(i.DisplayName) ? null : i.DisplayName.Trim(),
                 NullIfEmpty(i.FileVersion), NullIfEmpty(i.ProductVersion), NullIfEmpty(i.CompanyName), NullIfEmpty(i.FileDescription)))
-            .Where(i => i.ProcessName.Length > 0)
+            .Where(i => i.ProcessName.Length > 0
+                        && DiscoveryCatalogFilter.IsEligible(i.ProcessName, i.ExecutablePath))
             .GroupBy(i => (i.ProcessName.ToLowerInvariant(), i.ExecutablePath!.ToLowerInvariant()))
             .Select(g => g.First())
             .ToList();
@@ -512,6 +515,28 @@ public sealed class ProcessCatalogService(HeimdallDbContext db, ProcessGroupServ
     private static string? NullIfEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
     public Task<int> CountAsync(CancellationToken ct = default) => db.ProcessCatalogEntries.CountAsync(ct);
+
+    /// <summary>
+    /// Delete catalog rows that are .tmp / under TEMP / non-.exe paths (no FKs reference this table).
+    /// Safe to call on every Discovery load / API start (idempotent).
+    /// </summary>
+    public async Task<int> PurgeIneligibleEntriesAsync(CancellationToken ct = default)
+    {
+        var entries = await db.ProcessCatalogEntries.ToListAsync(ct);
+        var junk = entries
+            .Where(e => DiscoveryCatalogFilter.IsIneligibleCatalogEntry(e.ProcessName, e.ExecutablePath))
+            .ToList();
+        if (junk.Count == 0)
+            return 0;
+
+        db.ProcessCatalogEntries.RemoveRange(junk);
+        await db.SaveChangesAsync(ct);
+        await processGroups.AuditCatalogAsync(
+            "catalog-purge-temp",
+            $"Catalog: removed {junk.Count} temp/.tmp/non-exe discovery entr{(junk.Count == 1 ? "y" : "ies")}",
+            hostname: null, ct);
+        return junk.Count;
+    }
 
     public async Task<int> CountNeedingClassificationAsync(CancellationToken ct = default)
     {
@@ -776,6 +801,7 @@ public sealed class ProcessCatalogService(HeimdallDbContext db, ProcessGroupServ
         var name = ConfigService.NormalizeProcessName(rawName);
         if (name.Length == 0) return;
         var path = string.IsNullOrWhiteSpace(rawPath) ? "" : rawPath.Trim();
+        if (!DiscoveryCatalogFilter.IsEligible(name, path)) return;
         var key = (name, path);
         target.Add(key);
         combined.Add(key);
@@ -791,6 +817,7 @@ public sealed class ProcessCatalogService(HeimdallDbContext db, ProcessGroupServ
         var name = ConfigService.NormalizeProcessName(rawName);
         if (name.Length == 0) return;
         var path = string.IsNullOrWhiteSpace(rawPath) ? null : rawPath.Trim();
+        if (!DiscoveryCatalogFilter.IsEligible(name, path)) return;
         var display = string.IsNullOrWhiteSpace(displayName) ? null : displayName.Trim();
         if (!byHost.TryGetValue(hostKey, out var list))
         {

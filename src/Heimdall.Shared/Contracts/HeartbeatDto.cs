@@ -14,7 +14,7 @@ public sealed class HeartbeatDto
 
     public int ActiveSessionCount { get; init; }
 
-    public string AgentVersion { get; init; } = "0.1.0";
+    public string AgentVersion { get; init; } = "2";
 
     // Optional hardware inventory (WMI / Environment). API fills Machine blanks unless HardwareManualOverride.
     /// <summary>Preferred display / asset serial (hostname-derived when BIOS is generic).</summary>
@@ -60,6 +60,13 @@ public sealed class HeartbeatDto
 
     /// <summary>TermService (Remote Desktop Services) status: Running, Stopped, Unknown, etc.</summary>
     public string? TermServiceStatus { get; init; }
+
+    /// <summary>
+    /// Current state of the TUFLOW run this agent is tracking (if any) - read from TuflowLauncher's
+    /// status.json each upload cycle. Null when no run has ever been started on this machine, or once
+    /// a finished run's pointer file has been cleared (see TuflowRunHelper.ReadCurrentStatus).
+    /// </summary>
+    public TuflowRunStatusDto? TuflowRunStatus { get; init; }
 
     /// <summary>Commands executed since last ingest; API clears matching PendingCommands.</summary>
     public List<string> AcknowledgedCommands { get; init; } = [];

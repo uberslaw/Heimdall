@@ -4,6 +4,20 @@ namespace Heimdall.Shared.Contracts;
 public static class RemoteMachineCommands
 {
     public const string RestartTermService = "RestartTermService";
+
+    /// <summary>
+    /// Zero-payload graceful-stop token for the TUFLOW run the agent is currently tracking.
+    /// See Heimdall.Agent.Collectors.TuflowRunHelper.TryExecuteCommand and TuflowLauncher's
+    /// stop.request-file / CTRL_BREAK_EVENT mechanism.
+    /// </summary>
+    public const string TuflowStopGraceful = "TuflowStopGraceful";
+
+    /// <summary>
+    /// Silent client self-update: agent downloads the published pack from the API and replaces
+    /// HeimdallAgent files (service restart only — never logoff/reboot). Payload is
+    /// AgentConfigDto.PendingClientUpdate.
+    /// </summary>
+    public const string UpdateClient = "UpdateClient";
 }
 
 /// <summary>Result of a single agent command execution attempt (success or failure).</summary>

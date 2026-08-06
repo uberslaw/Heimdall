@@ -11,6 +11,9 @@ REM     Install.lnk          ← only entry clients need
 REM     Install.cmd / wizard scripts
 REM     payload\             (published Heimdall.Agent.exe + deps)
 REM   dist\heimdall-client.zip  (optional, if tar available)
+REM
+REM Stage markers (parsed by API Client Version pack UI):
+REM   HEIMDALL_PACK_STAGE=N/5 label
 
 cd /d "%~dp0.."
 set "ROOT=%CD%"
@@ -20,7 +23,20 @@ set "PROJECT=%ROOT%\src\Heimdall.Agent\Heimdall.Agent.csproj"
 set "RID=win-x64"
 set "NUGET_ORG=https://api.nuget.org/v3/index.json"
 set "EXITCODE=1"
+set "PACK_STAGES=5"
 
+REM API / non-interactive hosts must never hit "pause" (would hang forever under redirected IO).
+if /I "%HEIMDALL_PACK_FROM_API%"=="1" set "HEIMDALL_NOPAUSE=1"
+
+goto :main
+
+:emit_stage
+REM %~1 = stage number, %~2 = short label
+echo HEIMDALL_PACK_STAGE=%~1/%PACK_STAGES% %~2
+echo [*] stage %~1/%PACK_STAGES%: %~2
+exit /b 0
+
+:main
 echo.
 echo ================================================================
 echo   Create Heimdall Client pack
@@ -47,12 +63,29 @@ if not exist "%PROJECT%" (
   goto fail
 )
 
+call :emit_stage 1 "preparing"
 echo [*] Checking for .NET 10 SDK...
 dotnet --list-sdks | findstr /R "^10\." >nul
 if errorlevel 1 (
   echo [WARN] No .NET 10 SDK line found — publish may fail.
   dotnet --list-sdks
 )
+
+REM Resolve next simple integer productVersion BEFORE wiping OUT (reads prior VERSION.json).
+REM Bump is independent of source fingerprint — every pack advances N+1 unless ForceVersion is set.
+REM Override: set HEIMDALL_CLIENT_PRODUCT_VERSION=N. Floor: HEIMDALL_PUBLISHED_CLIENT_VERSION from API.
+set "CLIENT_VER="
+if defined HEIMDALL_CLIENT_PRODUCT_VERSION if not "%HEIMDALL_CLIENT_PRODUCT_VERSION%"=="" (
+  set "CLIENT_VER=%HEIMDALL_CLIENT_PRODUCT_VERSION%"
+  echo [*] Using HEIMDALL_CLIENT_PRODUCT_VERSION=%CLIENT_VER%
+) else (
+  for /f "usebackq delims=" %%V in (`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\Resolve-ClientPackVersion.ps1" -RepoRoot "%ROOT%" -PackFolder "%OUT%"`) do set "CLIENT_VER=%%V"
+)
+if not defined CLIENT_VER (
+  echo [ERROR] Could not resolve client productVersion
+  goto fail
+)
+echo [*] Client productVersion for this pack: %CLIENT_VER%
 
 echo [*] Cleaning output folder...
 if exist "%OUT%" rmdir /S /Q "%OUT%"
@@ -75,9 +108,14 @@ dotnet nuget list source
 echo.
 echo [*] Forcing restore source: %NUGET_ORG%
 
-echo [*] dotnet publish (self-contained %RID%)...
-echo     First run can take several minutes ^(download runtime packs^)...
-dotnet publish "%PROJECT%" -c Release -r %RID% --self-contained true -o "%PAYLOAD%" --source "%NUGET_ORG%" -v minimal
+call :emit_stage 2 "building binaries"
+echo [*] dotnet publish (self-contained %RID%, InformationalVersion=%CLIENT_VER%)...
+echo     First run / cold disk often 2–5 min; warm publish usually 1–3 min...
+dotnet publish "%PROJECT%" -c Release -r %RID% --self-contained true -o "%PAYLOAD%" --source "%NUGET_ORG%" -v minimal ^
+  /p:Version=%CLIENT_VER% ^
+  /p:InformationalVersion=%CLIENT_VER% ^
+  /p:AssemblyVersion=%CLIENT_VER%.0.0.0 ^
+  /p:FileVersion=%CLIENT_VER%.0.0.0
 if errorlevel 1 (
   echo [ERROR] dotnet publish failed
   echo.
@@ -96,6 +134,21 @@ if errorlevel 1 (
 
 if not exist "%PAYLOAD%\Heimdall.Agent.exe" (
   echo [ERROR] Expected %PAYLOAD%\Heimdall.Agent.exe after publish
+  goto fail
+)
+
+call :emit_stage 3 "publishing launcher"
+echo [*] Publishing TuflowLauncher into payload\TuflowLauncher...
+set "LAUNCHER_SRC=%ROOT%\tuflow-automation\TuflowLauncher\TuflowLauncher.csproj"
+set "LAUNCHER_OUT=%PAYLOAD%\TuflowLauncher"
+if exist "%LAUNCHER_OUT%" rmdir /S /Q "%LAUNCHER_OUT%"
+dotnet publish "%LAUNCHER_SRC%" -c Release -r %RID% --self-contained false -o "%LAUNCHER_OUT%" --source "%NUGET_ORG%" -v minimal
+if errorlevel 1 (
+  echo [ERROR] TuflowLauncher publish failed
+  goto fail
+)
+if not exist "%LAUNCHER_OUT%\TuflowLauncher.exe" (
+  echo [ERROR] Expected %LAUNCHER_OUT%\TuflowLauncher.exe after publish
   goto fail
 )
 
@@ -127,10 +180,11 @@ if exist "%ROOT%\assets\heimdall.ico" (
   echo [WARN] assets\heimdall.ico missing — pack will not include helmet icon shortcuts.
 )
 
-echo [*] Writing VERSION.json + PACKED.txt...
+call :emit_stage 4 "writing manifest"
+echo [*] Writing VERSION.json + PACKED.txt (productVersion=%CLIENT_VER%)...
 (
   echo {
-  echo   "productVersion": "0.1.0",
+  echo   "productVersion": "%CLIENT_VER%",
   echo   "rid": "%RID%",
   echo   "selfContained": true,
   echo   "targetFramework": "net10.0",
@@ -148,10 +202,18 @@ echo [*] Writing VERSION.json + PACKED.txt...
   echo Repo:        %ROOT%
   echo RID:         %RID%
   echo SelfContained: true
-  echo ProductVersion: 0.1.0
+  echo ProductVersion: %CLIENT_VER%
   echo Output:      Heimdall-Client
 ) > "%OUT%\PACKED.txt"
 
+echo [*] Writing MANIFEST.sha256 + sourceFingerprint...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\Write-ClientPackManifest.ps1" -RepoRoot "%ROOT%" -PackFolder "%OUT%"
+if errorlevel 1 (
+  echo [ERROR] Write-ClientPackManifest.ps1 failed
+  goto fail
+)
+
+call :emit_stage 5 "zip finalize"
 set "ZIP=%ROOT%\dist\heimdall-client.zip"
 if exist "%ZIP%" del /F /Q "%ZIP%" >nul 2>&1
 if exist "%ROOT%\dist\heimdall-workstation-collector.zip" del /F /Q "%ROOT%\dist\heimdall-workstation-collector.zip" >nul 2>&1

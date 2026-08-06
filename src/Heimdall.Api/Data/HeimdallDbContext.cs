@@ -32,6 +32,7 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<MachineResourceMetric> MachineResourceMetrics => Set<MachineResourceMetric>();
     public DbSet<FleetDashboardMachine> FleetDashboardMachines => Set<FleetDashboardMachine>();
     public DbSet<FleetMetricSnapshot> FleetMetricSnapshots => Set<FleetMetricSnapshot>();
+    public DbSet<TuflowRunRecord> TuflowRunRecords => Set<TuflowRunRecord>();
     public DbSet<CustomTheme> CustomThemes => Set<CustomTheme>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -141,6 +142,9 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
         modelBuilder.Entity<AppList>(e =>
         {
             e.HasIndex(x => x.Name);
+            e.HasIndex(x => x.SystemKey)
+                .IsUnique()
+                .HasFilter("SystemKey IS NOT NULL");
             e.HasOne(x => x.Team)
                 .WithMany()
                 .HasForeignKey(x => x.TeamId)
@@ -239,6 +243,16 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
         {
             e.HasIndex(x => new { x.MachineId, x.SampledAtUtc });
             e.HasIndex(x => x.SampledAtUtc);
+            e.HasOne(x => x.Machine)
+                .WithMany()
+                .HasForeignKey(x => x.MachineId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TuflowRunRecord>(e =>
+        {
+            e.HasIndex(x => x.RunId).IsUnique();
+            e.HasIndex(x => new { x.MachineId, x.RequestedUtc });
             e.HasOne(x => x.Machine)
                 .WithMany()
                 .HasForeignKey(x => x.MachineId)

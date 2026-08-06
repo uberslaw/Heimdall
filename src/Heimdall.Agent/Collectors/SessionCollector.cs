@@ -184,6 +184,16 @@ public sealed class SessionCollector
         }
     }
 
+    /// <summary>True when any WTS session is Active (connected) — used to defer silent client updates.</summary>
+    public bool HasActiveInteractiveSession
+    {
+        get
+        {
+            lock (_gate)
+                return _sessions.Values.Any(s => s.State == SessionState.Active);
+        }
+    }
+
     /// <summary>Primary interactive user (prefer Active session), for fleet snapshots.</summary>
     public string? TryGetPrimaryInteractiveUsername()
     {

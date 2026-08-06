@@ -62,6 +62,7 @@
                         <a class="dropdown-item" asp-page="/Index">All machines</a>
                         <a class="dropdown-item" asp-page="/Sessions">Sessions</a>
                         <a class="dropdown-item" asp-page="/Teams">Teams</a>
+                        <a class="dropdown-item" asp-page="/ClientVersion">Client Version</a>
                     </div>
                 </div>
                 <div class="dropdown hd-nav-dropdown">
@@ -81,8 +82,10 @@
                         Remote
                     </button>
                     <div class="dropdown-menu hd-nav-dropdown-menu">
-                        <a class="dropdown-item" asp-page="/RemoteMachines">Remote Machines</a>
+                        <a class="dropdown-item" asp-page="/RemoteMachines">Online Status</a>
                         <a class="dropdown-item" asp-page="/HistoricalDashboard">Historical Dashboard</a>
+                        <a class="dropdown-item" asp-page="/TuflowRuns">TUFLOW Runs</a>
+                        <a class="dropdown-item" asp-page="/FleetSimProgress">Fleet Sim Progress</a>
                         <a class="dropdown-item" asp-page="/StaffAccess">Staff Access</a>
                     </div>
                 </div>
@@ -103,7 +106,6 @@
                             <div class="d-flex flex-column gap-1">
                                 <a class="dropdown-item px-0" asp-page="/Cost">Cost</a>
                                 <a class="dropdown-item px-0" asp-page="/Stats">Stats</a>
-                                <a class="dropdown-item px-0" asp-page="/Clients">Clients (agent versions)</a>
                             </div>
                         </div>
                         <div class="hd-settings-section">

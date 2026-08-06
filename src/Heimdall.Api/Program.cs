@@ -46,10 +46,13 @@ builder.Services.AddScoped<AppListService>();
 builder.Services.AddScoped<StatsQueryService>();
 builder.Services.AddScoped<SocratizeQueryService>();
 builder.Services.AddScoped<RemoteMachineService>();
+builder.Services.AddScoped<TuflowRunService>();
 builder.Services.AddScoped<RemoteAccessGroupService>();
 builder.Services.AddScoped<LiveSamplingService>();
 builder.Services.AddScoped<SessionDrilldownService>();
 builder.Services.AddScoped<PublishedVersionService>();
+builder.Services.AddSingleton<ClientPackReadinessService>();
+builder.Services.AddScoped<ClientUpdateService>();
 builder.Services.AddScoped<FleetDashboardService>();
 builder.Services.AddScoped<MachineUtilisationService>();
 
@@ -193,8 +196,17 @@ app.MapGet("/api/config/{hostname}", async (string hostname, ConfigService confi
     return Results.Ok(dto);
 });
 
-// --- Published client version (Clients page baseline; set by Launch Control "Create client pack" — best-effort —
-// or manually from the Clients admin page) ---
+app.MapGet("/api/tuflow/{hostname}/pending", async (string hostname, TuflowRunService runs, HttpRequest request) =>
+{
+    if (!IsAuthorized(request))
+        return Results.Unauthorized();
+
+    var dto = await runs.GetPendingAsync(hostname, request.HttpContext.RequestAborted);
+    return Results.Ok(dto);
+});
+
+// --- Published client version (Client Version page baseline; set by Launch Control "Create client pack" — best-effort —
+// or manually from the Client Version page) ---
 
 app.MapPost("/api/admin/published-version", async (PublishedVersionDto dto, PublishedVersionService publishedVersion, HttpRequest request) =>
 {
@@ -205,6 +217,75 @@ app.MapPost("/api/admin/published-version", async (PublishedVersionDto dto, Publ
 
     await publishedVersion.SetAsync(dto.Version.Trim(), dto.SetBy, request.HttpContext.RequestAborted);
     return Results.Ok();
+});
+
+app.MapGet("/api/admin/client-pack/status", (ClientPackReadinessService pack, HttpRequest request) =>
+{
+    // Same network trust model as other admin Razor pages / published-version (ApiKey optional for browser; key accepted).
+    _ = request;
+    var status = pack.GetStatus();
+    return Results.Json(new
+    {
+        status = status.Status.ToString(),
+        message = status.Message,
+        repoRoot = status.RepoRoot,
+        packFolder = status.PackFolder,
+        liveSourceFingerprint = status.LiveSourceFingerprint,
+        packSourceFingerprint = status.PackSourceFingerprint,
+        packProductVersion = status.PackProductVersion,
+        zipSha256 = status.ZipSha256,
+        canPack = status.CanPack,
+        deployUnlocked = status.DeployUnlocked,
+        apiInstallNote = status.ApiInstallNote,
+        checkedUtc = status.CheckedUtc,
+        isPacking = status.IsPacking,
+        packingElapsed = status.PackingElapsedSeconds,
+        packStage = status.PackStage,
+        packStageLabel = status.PackStageLabel,
+        lastPackExitCode = status.LastPackExitCode,
+        lastPackMessage = status.LastPackMessage,
+        lastPackLogTail = status.LastPackLogTail,
+        lastPackLogPath = status.LastPackLogPath,
+        lastPackFinishedUtc = status.LastPackFinishedUtc
+    });
+});
+
+app.MapPost("/api/admin/client-pack/pack", (ClientPackReadinessService pack) =>
+{
+    var (started, message) = pack.TryStartPack();
+    return started ? Results.Accepted(value: new { message }) : Results.BadRequest(new { message });
+});
+
+app.MapPost("/api/admin/client-pack/cancel", (ClientPackReadinessService pack) =>
+{
+    var (cancelled, message) = pack.TryCancelPack();
+    return cancelled ? Results.Ok(new { message }) : Results.BadRequest(new { message });
+});
+
+app.MapGet("/api/agent/client-pack", (ClientPackReadinessService pack, HttpRequest request) =>
+{
+    if (!IsAuthorized(request))
+        return Results.Unauthorized();
+
+    var status = pack.GetStatus();
+    if (status.Status is not ClientPackStatus.Ready and not ClientPackStatus.Stale and not ClientPackStatus.MissingPack)
+    {
+        // Allow download when folder exists even if stale (queued updates still need the zip).
+    }
+
+    try
+    {
+        var packFolder = pack.ResolvePackFolder();
+        if (!File.Exists(Path.Combine(packFolder, "payload", "Heimdall.Agent.exe")))
+            return Results.NotFound();
+
+        var (zipPath, _) = pack.EnsureZip(packFolder);
+        return Results.File(zipPath, "application/zip", "heimdall-client-agent.zip");
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message);
+    }
 });
 
 app.MapGet("/api/remote/{hostname}/restart-status", async (string hostname, RemoteMachineService remote, CancellationToken ct) =>

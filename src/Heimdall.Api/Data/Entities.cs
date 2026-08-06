@@ -91,6 +91,16 @@ public class Machine
     /// <summary>Restart RDS workflow progress (phase, attempts, verification result).</summary>
     public string? RestartRdsProgressJson { get; set; }
 
+    /// <summary>JSON TuflowStartRequestDto queued for the agent; cleared once heartbeat status confirms pickup.</summary>
+    public string? PendingTuflowStartJson { get; set; }
+    /// <summary>Latest JSON TuflowRunStatusDto reported by the agent for the run it is tracking, if any.</summary>
+    public string? TuflowRunStatusJson { get; set; }
+
+    /// <summary>JSON ClientUpdateRequestDto queued for silent agent self-update.</summary>
+    public string? PendingClientUpdateJson { get; set; }
+    /// <summary>Client update workflow progress (phase, detail, timestamps).</summary>
+    public string? ClientUpdateProgressJson { get; set; }
+
     public List<UserSession> Sessions { get; set; } = [];
     public List<ProcessRun> ProcessRuns { get; set; } = [];
     public List<MachineIdentityEvent> IdentityEvents { get; set; } = [];
@@ -380,6 +390,10 @@ public class AppList
     public bool IsAutoDiscovered { get; set; }
     /// <summary>When TeamId is set, true means this list is ignored for that team (not shown as tracked apps).</summary>
     public bool IsTeamExcluded { get; set; }
+    /// <summary>Protected classification-backed list (Core Windows / SOE / Specialization). Cannot be deleted.</summary>
+    public bool IsSystem { get; set; }
+    /// <summary>Stable identity for system lists: <c>CoreWindows</c>, <c>Soe</c>, or <c>Specialization</c>.</summary>
+    public string? SystemKey { get; set; }
 
     public List<AppListEntry> Entries { get; set; } = [];
     public List<AppListAssignment> Assignments { get; set; } = [];
@@ -522,8 +536,52 @@ public class FleetMetricSnapshot
     public double? DiskWriteMBps { get; set; }
     public double? NetworkInMBps { get; set; }
     public double? NetworkOutMBps { get; set; }
+    /// <summary>TUFLOW-process CPU % at this sample — see FleetSnapshotDto.ProcessCpuPercent. Null for
+    /// samples from older agents that don't report process-specific figures yet.</summary>
+    public double? ProcessCpuPercent { get; set; }
+    /// <summary>TUFLOW-process GPU % at this sample — see FleetSnapshotDto.ProcessGpuPercent.</summary>
+    public double? ProcessGpuPercent { get; set; }
+    /// <summary>TUFLOW-process disk read MB/s at this sample — see FleetSnapshotDto.ProcessDiskReadMBps.</summary>
+    public double? ProcessDiskReadMBps { get; set; }
+    /// <summary>TUFLOW-process disk write MB/s at this sample — see FleetSnapshotDto.ProcessDiskWriteMBps.</summary>
+    public double? ProcessDiskWriteMBps { get; set; }
     /// <summary>True when TuflowRunning and any active threshold is met (stored at ingest for stable history).</summary>
     public bool IsActive { get; set; }
+}
+
+/// <summary>
+/// One row per TUFLOW run request (keyed by RunId), created when queued and updated in place as the
+/// run progresses/finishes. Unlike Machine.TuflowRunStatusJson (which only ever holds the latest run),
+/// each run gets its own permanent row here — so a crash's ErrorSummary/ExitCode survives even after a
+/// later run overwrites the "current status" field. Powers the per-machine run history on Machine.cshtml.
+/// </summary>
+public class TuflowRunRecord
+{
+    public int Id { get; set; }
+    public required string RunId { get; set; }
+    /// <summary>"Which simulation" — see TuflowStartRequestDto.RunName for how it's resolved.</summary>
+    public required string RunName { get; set; }
+    public int MachineId { get; set; }
+    public Machine Machine { get; set; } = null!;
+    public required string TcfPath { get; set; }
+    public DateTimeOffset RequestedUtc { get; set; }
+    public string? RequestedBy { get; set; }
+    public DateTimeOffset? StartedUtc { get; set; }
+    /// <summary>Set once, the first time this run's state becomes Stopped/Completed/Failed.</summary>
+    public DateTimeOffset? EndedUtc { get; set; }
+    /// <summary>Live-updated — one of TuflowRunStates.* (Starting/Running/.../Stopped/Completed/Failed).</summary>
+    public required string State { get; set; }
+    public double? PercentComplete { get; set; }
+    public double? SimulationTimeHours { get; set; }
+    public double? SimulationEndTimeHours { get; set; }
+    /// <summary>TUFLOW's own "Approximate Clock Time Remaining (h)" from the .tsf.</summary>
+    public double? ClockTimeRemainingHours { get; set; }
+    public int? WarningCount { get; set; }
+    public double? MassErrorPercent { get; set; }
+    public int? ExitCode { get; set; }
+    public string? ErrorSummary { get; set; }
+    public string? LastCheckpointFile { get; set; }
+    public DateTimeOffset UpdatedUtc { get; set; }
 }
 
 /// <summary>Latest live resource-metrics snapshot reported by the agent for a machine (one row per machine, upserted).</summary>

@@ -55,6 +55,26 @@ public sealed class HeimdallApiClient(HttpClient http, IConfiguration config, IL
     }
 
     /// <summary>
+    /// Fast, independent poll (not tied to ConfigRefreshSeconds) for a queued TUFLOW start/stop — same
+    /// pattern as GetResourceSamplingStatusAsync above. Null on failure — caller just tries again next
+    /// tick rather than treating a transient network blip as "nothing pending".
+    /// </summary>
+    public async Task<TuflowPendingDto?> GetTuflowPendingAsync(string hostname, CancellationToken ct)
+    {
+        try
+        {
+            ApplyKey();
+            return await http.GetFromJsonAsync<TuflowPendingDto>(
+                $"/api/tuflow/{Uri.EscapeDataString(hostname)}/pending", ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "TUFLOW pending poll failed");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Live metric samples are near-real-time only — unlike UploadAsync, a failed report is dropped, not
     /// queued offline. A stale queued "point in time" reading would just show wrong data later; better to
     /// skip and let the next 10s reading (or next calibration burst) supersede it.
@@ -89,6 +109,33 @@ public sealed class HeimdallApiClient(HttpClient http, IConfiguration config, IL
         catch (Exception ex)
         {
             logger.LogDebug(ex, "Fleet snapshot report failed (dropped)");
+            return false;
+        }
+    }
+
+    public async Task<bool> DownloadClientPackAsync(string downloadPath, string destFile, CancellationToken ct)
+    {
+        try
+        {
+            ApplyKey();
+            var path = string.IsNullOrWhiteSpace(downloadPath) ? "/api/agent/client-pack" : downloadPath;
+            if (!path.StartsWith('/'))
+                path = "/" + path;
+
+            using var response = await http.GetAsync(path, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogWarning("Client pack download failed: {Status}", response.StatusCode);
+                return false;
+            }
+
+            await using var fs = File.Create(destFile);
+            await response.Content.CopyToAsync(fs, ct);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Client pack download error");
             return false;
         }
     }

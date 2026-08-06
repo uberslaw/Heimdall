@@ -1,0 +1,454 @@
+@page
+@model ClientVersionModel
+@{
+    ViewData["Title"] = "Client Version";
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <h1 class="hd-title mb-1">Client Version</h1>
+    <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="client-version">Help</a>
+</div>
+<p class="hd-sub">
+    Agent build per host vs. published version — online, in use, Active User, silent deploy when pack is ready.
+    First upgrade from pre-3 clients needs Launch Control / Install.lnk; afterward silent Deploy works.
+</p>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<div class="hd-panel mb-4">
+    <form method="post" asp-page-handler="SetPublishedVersion" class="d-flex flex-wrap align-items-end gap-3">
+        <div>
+            <div class="hd-settings-label mb-1">Current published client version</div>
+            @if (!string.IsNullOrWhiteSpace(Model.PublishedVersion))
+            {
+                <span class="badge-pill badge-active">@(Model.PublishedSimpleVersion?.ToString() ?? Model.PublishedVersion)</span>
+                @if (Model.PublishedIsDefault)
+                {
+                    <span class="text-secondary small ms-1">(default)</span>
+                }
+            }
+            else
+            {
+                <span class="badge-pill badge-warn">Not set</span>
+            }
+            @if (Model.PublishedSetUtc is DateTimeOffset setUtc)
+            {
+                <div class="text-secondary small mt-1">
+                    Set @ClientVersionModel.FormatContact(setUtc)@(string.IsNullOrWhiteSpace(Model.PublishedSetBy) ? "" : $" by {Model.PublishedSetBy}")
+                </div>
+            }
+        </div>
+        <div>
+            <label class="hd-settings-label mb-1 d-block" for="NewPublishedVersion">Set / override</label>
+            <input type="text" class="form-control form-control-sm" id="NewPublishedVersion" name="NewPublishedVersion"
+                   placeholder="e.g. 3" style="width:120px" autocomplete="off" inputmode="numeric" />
+        </div>
+        <button type="submit" class="btn btn-hd btn-sm">Save</button>
+    </form>
+    <p class="text-secondary small mt-2 mb-0">
+        Set automatically when a pack completes (Launch Control or Pack client below). Simple integers
+        (baseline <code>3</code> = first UpdateClient-capable build). Legacy SemVer reports count as <code>1</code>.
+        Agents below <code>3</code> cannot silent-update — use Launch Control push or Install.lnk once, then Deploy.
+    </p>
+</div>
+
+<div class="hd-panel mb-4" id="pack-readiness-panel">
+    <div class="d-flex flex-wrap align-items-center gap-3 justify-content-between">
+        <div>
+            <div class="hd-settings-label mb-1">Client pack readiness</div>
+            <div id="pack-status-line" class="text-secondary">Checking pack…</div>
+            <div id="pack-deploy-hint" class="small mt-1 text-secondary"></div>
+            <div id="pack-api-note" class="text-secondary small mt-1"></div>
+            <div id="pack-last-result" class="text-secondary small mt-2" style="display:none"></div>
+            <pre id="pack-log-tail" class="small mt-2 mb-0 p-2" style="display:none;max-height:160px;overflow:auto;background:rgba(0,0,0,.04);white-space:pre-wrap"></pre>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-pack-client" disabled title="Always full rebuild + version bump (N+1), even when Ready">Pack client</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-cancel-pack" style="display:none" title="Stop the in-flight pack">Cancel</button>
+            <button type="button" class="btn btn-hd btn-sm" id="btn-deploy-client" disabled title="Waiting for pack readiness check">Deploy Client</button>
+        </div>
+    </div>
+</div>
+
+<div class="hd-grid">
+    <div class="hd-stat">
+        <div class="label">Machines</div>
+        <div class="value">@Model.Rows.Count</div>
+    </div>
+    <div class="hd-stat">
+        <div class="label">Up to date</div>
+        <div class="value">@Model.UpToDateCount</div>
+    </div>
+    <div class="hd-stat">
+        <div class="label">Out of date / missing</div>
+        <div class="value">@Model.OutOfDateCount</div>
+    </div>
+    <div class="hd-stat">
+        <div class="label">No baseline</div>
+        <div class="value">@Model.UnknownCount</div>
+    </div>
+</div>
+
+<form method="post" asp-page-handler="Deploy" id="deploy-form">
+    @Html.AntiForgeryToken()
+    <div class="hd-panel">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+            <label class="form-check-label small text-secondary mb-0">
+                <input type="checkbox" class="form-check-input" id="select-all-hosts" /> Select all
+            </label>
+            <span class="text-secondary small" id="selected-count">0 selected</span>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-select-outdated">Select out of date</button>
+        </div>
+        <table class="hd-table">
+            <thead>
+                <tr>
+                    <th style="width:2rem"></th>
+                    <th>Status</th>
+                    <th>Machine</th>
+                    <th>Online</th>
+                    <th>In use</th>
+                    <th>Active User</th>
+                    <th>Client version</th>
+                    <th>Behind</th>
+                    <th>Deploy</th>
+                    <th>Last contact</th>
+                </tr>
+            </thead>
+            <tbody>
+            @if (Model.Rows.Count == 0)
+            {
+                <tr><td colspan="10">No agents reporting yet.</td></tr>
+            }
+            @foreach (var r in Model.Rows)
+            {
+                <tr class="@(r.Status == ClientVersionModel.ClientVersionStatus.OutOfDate ? "hd-row-highlight" : null)"
+                    data-status="@r.Status">
+                    <td>
+                        <input type="checkbox" class="form-check-input host-check" name="SelectedHostnames" value="@r.Hostname"
+                               @(r.IsOnline ? null : "title=\"Offline — queue when agent is back\"") />
+                    </td>
+                    <td>
+                        <span class="badge-pill @ClientVersionModel.StatusBadgeClass(r.Status)"
+                              title="@(r.AgentVersion ?? "")">
+                            @ClientVersionModel.StatusLabel(r.Status)
+                        </span>
+                    </td>
+                    <td>
+                        <a asp-page="/Machine" asp-route-hostname="@r.Hostname"><strong>@r.Hostname</strong></a>
+                        <div class="text-secondary small">@(string.IsNullOrWhiteSpace(r.LastIp) ? "—" : r.LastIp.Trim())</div>
+                    </td>
+                    <td>
+                        @if (r.IsOnline)
+                        {
+                            <span class="badge-pill badge-active">Online</span>
+                        }
+                        else
+                        {
+                            <span class="badge-pill badge-ended">Offline</span>
+                        }
+                    </td>
+                    <td>@(r.IsInUse ? "Yes" : "No")</td>
+                    <td>
+                        @if (!string.IsNullOrWhiteSpace(r.ActiveUser))
+                        {
+                            <span class="badge-pill @ClientVersionModel.ActiveUserBadgeClass(r.ActiveUserState)"
+                                  title="@ClientVersionModel.ActiveUserLabel(r.ActiveUserState)">@r.ActiveUser</span>
+                        }
+                        else
+                        {
+                            <span class="text-secondary">—</span>
+                        }
+                    </td>
+                    <td>
+                        @if (r.SimpleVersion is int sv)
+                        {
+                            <code>@sv</code>
+                            @if (!Heimdall.Api.Services.VersionCompare.IsPureIntegerVersion(r.AgentVersion))
+                            {
+                                <span class="text-secondary small" title="@r.AgentVersion"> (legacy)</span>
+                            }
+                        }
+                        else
+                        {
+                            <code>—</code>
+                        }
+                    </td>
+                    <td>
+                        @if (r.VersionsBehind is int behind and > 0)
+                        {
+                            <span class="badge-pill badge-expired">@behind version@(behind == 1 ? "" : "s") behind</span>
+                        }
+                        else
+                        {
+                            <span class="text-secondary">—</span>
+                        }
+                    </td>
+                    <td class="small text-secondary" title="@(r.ClientUpdateProgressJson ?? "")">
+                        @(ClientVersionModel.FormatUpdateProgress(r.ClientUpdateProgressJson) ?? "—")
+                    </td>
+                    <td>@ClientVersionModel.FormatContact(r.LastSeenUtc)</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+</form>
+
+<script>
+(function () {
+    const statusLine = document.getElementById('pack-status-line');
+    const deployHint = document.getElementById('pack-deploy-hint');
+    const apiNote = document.getElementById('pack-api-note');
+    const btnPack = document.getElementById('btn-pack-client');
+    const btnCancel = document.getElementById('btn-cancel-pack');
+    const btnDeploy = document.getElementById('btn-deploy-client');
+    const selectAll = document.getElementById('select-all-hosts');
+    const selectedCount = document.getElementById('selected-count');
+    const deployForm = document.getElementById('deploy-form');
+    const lastResultEl = document.getElementById('pack-last-result');
+    const logTailEl = document.getElementById('pack-log-tail');
+    let deployUnlocked = false;
+    let readinessDone = false;
+    let packPollTimer = null;
+
+    function updateSelectedCount() {
+        const n = document.querySelectorAll('.host-check:checked').length;
+        selectedCount.textContent = n + ' selected';
+        const canDeploy = readinessDone && deployUnlocked && n > 0;
+        btnDeploy.disabled = !canDeploy;
+        if (!btnDeploy) return;
+        if (!readinessDone) {
+            btnDeploy.title = 'Waiting for pack readiness check';
+        } else if (!deployUnlocked) {
+            btnDeploy.title = 'Deploy locked — pack must be Ready (Pack client again if Stale)';
+        } else if (n === 0) {
+            btnDeploy.title = 'Select at least one machine to Deploy';
+        } else {
+            btnDeploy.title = 'Queue silent client update for ' + n + ' machine(s)';
+        }
+        if (deployHint && readinessDone && deployUnlocked) {
+            deployHint.textContent = n > 0
+                ? 'Ready — Deploy enabled for ' + n + ' selected machine(s).'
+                : 'Ready — select machines and Deploy.';
+            deployHint.className = 'small mt-1 text-success';
+        }
+    }
+
+    function setDeployHint(data, packing) {
+        if (!deployHint) return;
+        if (packing) {
+            deployHint.textContent = 'Deploy locked while packing…';
+            deployHint.className = 'small mt-1 text-secondary';
+            return;
+        }
+        const n = document.querySelectorAll('.host-check:checked').length;
+        if (data.deployUnlocked) {
+            deployHint.textContent = n > 0
+                ? 'Ready — Deploy enabled for ' + n + ' selected machine(s).'
+                : 'Ready — select machines and Deploy.';
+            deployHint.className = 'small mt-1 text-success';
+        } else if (data.status === 'Stale' || data.status === 'MissingPack') {
+            deployHint.textContent = 'Deploy locked: ' + (data.status === 'MissingPack'
+                ? 'no pack — Pack client first.'
+                : 'pack is stale — Pack client again.');
+            deployHint.className = 'small mt-1 text-danger';
+        } else if (data.status === 'Error') {
+            deployHint.textContent = 'Deploy locked: pack check error.';
+            deployHint.className = 'small mt-1 text-danger';
+        } else {
+            deployHint.textContent = 'Deploy locked until pack is Ready.';
+            deployHint.className = 'small mt-1 text-secondary';
+        }
+    }
+
+    function clearPackPoll() {
+        if (packPollTimer) {
+            clearTimeout(packPollTimer);
+            packPollTimer = null;
+        }
+    }
+
+    function setCancelVisible(show) {
+        if (!btnCancel) return;
+        btnCancel.style.display = show ? '' : 'none';
+        btnCancel.disabled = !show;
+    }
+
+    function packingStatusText(data) {
+        const secs = data.packingElapsed != null ? Math.floor(data.packingElapsed) + 's' : null;
+        const stage = data.packStage
+            ? ('stage ' + data.packStage + (data.packStageLabel ? ': ' + data.packStageLabel : ''))
+            : null;
+        const parts = ['Packing'];
+        if (secs) parts.push(secs);
+        if (stage) parts.push(stage);
+        return parts.join(' · ');
+    }
+
+    function showLastPack(data) {
+        const failed = data.lastPackExitCode != null && data.lastPackExitCode !== 0;
+        const exitOk = data.lastPackExitCode === 0;
+        const hasMsg = !!(data.lastPackMessage || data.lastPackLogPath);
+        if (!hasMsg && !failed) {
+            lastResultEl.style.display = 'none';
+            logTailEl.style.display = 'none';
+            return;
+        }
+        const parts = [];
+        if (exitOk && data.status === 'Stale') {
+            parts.push('Last pack exit 0 but readiness is Stale (fingerprint mismatch) — Pack client again.');
+            if (data.packProductVersion) parts.push('pack v' + data.packProductVersion);
+            if (data.lastPackLogPath) parts.push('Log: ' + data.lastPackLogPath);
+        } else if (exitOk && data.status === 'Ready') {
+            parts.push(data.lastPackMessage
+                || ('Last pack exit 0' + (data.packProductVersion ? ' · v' + data.packProductVersion : '')));
+            if (data.lastPackLogPath && !(data.lastPackMessage && data.lastPackMessage.indexOf(data.lastPackLogPath) >= 0))
+                parts.push('Log: ' + data.lastPackLogPath);
+        } else if (data.lastPackMessage) {
+            parts.push(data.lastPackMessage);
+            if (data.lastPackLogPath && data.lastPackMessage.indexOf(data.lastPackLogPath) < 0)
+                parts.push('Log: ' + data.lastPackLogPath);
+        } else if (failed) {
+            parts.push('Last pack failed (exit ' + data.lastPackExitCode + ').');
+            if (data.lastPackLogPath) parts.push('Log: ' + data.lastPackLogPath);
+        }
+        lastResultEl.textContent = parts.join(' ');
+        lastResultEl.style.display = 'block';
+        lastResultEl.className = (failed || data.status === 'Error' || (exitOk && data.status === 'Stale'))
+            ? 'text-danger small mt-2'
+            : 'text-secondary small mt-2';
+        if (data.lastPackLogTail && (failed || data.status === 'Error' || data.status === 'Stale')) {
+            logTailEl.textContent = data.lastPackLogTail;
+            logTailEl.style.display = 'block';
+        } else {
+            logTailEl.style.display = 'none';
+        }
+    }
+
+    document.querySelectorAll('.host-check').forEach(cb => cb.addEventListener('change', updateSelectedCount));
+    selectAll?.addEventListener('change', () => {
+        document.querySelectorAll('.host-check').forEach(cb => { cb.checked = selectAll.checked; });
+        updateSelectedCount();
+    });
+    document.getElementById('btn-select-outdated')?.addEventListener('click', () => {
+        document.querySelectorAll('tr[data-status="OutOfDate"] .host-check, tr[data-status="Missing"] .host-check')
+            .forEach(cb => { cb.checked = true; });
+        updateSelectedCount();
+    });
+
+    btnDeploy?.addEventListener('click', () => {
+        if (btnDeploy.disabled) return;
+        if (!confirm('Queue silent client update for selected machines?\n\nAgents on version 3+ download and install when no Active user session is present (Disconnected is OK). No reboot or logoff.\n\nAgents below 3 (legacy) cannot silent-update — Deploy marks them Failed with bootstrap guidance (use Launch Control / Install.lnk once).'))
+            return;
+        deployForm.submit();
+    });
+
+    async function refreshReadiness() {
+        // While packing, keep the last one-liner visible (don't flash "Checking pack…").
+        const keepPackingLine = statusLine.textContent && statusLine.textContent.startsWith('Packing');
+        if (!keepPackingLine)
+            statusLine.textContent = 'Checking pack…';
+        btnDeploy.disabled = true;
+        readinessDone = false;
+        deployUnlocked = false;
+        clearPackPoll();
+        try {
+            const res = await fetch('/api/admin/client-pack/status', { credentials: 'same-origin' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            readinessDone = true;
+            deployUnlocked = !!data.deployUnlocked;
+            const shortFp = (fp) => fp ? (fp.substring(0, 12) + '…') : '—';
+            const packing = data.status === 'Packing' || data.isPacking;
+            if (packing) {
+                statusLine.textContent = packingStatusText(data);
+                statusLine.className = 'text-secondary';
+                btnPack.disabled = true;
+                setCancelVisible(true);
+                packPollTimer = setTimeout(refreshReadiness, 2000);
+            } else {
+                statusLine.textContent = (data.message || data.status)
+                    + (data.packProductVersion ? ' · pack v' + data.packProductVersion : '')
+                    + (data.liveSourceFingerprint ? ' · source ' + shortFp(data.liveSourceFingerprint) : '');
+                statusLine.className = (data.status === 'Error' || data.status === 'Stale' || data.status === 'MissingPack')
+                    ? 'text-danger'
+                    : (data.deployUnlocked ? 'text-success' : 'text-secondary');
+                btnPack.disabled = !data.canPack;
+                setCancelVisible(false);
+            }
+            setDeployHint(data, packing);
+            apiNote.textContent = data.apiInstallNote
+                || (packing ? 'Self-contained publish often takes 1–5 minutes (same as Launch Control).' : '');
+            showLastPack(data);
+            updateSelectedCount();
+        } catch (e) {
+            readinessDone = true;
+            deployUnlocked = false;
+            statusLine.textContent = 'Pack check failed: ' + (e.message || e);
+            statusLine.className = 'text-danger';
+            if (deployHint) {
+                deployHint.textContent = 'Deploy locked: readiness check failed.';
+                deployHint.className = 'small mt-1 text-danger';
+            }
+            btnPack.disabled = false;
+            setCancelVisible(false);
+            updateSelectedCount();
+        }
+    }
+
+    btnPack?.addEventListener('click', async () => {
+        btnPack.disabled = true;
+        setCancelVisible(false);
+        statusLine.textContent = 'Starting pack…';
+        lastResultEl.style.display = 'none';
+        logTailEl.style.display = 'none';
+        try {
+            const res = await fetch('/api/admin/client-pack/pack', { method: 'POST', credentials: 'same-origin' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                statusLine.textContent = data.message || ('Pack failed: HTTP ' + res.status);
+                statusLine.className = 'text-danger';
+                btnPack.disabled = false;
+                return;
+            }
+            statusLine.textContent = 'Packing · 0s · stage 1/5: preparing';
+            setCancelVisible(true);
+            packPollTimer = setTimeout(refreshReadiness, 1500);
+        } catch (e) {
+            statusLine.textContent = 'Pack start failed: ' + (e.message || e);
+            statusLine.className = 'text-danger';
+            btnPack.disabled = false;
+            setCancelVisible(false);
+        }
+    });
+
+    btnCancel?.addEventListener('click', async () => {
+        if (!confirm('Cancel pack?')) return;
+        btnCancel.disabled = true;
+        statusLine.textContent = 'Cancelling pack…';
+        try {
+            const res = await fetch('/api/admin/client-pack/cancel', { method: 'POST', credentials: 'same-origin' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                statusLine.textContent = data.message || ('Cancel failed: HTTP ' + res.status);
+                statusLine.className = 'text-danger';
+            }
+            clearPackPoll();
+            packPollTimer = setTimeout(refreshReadiness, 1000);
+        } catch (e) {
+            statusLine.textContent = 'Cancel failed: ' + (e.message || e);
+            statusLine.className = 'text-danger';
+            btnCancel.disabled = false;
+        }
+    });
+
+    refreshReadiness();
+})();
+</script>

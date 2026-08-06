@@ -27,10 +27,32 @@ public class FleetDashboardService(HeimdallDbContext db)
             e.Id,
             e.MachineId,
             e.Machine.Hostname,
+            e.Machine.FriendlyName,
             e.Machine.LastIp,
             e.AddedUtc,
             e.Notes,
             e.Machine.LastSeenUtc)).ToList();
+    }
+
+    /// <summary>All known machines for the Enrollment picker (hostname / friendly / IP).</summary>
+    public async Task<IReadOnlyList<MachineSearchHit>> ListMachinesForEnrollmentPickerAsync(CancellationToken ct)
+    {
+        var enrolledIds = await db.FleetDashboardMachines.AsNoTracking()
+            .Select(e => e.MachineId)
+            .ToListAsync(ct);
+        var enrolled = enrolledIds.ToHashSet();
+
+        var machines = await db.Machines.AsNoTracking()
+            .OrderBy(m => m.Hostname)
+            .ToListAsync(ct);
+
+        return machines.Select(m => new MachineSearchHit(
+            m.Id,
+            m.Hostname,
+            m.FriendlyName,
+            m.LastIp,
+            m.LastSeenUtc,
+            enrolled.Contains(m.Id))).ToList();
     }
 
     public async Task<IReadOnlyList<MachineSearchHit>> SearchMachinesAsync(string query, int take, CancellationToken ct)
@@ -45,21 +67,56 @@ public class FleetDashboardService(HeimdallDbContext db)
             .ToListAsync(ct);
         var enrolled = enrolledIds.ToHashSet();
 
+        // Load then filter in memory — SQLite EF often mishandles ToLower()/Contains on nullable IP text,
+        // and LastIp may include whitespace or IPv4 with unexpected formatting from the agent.
         var like = q.ToLowerInvariant();
+        var ipNeedle = NormalizeIpForSearch(q);
+
         var machines = await db.Machines.AsNoTracking()
-            .Where(m =>
-                m.Hostname.ToLower().Contains(like)
-                || (m.LastIp != null && m.LastIp.ToLower().Contains(like)))
             .OrderBy(m => m.Hostname)
-            .Take(take)
             .ToListAsync(ct);
 
-        return machines.Select(m => new MachineSearchHit(
+        var hits = machines
+            .Where(m =>
+            {
+                if (m.Hostname.Contains(like, StringComparison.OrdinalIgnoreCase))
+                    return true;
+                if (!string.IsNullOrWhiteSpace(m.FriendlyName)
+                    && m.FriendlyName.Contains(like, StringComparison.OrdinalIgnoreCase))
+                    return true;
+                if (string.IsNullOrWhiteSpace(m.LastIp))
+                    return false;
+                var ip = m.LastIp.Trim();
+                if (ip.Contains(like, StringComparison.OrdinalIgnoreCase))
+                    return true;
+                if (ipNeedle.Length > 0 && NormalizeIpForSearch(ip).Contains(ipNeedle, StringComparison.Ordinal))
+                    return true;
+                return false;
+            })
+            .Take(take)
+            .ToList();
+
+        return hits.Select(m => new MachineSearchHit(
             m.Id,
             m.Hostname,
-            m.LastIp,
+            m.FriendlyName,
+            string.IsNullOrWhiteSpace(m.LastIp) ? null : m.LastIp.Trim(),
             m.LastSeenUtc,
             enrolled.Contains(m.Id))).ToList();
+    }
+
+    private static string NormalizeIpForSearch(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "";
+        // Strip brackets / zone ids; keep digits and dots for IPv4 substring match (e.g. "10.34" or "10.34.68.8").
+        var s = value.Trim();
+        var cut = s.IndexOf('%');
+        if (cut >= 0)
+            s = s[..cut];
+        if (s.StartsWith('[') && s.EndsWith(']'))
+            s = s[1..^1];
+        return s.ToLowerInvariant();
     }
 
     public async Task<(bool Ok, string Message)> EnrollAsync(int machineId, string? notes, CancellationToken ct)
@@ -130,6 +187,10 @@ public class FleetDashboardService(HeimdallDbContext db)
             DiskWriteMBps = dto.DiskWriteMBps,
             NetworkInMBps = dto.NetworkInMBps,
             NetworkOutMBps = dto.NetworkOutMBps,
+            ProcessCpuPercent = dto.ProcessCpuPercent,
+            ProcessGpuPercent = dto.ProcessGpuPercent,
+            ProcessDiskReadMBps = dto.ProcessDiskReadMBps,
+            ProcessDiskWriteMBps = dto.ProcessDiskWriteMBps,
             IsActive = isActive
         });
         await db.SaveChangesAsync(ct);
@@ -406,6 +467,7 @@ public class FleetDashboardService(HeimdallDbContext db)
         int EnrollmentId,
         int MachineId,
         string Hostname,
+        string? FriendlyName,
         string? LastIp,
         DateTimeOffset AddedUtc,
         string? Notes,
@@ -414,6 +476,7 @@ public class FleetDashboardService(HeimdallDbContext db)
     public sealed record MachineSearchHit(
         int MachineId,
         string Hostname,
+        string? FriendlyName,
         string? LastIp,
         DateTimeOffset LastSeenUtc,
         bool AlreadyEnrolled);

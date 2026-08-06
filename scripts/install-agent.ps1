@@ -229,6 +229,32 @@ try {
         Write-Log "Published: $exe"
     }
 
+    Invoke-Logged "Publish TuflowLauncher beside agent" {
+        $nugetOrg = "https://api.nuget.org/v3/index.json"
+        $launcherProj = Join-Path $root "tuflow-automation\TuflowLauncher\TuflowLauncher.csproj"
+        $launcherOut = Join-Path $InstallDir "TuflowLauncher"
+        if (-not (Test-Path $launcherProj)) {
+            throw "TuflowLauncher project missing: $launcherProj"
+        }
+        if (Test-Path $launcherOut) {
+            Remove-Item -Recurse -Force $launcherOut
+        }
+        Write-Log "Command: dotnet publish `"$launcherProj`" -c Release -o `"$launcherOut`" --self-contained false --source `"$nugetOrg`" -v minimal"
+        & dotnet publish $launcherProj -c Release -o $launcherOut --self-contained false --source $nugetOrg -v minimal 2>&1 | ForEach-Object {
+            $line = "$_"
+            Write-Host $line
+            Add-Content -Path $script:LogPath -Value $line -Encoding UTF8
+        }
+        if ($LASTEXITCODE -ne 0) {
+            throw "TuflowLauncher publish exited with code $LASTEXITCODE"
+        }
+        $launcherExe = Join-Path $launcherOut "TuflowLauncher.exe"
+        if (-not (Test-Path $launcherExe)) {
+            throw "Expected launcher missing after publish: $launcherExe"
+        }
+        Write-Log "Published launcher: $launcherExe"
+    }
+
     Invoke-Logged "Write appsettings.json" {
         $appsettings = Join-Path $InstallDir "appsettings.json"
         $queuePath = Join-Path $env:ProgramData "Heimdall\queue.db"

@@ -20,6 +20,20 @@ public sealed class AgentConfigDto
     /// <summary>One-shot commands for the agent (e.g. RestartTermService). Cleared after heartbeat ack.</summary>
     public List<string> PendingCommands { get; init; } = [];
 
+    /// <summary>
+    /// A queued TUFLOW run request, if any. Unlike PendingCommands (bare string tokens) this needs a
+    /// real payload (exe/tcf paths, scenarios), so it's a first-class field rather than being squeezed
+    /// into the token list. Cleared server-side once the agent's heartbeat reports a TuflowRunStatusDto
+    /// with a matching RunId (see TuflowRunService.ApplyHeartbeat).
+    /// </summary>
+    public TuflowStartRequestDto? PendingTuflowStart { get; init; }
+
+    /// <summary>
+    /// Silent client self-update request (version + zip hash). Cleared when the agent acks UpdateClient
+    /// or reports a matching new AgentVersion.
+    /// </summary>
+    public ClientUpdateRequestDto? PendingClientUpdate { get; init; }
+
     /// <summary>When true, agent runs the always-on 30s fleet sampler (Historical Dashboard enrollment).</summary>
     public bool FleetSamplingEnabled { get; init; }
 

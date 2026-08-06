@@ -8,7 +8,7 @@ var apiBase = builder.Configuration["Heimdall:ApiBaseUrl"] ?? "http://localhost:
 builder.Services.AddHttpClient<HeimdallApiClient>(client =>
 {
     client.BaseAddress = new Uri(apiBase);
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = TimeSpan.FromMinutes(15);
 });
 
 builder.Services.AddHostedService<Worker>();

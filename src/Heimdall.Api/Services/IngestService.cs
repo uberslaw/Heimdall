@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Services;
 
-public class IngestService(HeimdallDbContext db, AppListService appLists, ProcessCatalogService catalog, IConfiguration configuration, RemoteMachineService remoteMachines)
+public class IngestService(HeimdallDbContext db, AppListService appLists, ProcessCatalogService catalog, IConfiguration configuration, RemoteMachineService remoteMachines, TuflowRunService tuflowRuns, ClientUpdateService clientUpdates)
 {
     public async Task IngestAsync(IngestBatchDto batch, CancellationToken ct)
     {
@@ -34,8 +34,10 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
         if (batch.ProcessRuns.Count > 0 && machine is not null)
         {
             await catalog.UpsertAsync(
-                batch.ProcessRuns.Select(r => new ProcessCatalogService.CatalogItem(
-                    r.ProcessName, r.ExecutablePath, null)),
+                batch.ProcessRuns
+                    .Where(r => DiscoveryCatalogFilter.IsEligible(r.ProcessName, r.ExecutablePath))
+                    .Select(r => new ProcessCatalogService.CatalogItem(
+                        r.ProcessName, r.ExecutablePath, null)),
                 machine.Hostname, "agent ingest", ct);
         }
 
@@ -47,8 +49,12 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
             if (machine is not null)
             {
                 // Inventory received — run analysis into PendingApproval (does not auto-track).
+                // Strip TEMP/.tmp/non-exe before analysis so they never land in catalog or proposals.
+                var eligibleInventory = batch.DiscoveredProcesses
+                    .Where(p => DiscoveryCatalogFilter.IsEligible(p.ProcessName, p.ExecutablePath))
+                    .ToList();
                 await db.SaveChangesAsync(ct);
-                await appLists.AnalyzeMachineAsync(machine.Hostname, batch.DiscoveredProcesses, requestAgentInventoryIfEmpty: false, ct);
+                await appLists.AnalyzeMachineAsync(machine.Hostname, eligibleInventory, requestAgentInventoryIfEmpty: false, ct);
                 return;
             }
         }
@@ -95,6 +101,8 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
         ApplyIdentityFromHeartbeat(machine, heartbeat, isNew);
         ApplyHardwareFromHeartbeat(machine, heartbeat);
         var verifyRestartRdp = remoteMachines.ApplyHeartbeat(machine, heartbeat);
+        await tuflowRuns.ApplyHeartbeatAsync(machine, heartbeat, ct);
+        await clientUpdates.ApplyHeartbeatAsync(machine, heartbeat, ct);
 
         return (machine, isNew, verifyRestartRdp);
     }
@@ -524,6 +532,8 @@ public class ConfigService(HeimdallDbContext db)
             ProcessPauses = pauseDtos,
             PendingAppAnalysis = machine?.PendingAppAnalysis == true,
             PendingCommands = RemoteMachineService.DeserializeCommands(machine?.PendingCommandsJson),
+            PendingTuflowStart = TuflowRunService.DeserializeStartRequest(machine?.PendingTuflowStartJson),
+            PendingClientUpdate = ClientUpdateService.DeserializeRequest(machine?.PendingClientUpdateJson),
             FleetSamplingEnabled = fleetSamplingEnabled,
             FleetProcessNames = ["tuflow"]
         };
@@ -987,6 +997,13 @@ public static class SeedData
             });
         }
 
+        // One-shot / every-start cleanup: drop TEMP/.tmp/non-exe junk from discovery catalog.
+        var catalogJunk = (await db.ProcessCatalogEntries.ToListAsync())
+            .Where(e => DiscoveryCatalogFilter.IsIneligibleCatalogEntry(e.ProcessName, e.ExecutablePath))
+            .ToList();
+        if (catalogJunk.Count > 0)
+            db.ProcessCatalogEntries.RemoveRange(catalogJunk);
+
         await db.SaveChangesAsync();
     }
 
@@ -996,6 +1013,10 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN Region TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN Office TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN Country TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingTuflowStartJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN TuflowRunStatusJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingClientUpdateJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN ClientUpdateProgressJson TEXT NULL");
         await TryExec(db, "ALTER TABLE ProcessRuns ADD COLUMN PeakGpuPercent REAL NULL");
         await TryExec(db, "ALTER TABLE ProcessRuns ADD COLUMN DiskReadBytes INTEGER NULL");
         await TryExec(db, "ALTER TABLE ProcessRuns ADD COLUMN DiskWriteBytes INTEGER NULL");
@@ -1400,12 +1421,51 @@ public static class SeedData
             """);
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_FleetMetricSnapshots_Machine_Sampled ON FleetMetricSnapshots(MachineId, SampledAtUtc)");
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_FleetMetricSnapshots_Sampled ON FleetMetricSnapshots(SampledAtUtc)");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS TuflowRunRecords (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                RunId TEXT NOT NULL,
+                RunName TEXT NOT NULL,
+                MachineId INTEGER NOT NULL,
+                TcfPath TEXT NOT NULL,
+                RequestedUtc TEXT NOT NULL,
+                RequestedBy TEXT NULL,
+                StartedUtc TEXT NULL,
+                EndedUtc TEXT NULL,
+                State TEXT NOT NULL,
+                PercentComplete REAL NULL,
+                SimulationTimeHours REAL NULL,
+                SimulationEndTimeHours REAL NULL,
+                ClockTimeRemainingHours REAL NULL,
+                WarningCount INTEGER NULL,
+                MassErrorPercent REAL NULL,
+                ExitCode INTEGER NULL,
+                ErrorSummary TEXT NULL,
+                LastCheckpointFile TEXT NULL,
+                UpdatedUtc TEXT NOT NULL,
+                FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_TuflowRunRecords_RunId ON TuflowRunRecords(RunId)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowRunRecords_MachineId_RequestedUtc ON TuflowRunRecords(MachineId, RequestedUtc)");
+        // Safety net only: a no-op on a fresh install (CREATE TABLE above already includes RunName /
+        // ClockTimeRemainingHours, so these just fail silently as "duplicate column"). Only do real work
+        // if you applied the TuflowRunRecords table from an earlier version of this patch.
+        await TryExec(db, "ALTER TABLE TuflowRunRecords ADD COLUMN RunName TEXT NOT NULL DEFAULT ''");
+        await TryExec(db, "ALTER TABLE TuflowRunRecords ADD COLUMN ClockTimeRemainingHours REAL NULL");
+        await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ProcessCpuPercent REAL NULL");
+        await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ProcessGpuPercent REAL NULL");
+        await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ProcessDiskReadMBps REAL NULL");
+        await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ProcessDiskWriteMBps REAL NULL");
 
         // Machines list redesign — friendly names + team sections
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN FriendlyName TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN TeamId INTEGER NULL");
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_Machines_TeamId ON Machines(TeamId)");
         await TryExec(db, "ALTER TABLE AppLists ADD COLUMN IsTeamExcluded INTEGER NOT NULL DEFAULT 0");
+        await TryExec(db, "ALTER TABLE AppLists ADD COLUMN IsSystem INTEGER NOT NULL DEFAULT 0");
+        await TryExec(db, "ALTER TABLE AppLists ADD COLUMN SystemKey TEXT NULL");
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_AppLists_SystemKey ON AppLists(SystemKey) WHERE SystemKey IS NOT NULL");
 
         await EnsureCanonicalTeamsAsync(db);
     }

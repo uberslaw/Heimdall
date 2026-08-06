@@ -76,7 +76,27 @@ Parked work from the Machines level-1 redesign and related fleet UX. Not schedul
 
 ## TUFLOW modelling run control (remote start / graceful stop)
 
-Parked **2026-08-05**. Modelling team need: long TUFLOW runs (often days) started from known batch files; hard to interrupt mid-run for emergency scenario changes without killing processes and wasting days of compute. Goal: Heimdall console can send simple **graceful** Start / Stop for **allowlisted** jobs only (modelling team + DT). Not in current implementation pass — design only.
+**POC wired into Heimdall (2026-08-06)** from `tuflow-automation/` — console pages, agent fast poll, and `TuflowLauncher` (CTRL_BREAK graceful stop). Follow-ups below remain open.
+
+### What shipped (POC)
+
+- **TUFLOW Runs** (`/TuflowRuns`) and **Fleet Sim Progress** (`/FleetSimProgress`) — nav under Remote Machines
+- Queue start via free-form exe + `.tcf` (+ optional scenarios/events/run name); stop via `TuflowStopGraceful` pending command
+- Agent ~20s poll `GET /api/tuflow/{hostname}/pending`; launcher under `%ProgramFiles%\Heimdall\Agent\TuflowLauncher\`
+- Machine page TUFLOW panel + `TuflowRunRecord` history; fleet process CPU/GPU/disk metrics persisted
+- Machines must be enrolled on Historical Dashboard (TUFLOW fleet); start blocked if TUFLOW already detected running
+- Client pack (`Pack-WorkstationCollector.cmd`) and `install-agent.ps1` publish the launcher beside the agent
+
+### Still follow-ups (not in POC)
+
+- **RBAC:** Modelling + DT only (pages are open admin like the rest of the console today)
+- **Allowlisted jobs:** replace free-form paths with curated batch/job definitions (closer to original parked design)
+- Supervised verify: CTRL_BREAK vs Ctrl+C on your TUFLOW build; `.tsf`/`.tlf` folder discovery; `-s1`/`-e1` syntax
+- Per-process network metrics; optional rolling 5-minute fleet averages
+
+### Original parked design notes (reference)
+
+Parked **2026-08-05**. Modelling team need: long TUFLOW runs (often days) started from known batch files; hard to interrupt mid-run for emergency scenario changes without killing processes and wasting days of compute. Goal: Heimdall console can send simple **graceful** Start / Stop for **allowlisted** jobs only (modelling team + DT).
 
 **Feasibility vs current agent:** Fits the existing allowlisted remote-command pattern (`PendingCommands` / ack + `CommandExecutionReportDto`, today used for `RestartTermService`) plus process-count visibility from inventory/sampling — extend with job-scoped Start/Stop tokens, not a free-form remote shell.
 

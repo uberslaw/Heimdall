@@ -28,7 +28,8 @@ $script:LogRoot = Join-Path $env:ProgramData "Heimdall\logs"
 $script:DataRoot = Join-Path $env:ProgramData "Heimdall"
 $script:LastInstallSettingsFile = Join-Path $env:LOCALAPPDATA "Heimdall\last-install-settings.json"
 $script:AgentInstallDir = Join-Path ${env:ProgramFiles} "Heimdall\Agent"
-$script:ProductVersionExpected = "0.1.0"
+# Track auto-bumped pack productVersion from VERSION.json (never hardcode 2/3/…).
+$script:ProductVersionExpected = Resolve-HeimdallProductVersionExpected -ScriptDir $script:ScriptDir -Fallback "1"
 $script:LogPath = $null
 $script:UiLogBox = $null
 $script:UiStatus = $null
@@ -460,16 +461,23 @@ function Invoke-StepTestConnection {
     $localPv = if ($localVer -and $localVer.productVersion) { $localVer.productVersion } else { $script:ProductVersionExpected }
 
     if ($health.Ok) {
-        $serverPv = [string]$health.Payload.productVersion
+        $apiPv = [string]$health.Payload.productVersion
         $mn = [string]$health.Payload.machineName
-        Write-InstallLog "GET $($health.Uri) OK - server=$mn" -Level OK
-        $versionOk = Test-HeimdallProductVersionAccept -LocalVersion $localPv -ServerVersion $serverPv -Log {
+        # Pack vs ProductVersionExpected only — never compare to API health SemVer ($apiPv).
+        $expectedPv = if ($localVer -and $localVer.productVersion) {
+            [string]$localVer.productVersion
+        }
+        else {
+            $script:ProductVersionExpected
+        }
+        Write-InstallLog "GET $($health.Uri) OK - server=$mn apiProductVersion=$apiPv (API SemVer; independent of client pack)" -Level OK
+        $versionOk = Test-HeimdallProductVersionAccept -LocalVersion $localPv -ExpectedClientVersion $expectedPv -Log {
             param([string]$Message, [string]$Level)
             Write-InstallLog $Message -Level $Level
         } -ConfirmMismatch {
-            param([string]$PackPv, [string]$SrvPv)
+            param([string]$PackPv, [string]$ExpectedPv)
             $r = [System.Windows.Forms.MessageBox]::Show(
-                "API is reachable, but product versions differ (core SemVer).`r`n`r`nPack:   $PackPv`r`nServer: $SrvPv`r`n`r`nInstall anyway?",
+                "API is reachable, but this pack's client version differs from the expected client version.`r`n`r`nPack:     $PackPv`r`nExpected: $ExpectedPv`r`n`r`n(API SemVer is not compared.)`r`n`r`nInstall anyway?",
                 "Version mismatch",
                 [System.Windows.Forms.MessageBoxButtons]::YesNo,
                 [System.Windows.Forms.MessageBoxIcon]::Warning)
@@ -479,7 +487,7 @@ function Invoke-StepTestConnection {
             $script:WizardData.TestOk = $false
             return $false
         }
-        if (Test-HeimdallProductVersionMatch -VersionA $localPv -VersionB $serverPv) {
+        if (Test-HeimdallProductVersionMatch -VersionA $localPv -VersionB $expectedPv) {
             Set-StepMarker -Index 2 -State "OK"
         }
         else {
@@ -750,8 +758,8 @@ See the progress log below for pass/fail details.
             $body.Text = @"
 Probes the API before install:
 
-- GET /api/health (reachability + productVersion)
-- Version compare (ignores +git build metadata)
+- GET /api/health (reachability; API SemVer is informational only)
+- Client pack version vs expected client version (independent of API)
 - GET /api/config with your API key
 
 Click Next to run tests. Results appear in the log below.

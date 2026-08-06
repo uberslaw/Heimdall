@@ -1,3 +1,4 @@
+using Heimdall.Shared;
 using Heimdall.Shared.Contracts;
 
 namespace Heimdall.Api.Services;
@@ -42,4 +43,8 @@ public static class ProcessNoiseFilter
 
     public static bool IsExcluded(string processName, HashSet<string> excludeSet) =>
         !string.IsNullOrWhiteSpace(processName) && excludeSet.Contains(processName.Trim());
+
+    /// <summary>True when Discovery should ignore this process (temp/.tmp/non-exe).</summary>
+    public static bool IsDiscoveryJunk(string? processName, string? executablePath) =>
+        DiscoveryCatalogFilter.IsIneligibleCatalogEntry(processName, executablePath);
 }

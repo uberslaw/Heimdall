@@ -32,6 +32,7 @@ public class HistoricalDashboardModel(FleetDashboardService fleet) : PageModel
 
     public IReadOnlyList<FleetDashboardService.EnrolledMachineRow> Enrolled { get; private set; } = [];
     public IReadOnlyList<FleetDashboardService.MachineSearchHit> SearchHits { get; private set; } = [];
+    public IReadOnlyList<FleetDashboardService.MachineSearchHit> PickerMachines { get; private set; } = [];
     public IReadOnlyList<FleetDashboardService.LiveFleetRow> LiveRows { get; private set; } = [];
     public IReadOnlyList<FleetDashboardService.LiveFleetRow> FilteredLiveRows { get; private set; } = [];
     public FleetDashboardService.FleetMetrics Summary { get; private set; } = FleetDashboardService.FleetMetrics.Empty;
@@ -73,6 +74,7 @@ public class HistoricalDashboardModel(FleetDashboardService fleet) : PageModel
         // Enroll/Unenroll used to rebuild live fleet + historical aggregates on every POST redirect.
         if (Tab == "enroll")
         {
+            PickerMachines = await fleet.ListMachinesForEnrollmentPickerAsync(ct);
             if (!string.IsNullOrWhiteSpace(Q))
                 SearchHits = await fleet.SearchMachinesAsync(Q, 25, ct);
             return;
