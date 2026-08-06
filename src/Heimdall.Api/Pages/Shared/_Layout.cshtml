@@ -1,7 +1,9 @@
 ﻿@using Heimdall.Api.Data
+@using Heimdall.Api.Services
 @inject IConfiguration Configuration
 @inject IWebHostEnvironment Environment
 @inject HeimdallDbContext Db
+@inject FloodAccessGuard FloodAccess
 @{
     var activeTheme = await ThemeResolution.ResolveAsync(Configuration, Context.Request.Cookies, Db);
     var uiTheme = activeTheme.BasePreset;
@@ -17,6 +19,7 @@
     var customGoogleFontsUrl = activeTheme.Custom is not null
         ? ThemeFonts.BuildGoogleFontsUrl(activeTheme.Custom.HeadingFont, activeTheme.Custom.BodyFont)
         : null;
+    var showFloodNav = FloodAccess.CanAccessFlood(Context);
 }
 <!DOCTYPE html>
 <html lang="en" class="@(isDevChrome ? "hd-dev-mode" : "")" data-theme="@uiTheme"
@@ -48,23 +51,13 @@
                 {
                     <span class="hd-dev-badge" title="Sandbox database — not production agents">DEV</span>
                 }
-                <a class="hd-brand hd-brand-text" asp-page="/Index">Heimdall</a>
-                <a class="hd-brand hd-brand-cosmic" asp-page="/Index">
+                <a class="hd-brand hd-brand-text" asp-page="/Ops">Heimdall</a>
+                <a class="hd-brand hd-brand-cosmic" asp-page="/Ops">
                     <img class="hd-brand-logo" src="~/img/heimdall-logo-cosmic.png" alt="Heimdall" width="440" height="144" />
                 </a>
             </div>
             <nav class="hd-links">
-                <div class="dropdown hd-nav-dropdown">
-                    <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                        Machines
-                    </button>
-                    <div class="dropdown-menu hd-nav-dropdown-menu">
-                        <a class="dropdown-item" asp-page="/Index">All machines</a>
-                        <a class="dropdown-item" asp-page="/Sessions">Sessions</a>
-                        <a class="dropdown-item" asp-page="/Teams">Teams</a>
-                        <a class="dropdown-item" asp-page="/ClientVersion">Client Version</a>
-                    </div>
-                </div>
+                <a class="hd-nav-link" asp-page="/Ops">Ops</a>
                 <div class="dropdown hd-nav-dropdown">
                     <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
                         Applications
@@ -77,18 +70,20 @@
                         <a class="dropdown-item" asp-page="/TrackSoftware">Track Software</a>
                     </div>
                 </div>
-                <div class="dropdown hd-nav-dropdown">
-                    <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                        Remote
-                    </button>
-                    <div class="dropdown-menu hd-nav-dropdown-menu">
-                        <a class="dropdown-item" asp-page="/RemoteMachines">Online Status</a>
-                        <a class="dropdown-item" asp-page="/HistoricalDashboard">Historical Dashboard</a>
-                        <a class="dropdown-item" asp-page="/TuflowRuns">TUFLOW Runs</a>
-                        <a class="dropdown-item" asp-page="/FleetSimProgress">Fleet Sim Progress</a>
-                        <a class="dropdown-item" asp-page="/StaffAccess">Staff Access</a>
+                <a class="hd-nav-link" asp-page="/StaffAccess">Staff</a>
+                @if (showFloodNav)
+                {
+                    <div class="dropdown hd-nav-dropdown">
+                        <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            Flood
+                        </button>
+                        <div class="dropdown-menu hd-nav-dropdown-menu">
+                            <a class="dropdown-item" asp-page="/HistoricalDashboard">Historical Dashboard</a>
+                            <a class="dropdown-item" asp-page="/TuflowRuns">TUFLOW Runs</a>
+                            <a class="dropdown-item" asp-page="/FleetSimProgress">Fleet Sim Progress</a>
+                        </div>
                     </div>
-                </div>
+                }
                 <div class="dropdown hd-nav-dropdown">
                     <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Admin">
                         Admin
@@ -97,15 +92,9 @@
                         <div class="hd-settings-section">
                             <span class="hd-settings-label">Configuration</span>
                             <div class="d-flex flex-column gap-1">
+                                <a class="dropdown-item px-0" asp-page="/Teams">Teams</a>
                                 <a class="dropdown-item px-0" asp-page="/Config">Tracking config</a>
                                 <a class="dropdown-item px-0" asp-page="/Utilization">Utilization criteria</a>
-                            </div>
-                        </div>
-                        <div class="hd-settings-section">
-                            <span class="hd-settings-label">Reports</span>
-                            <div class="d-flex flex-column gap-1">
-                                <a class="dropdown-item px-0" asp-page="/Cost">Cost</a>
-                                <a class="dropdown-item px-0" asp-page="/Stats">Stats</a>
                             </div>
                         </div>
                         <div class="hd-settings-section">

@@ -53,6 +53,9 @@ html[data-theme="cosmic"] {
   --hd-glass-rim: rgba(210, 180, 110, 0.55);
   --hd-glass-rim-dim: rgba(160, 130, 70, 0.35);
   --hd-silver-rim: rgba(200, 206, 216, 0.42);
+  --hd-gunmetal: #6a7382;
+  --hd-silver: #c8ced8;
+  --hd-silver-bright: #e8ecf2;
 }
 
 /* Gold sub-variants (default: champagne) */
@@ -347,6 +350,48 @@ html[data-theme="cosmic"] .hd-nav {
 
 .hd-links a:hover { color: var(--hd-text); }
 
+.hd-links > a.hd-nav-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 0.35rem;
+  text-decoration: none;
+}
+
+/* Ops tab row — override Bootstrap white active pill (unreadable on Cosmic). */
+.hd-ops-tabs {
+  border-bottom-color: var(--hd-border);
+  --bs-nav-tabs-border-color: var(--hd-border);
+  --bs-nav-tabs-link-hover-border-color: var(--hd-border) var(--hd-border) var(--hd-border);
+  --bs-nav-tabs-link-active-color: var(--hd-gold, var(--hd-accent));
+  --bs-nav-tabs-link-active-bg: var(--hd-panel);
+  --bs-nav-tabs-link-active-border-color: var(--hd-border) var(--hd-border) var(--hd-panel);
+  --bs-nav-link-color: var(--hd-gold, var(--hd-accent));
+  --bs-nav-link-hover-color: var(--hd-gold-light, var(--hd-link-hover));
+}
+
+.hd-ops-tabs .nav-link {
+  color: var(--hd-gold, var(--hd-accent));
+  background: transparent;
+  border-color: transparent;
+  cursor: pointer;
+}
+
+.hd-ops-tabs .nav-link:hover,
+.hd-ops-tabs .nav-link:focus {
+  color: var(--hd-gold-light, var(--hd-link-hover));
+  isolation: isolate;
+  border-color: var(--hd-border) var(--hd-border) transparent;
+}
+
+.hd-ops-tabs .nav-link.active {
+  color: var(--hd-gold, var(--hd-accent));
+  background-color: var(--hd-panel);
+  border-color: var(--hd-border) var(--hd-border) var(--hd-panel);
+  font-weight: 600;
+}
+
 .hd-nav-dropdown,
 .hd-settings {
   position: relative;
@@ -398,6 +443,8 @@ html[data-theme="cosmic"] .hd-nav {
   --bs-dropdown-link-color: var(--hd-text);
   --bs-dropdown-link-hover-color: var(--hd-text);
   --bs-dropdown-link-hover-bg: rgba(255, 255, 255, 0.06);
+  --bs-dropdown-link-active-color: var(--hd-gold, var(--hd-accent));
+  --bs-dropdown-link-active-bg: var(--hd-panel);
 }
 
 html[data-theme="cosmic"] .hd-nav-dropdown-menu,
@@ -411,6 +458,14 @@ html[data-theme="cosmic"] .hd-settings-menu {
 .hd-nav-dropdown-menu .dropdown-item {
   border-radius: 0.3rem;
   font-size: 0.88rem;
+}
+
+.hd-nav-dropdown-menu .dropdown-item.active,
+.hd-nav-dropdown-menu .dropdown-item:active,
+.hd-settings-menu .dropdown-item.active,
+.hd-settings-menu .dropdown-item:active {
+  color: var(--hd-gold, var(--hd-accent));
+  background-color: var(--hd-panel);
 }
 
 .hd-settings-section + .hd-settings-gold,
@@ -645,7 +700,7 @@ table.hd-table td {
 }
 
 table.hd-table th {
-  color: var(--hd-muted);
+  color: var(--hd-gold, var(--hd-accent));
   font-weight: 500;
   font-size: 0.78rem;
   text-transform: uppercase;
@@ -697,6 +752,13 @@ html[data-theme="cosmic"] .util-bar > span {
   background: var(--hd-panel-2);
   border-color: var(--hd-border);
   color: var(--hd-text);
+}
+
+/* App Lists machine lookup: monospace so nbsp-padded hostname/friendly/IP columns align. */
+.hd-machine-lookup-select {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.875rem;
+  white-space: pre;
 }
 
 .form-control:focus, .form-select:focus {
@@ -1191,21 +1253,21 @@ details.hd-collapsible > summary:hover::before {
   padding: 0.35rem 0.7rem;
   border: 1px solid var(--hd-border);
   border-radius: 8px;
-  background: var(--hd-panel);
-  color: var(--hd-muted);
+  background: transparent;
+  color: var(--hd-gold, var(--hd-accent));
   font-size: 0.85rem;
   font-weight: 500;
 }
 
 .hd-stats-tab:hover {
-  color: var(--hd-text);
+  color: var(--hd-gold-light, var(--hd-link-hover));
   border-color: var(--hd-accent-dim);
 }
 
 .hd-stats-tab.active {
-  border-color: var(--hd-accent);
-  color: var(--hd-accent);
-  background: color-mix(in srgb, var(--hd-accent) 12%, transparent);
+  border-color: var(--hd-border);
+  color: var(--hd-gold, var(--hd-accent));
+  background: var(--hd-panel);
 }
 
 table.hd-sortable th.sorted-asc::after {
@@ -1978,7 +2040,7 @@ body.hd-col-resizing {
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--hd-muted);
+  color: var(--hd-gold, var(--hd-accent));
   white-space: nowrap;
   vertical-align: bottom;
   border-bottom-width: 2px;
@@ -2228,7 +2290,7 @@ body.hd-col-resizing {
 }
 
 .hd-machine-apps-th {
-  color: var(--hd-muted);
+  color: var(--hd-gold, var(--hd-accent));
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -2321,7 +2383,7 @@ body.hd-col-resizing {
   border-bottom: none;
 }
 
-/* --- App Lists: Existing lists table (responsive, no horizontal scroll) --- */
+/* --- App Lists: Existing lists table (full-width panel; columns not crushed) --- */
 details.hd-panel[data-key="existing-lists"] {
   overflow-x: visible;
 }
@@ -2337,12 +2399,21 @@ details.hd-panel[data-key="existing-lists"] {
 }
 
 .hd-existing-lists-table .hd-existing-lists-col-check {
-  width: 2rem;
+  width: 2.25rem;
+}
+
+.hd-existing-lists-table .hd-existing-lists-col-name {
+  width: auto;
+  min-width: 12rem;
+}
+
+.hd-existing-lists-table .hd-existing-lists-col-team {
+  width: 14rem;
 }
 
 .hd-existing-lists-table .hd-existing-lists-col-apps,
 .hd-existing-lists-table .hd-existing-lists-col-scopes {
-  width: 3.25rem;
+  width: 4rem;
   text-align: center;
 }
 
@@ -2352,7 +2423,7 @@ details.hd-panel[data-key="existing-lists"] {
 }
 
 .hd-existing-lists-table .hd-existing-lists-col-actions {
-  width: 6.5rem;
+  width: 9.5rem; /* Edit + Delete text pills side by side */
   text-align: right;
   white-space: nowrap;
 }
@@ -2419,21 +2490,10 @@ details.hd-panel[data-key="existing-lists"] {
   }
 
   .hd-existing-lists-table .hd-existing-lists-col-actions {
-    width: 2.75rem;
-  }
-}
-
-@media (max-width: 768px) {
-  .hd-existing-lists-table th,
-  .hd-existing-lists-table td {
-    padding: 0.45rem 0.35rem;
-    font-size: 0.85rem;
+    width: 5.5rem; /* two icon buttons */
   }
 
-  .hd-existing-lists-table .hd-existing-lists-col-actions {
-    width: 2.5rem;
-  }
-
+  /* Icon-only Edit/Delete from tablet width so both fit */
   .hd-existing-lists-table .hd-btn-icon-round {
     padding: 0;
     width: 2rem;
@@ -2455,6 +2515,18 @@ details.hd-panel[data-key="existing-lists"] {
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .hd-existing-lists-table th,
+  .hd-existing-lists-table td {
+    padding: 0.45rem 0.35rem;
+    font-size: 0.85rem;
+  }
+
+  .hd-existing-lists-table .hd-existing-lists-col-actions {
+    width: 5rem;
   }
 }
 
@@ -2814,6 +2886,16 @@ details.hd-panel[data-key="existing-lists"] {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--hd-gunmetal, var(--hd-accent));
+  text-decoration: none;
+  text-underline-offset: 0.15em;
+}
+
+.hd-machines-table .hd-machine-name:hover,
+.hd-machines-table .hd-machine-name:focus {
+  color: var(--hd-silver-bright, var(--hd-silver, var(--hd-link-hover)));
+  text-decoration: underline;
+  text-decoration-color: var(--hd-silver-rim, var(--hd-silver, currentColor));
 }
 
 .hd-machines-table .hd-machine-host {

@@ -46,6 +46,8 @@ builder.Services.AddScoped<AppListService>();
 builder.Services.AddScoped<StatsQueryService>();
 builder.Services.AddScoped<SocratizeQueryService>();
 builder.Services.AddScoped<RemoteMachineService>();
+builder.Services.AddScoped<MachineBookingService>();
+builder.Services.AddScoped<FloodAccessGuard>();
 builder.Services.AddScoped<TuflowRunService>();
 builder.Services.AddScoped<RemoteAccessGroupService>();
 builder.Services.AddScoped<LiveSamplingService>();
@@ -55,6 +57,7 @@ builder.Services.AddSingleton<ClientPackReadinessService>();
 builder.Services.AddScoped<ClientUpdateService>();
 builder.Services.AddScoped<FleetDashboardService>();
 builder.Services.AddScoped<MachineUtilisationService>();
+builder.Services.AddHostedService<CatalogBackfillHostedService>();
 
 var app = builder.Build();
 

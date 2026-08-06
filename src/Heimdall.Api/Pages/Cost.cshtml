@@ -2,6 +2,8 @@
 @model CostModel
 @{
     ViewData["Title"] = "Cost";
+    if (OpsPartial.IsPartial(ViewContext.HttpContext.Request))
+        Layout = null;
     var editing = Model.Rows.FirstOrDefault(r => r.Id == Model.EditingMachineId);
 }
 

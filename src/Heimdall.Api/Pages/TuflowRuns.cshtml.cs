@@ -28,17 +28,21 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Heimdall.Api.Pages;
 
-public class TuflowRunsModel(TuflowRunService runs) : PageModel
+public class TuflowRunsModel(TuflowRunService runs, FloodAccessGuard flood) : PageModel
 {
     public IReadOnlyList<TuflowRunRow> Rows { get; private set; } = [];
     public int EnrolledCount { get; private set; }
     public int RunningCount { get; private set; }
 
-    public async Task OnGetAsync(CancellationToken ct)
+    public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
+        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+            return denied;
+
         Rows = await runs.ListAsync(ct);
         EnrolledCount = Rows.Count;
         RunningCount = Rows.Count(r => r.TuflowRunningNow);
+        return Page();
     }
 
     /// <summary>Prefills the "Your name" field on GET — best-effort, see class remarks.</summary>
@@ -56,6 +60,9 @@ public class TuflowRunsModel(TuflowRunService runs) : PageModel
         string? requestedBy,
         CancellationToken ct)
     {
+        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+            return denied;
+
         if (string.IsNullOrWhiteSpace(hostname) || string.IsNullOrWhiteSpace(exePath) || string.IsNullOrWhiteSpace(tcfPath))
         {
             TempData["Error"] = "Machine, TUFLOW .exe path and .tcf path are all required.";
@@ -86,6 +93,9 @@ public class TuflowRunsModel(TuflowRunService runs) : PageModel
 
     public async Task<IActionResult> OnPostStopGracefulAsync(string hostname, CancellationToken ct)
     {
+        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+            return denied;
+
         if (string.IsNullOrWhiteSpace(hostname))
             return RedirectToPage();
 

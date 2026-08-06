@@ -15,7 +15,11 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
     public IReadOnlyList<MachinePick> AllMachines { get; private set; } = [];
     public IReadOnlyList<TeamMachinesBlock> TeamMachines { get; private set; } = [];
     public IReadOnlyList<TeamAppListsBlock> TeamAppLists { get; private set; } = [];
-    public IReadOnlyList<AppListPick> UnlinkedAppLists { get; private set; } = [];
+    /// <summary>Non-auto-discovered lists eligible to link; filtered client-side by selected team.</summary>
+    public IReadOnlyList<AppListPick> LinkableAppLists { get; private set; } = [];
+    /// <summary>App list ids already linked per team (for picker filtering).</summary>
+    public IReadOnlyDictionary<int, IReadOnlyList<int>> LinkedAppListIdsByTeam { get; private set; }
+        = new Dictionary<int, IReadOnlyList<int>>();
     public bool IsEmpty => TeamOptions.Count == 0 && People.Count == 0;
 
     [BindProperty]
@@ -29,6 +33,9 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
 
     [BindProperty]
     public int? TeamParentId { get; set; }
+
+    [BindProperty]
+    public bool TeamIsPublicFacing { get; set; }
 
     [BindProperty]
     public int TeamId { get; set; }
@@ -87,6 +94,7 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
                 TeamName = t.Name;
                 TeamCode = t.Code;
                 TeamParentId = t.ParentTeamId;
+                TeamIsPublicFacing = t.IsPublicFacing;
             }
         }
 
@@ -147,6 +155,7 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
             team.Name = name;
             team.Code = NullIfEmpty(TeamCode);
             team.ParentTeamId = TeamParentId;
+            team.IsPublicFacing = TeamIsPublicFacing;
             TempData["Message"] = $"Updated team “{team.Name}”.";
         }
         else
@@ -155,7 +164,8 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
             {
                 Name = name,
                 Code = NullIfEmpty(TeamCode),
-                ParentTeamId = TeamParentId
+                ParentTeamId = TeamParentId,
+                IsPublicFacing = TeamIsPublicFacing
             });
             TempData["Message"] = $"Created team “{name}”.";
         }
@@ -192,6 +202,10 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
         foreach (var m in machines)
             m.TeamId = null;
 
+        var links = await db.TeamAppListLinks.Where(l => l.TeamId == team.Id).ToListAsync();
+        db.TeamAppListLinks.RemoveRange(links);
+
+        // Clear optional primary-team metadata when that team is deleted
         var lists = await db.AppLists.Where(a => a.TeamId == team.Id).ToListAsync();
         foreach (var a in lists)
         {
@@ -241,9 +255,22 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
             return RedirectToPage();
         }
 
-        list.TeamId = LinkTeamId;
-        list.IsTeamExcluded = LinkAsIgnored;
-        list.UpdatedUtc = DateTimeOffset.UtcNow;
+        var link = await db.TeamAppListLinks
+            .FirstOrDefaultAsync(l => l.TeamId == LinkTeamId && l.AppListId == LinkAppListId);
+        if (link is null)
+        {
+            db.TeamAppListLinks.Add(new TeamAppListLink
+            {
+                TeamId = LinkTeamId,
+                AppListId = LinkAppListId,
+                IsExcluded = LinkAsIgnored
+            });
+        }
+        else
+        {
+            link.IsExcluded = LinkAsIgnored;
+        }
+
         await db.SaveChangesAsync();
         TempData["Message"] = LinkAsIgnored
             ? $"Linked “{list.Name}” as do not track for the team."
@@ -253,36 +280,38 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
 
     public async Task<IActionResult> OnPostSetAppListExcludedAsync(bool excluded)
     {
-        var list = await db.AppLists.FindAsync(AppListId);
-        if (list is null || list.TeamId is null)
+        var link = await db.TeamAppListLinks
+            .Include(l => l.AppList)
+            .FirstOrDefaultAsync(l => l.TeamId == LinkTeamId && l.AppListId == AppListId);
+        if (link is null)
         {
-            TempData["Error"] = "App list not linked to a team.";
+            TempData["Error"] = "App list not linked to that team.";
             return RedirectToPage();
         }
 
-        list.IsTeamExcluded = excluded;
-        list.UpdatedUtc = DateTimeOffset.UtcNow;
+        link.IsExcluded = excluded;
         await db.SaveChangesAsync();
         TempData["Message"] = excluded
-            ? $"“{list.Name}” set to do not track."
-            : $"“{list.Name}” set to actively tracking.";
+            ? $"“{link.AppList.Name}” set to do not track."
+            : $"“{link.AppList.Name}” set to actively tracking.";
         return RedirectToPage();
     }
 
     public async Task<IActionResult> OnPostUnlinkAppListAsync()
     {
-        var list = await db.AppLists.FindAsync(AppListId);
-        if (list is null)
+        var link = await db.TeamAppListLinks
+            .Include(l => l.AppList)
+            .FirstOrDefaultAsync(l => l.TeamId == LinkTeamId && l.AppListId == AppListId);
+        if (link is null)
         {
-            TempData["Error"] = "App list not found.";
+            TempData["Error"] = "App list not linked to that team.";
             return RedirectToPage();
         }
 
-        list.TeamId = null;
-        list.IsTeamExcluded = false;
-        list.UpdatedUtc = DateTimeOffset.UtcNow;
+        var name = link.AppList.Name;
+        db.TeamAppListLinks.Remove(link);
         await db.SaveChangesAsync();
-        TempData["Message"] = $"Unlinked “{list.Name}” from team.";
+        TempData["Message"] = $"Unlinked “{name}” from team.";
         return RedirectToPage();
     }
 
@@ -442,40 +471,45 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
             t.Label.TrimStart('—', ' '),
             AllMachines.Where(m => m.TeamId == t.Id).ToList())).ToList();
 
-        var linkedRaw = await db.AppLists.AsNoTracking()
-            .Where(a => a.TeamId != null)
-            .OrderBy(a => a.Name)
-            .Select(a => new
-            {
-                a.Id,
-                a.Name,
-                a.TeamId,
-                a.IsTeamExcluded,
-                Entries = a.Entries
-                    .OrderBy(e => e.DisplayName ?? e.ProcessName)
-                    .Select(e => e.DisplayName != null && e.DisplayName != "" ? e.DisplayName : e.ProcessName)
-                    .ToList()
-            })
+        var linksRaw = await db.TeamAppListLinks.AsNoTracking()
+            .Include(l => l.AppList)
+            .ThenInclude(a => a.Entries)
+            .OrderBy(l => l.AppList.Name)
             .ToListAsync();
 
-        var linkedLists = linkedRaw.Select(a => new AppListPick(
-            a.Id,
-            a.Name,
-            a.TeamId,
-            a.IsTeamExcluded,
-            a.Entries.Count,
-            string.Join(", ", a.Entries))).ToList();
+        var linkedPicks = linksRaw.Select(l =>
+        {
+            var entries = l.AppList.Entries
+                .OrderBy(e => e.DisplayName ?? e.ProcessName)
+                .Select(e => e.DisplayName != null && e.DisplayName != "" ? e.DisplayName : e.ProcessName)
+                .ToList();
+            return new
+            {
+                l.TeamId,
+                Pick = new AppListPick(
+                    l.AppListId,
+                    l.AppList.Name,
+                    l.TeamId,
+                    l.IsExcluded,
+                    entries.Count,
+                    string.Join(", ", entries))
+            };
+        }).ToList();
 
         TeamAppLists = TeamOptions.Select(t => new TeamAppListsBlock(
             t.Id,
             t.Label.TrimStart('—', ' '),
-            linkedLists.Where(a => a.TeamId == t.Id && !a.IsTeamExcluded).ToList(),
-            linkedLists.Where(a => a.TeamId == t.Id && a.IsTeamExcluded).ToList())).ToList();
+            linkedPicks.Where(x => x.TeamId == t.Id && !x.Pick.IsTeamExcluded).Select(x => x.Pick).ToList(),
+            linkedPicks.Where(x => x.TeamId == t.Id && x.Pick.IsTeamExcluded).Select(x => x.Pick).ToList())).ToList();
 
-        UnlinkedAppLists = await db.AppLists.AsNoTracking()
-            .Where(a => a.TeamId == null)
+        LinkedAppListIdsByTeam = linksRaw
+            .GroupBy(l => l.TeamId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<int>)g.Select(l => l.AppListId).ToList());
+
+        LinkableAppLists = await db.AppLists.AsNoTracking()
+            .Where(a => !a.IsAutoDiscovered)
             .OrderBy(a => a.Name)
-            .Select(a => new AppListPick(a.Id, a.Name, null, false, a.Entries.Count, ""))
+            .Select(a => new AppListPick(a.Id, a.Name, a.TeamId, false, a.Entries.Count, ""))
             .ToListAsync();
     }
 
@@ -488,6 +522,7 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
                 t.Name,
                 t.Code,
                 t.ParentTeamId,
+                t.IsPublicFacing,
                 depth,
                 BuildTree(byParent, t.Id, depth + 1)))
             .ToList();
@@ -750,7 +785,7 @@ public class TeamsModel(HeimdallDbContext db) : PageModel
         return result;
     }
 
-    public record TeamNode(int Id, string Name, string? Code, int? ParentTeamId, int Depth, IReadOnlyList<TeamNode> Children);
+    public record TeamNode(int Id, string Name, string? Code, int? ParentTeamId, bool IsPublicFacing, int Depth, IReadOnlyList<TeamNode> Children);
     public record TeamOption(int Id, string Label);
     public record PersonRow(
         int Id,

@@ -9,7 +9,8 @@ public class MachineModel(
     StatsQueryService stats,
     AppListService appLists,
     ConfigService config,
-    TuflowRunService tuflowRuns) : PageModel
+    TuflowRunService tuflowRuns,
+    FloodAccessGuard flood) : PageModel
 {
     [BindProperty(SupportsGet = true)]
     public string? Hostname { get; set; }
@@ -41,6 +42,9 @@ public class MachineModel(
     /// <summary>Null-if-not-Flood-enrolled — the .cshtml hides the whole TUFLOW panel when this is null
     /// or FloodEnrolled is false. See TuflowRunService.GetMachineViewAsync.</summary>
     public TuflowMachineView? Tuflow { get; private set; }
+
+    /// <summary>TUFLOW panel visible only to FloodTeamEmails ∪ AdminEmails.</summary>
+    public bool CanAccessFlood { get; private set; }
 
     public static string FormatLocalTimestamp(DateTimeOffset utc) =>
         RemoteMachineService.FormatAgentContact(utc);
@@ -155,7 +159,9 @@ public class MachineModel(
         AppListsView = await appLists.GetEffectiveForHostAsync(host, ct);
         AppListPicker = await appLists.ListForPickerAsync(ct);
         MachineExcludedProcesses = await config.GetMachineExcludeProcessesAsync(host, ct);
-        Tuflow = await tuflowRuns.GetMachineViewAsync(host, ct);
+        CanAccessFlood = flood.CanAccessFlood(HttpContext);
+        if (CanAccessFlood)
+            Tuflow = await tuflowRuns.GetMachineViewAsync(host, ct);
     }
 
     private IActionResult RedirectToMachine(string? host) =>

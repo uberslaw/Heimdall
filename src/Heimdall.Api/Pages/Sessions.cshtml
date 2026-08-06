@@ -3,6 +3,8 @@
 @model SessionsModel
 @{
     ViewData["Title"] = "Sessions";
+    if (OpsPartial.IsPartial(ViewContext.HttpContext.Request))
+        Layout = null;
     var snap = Model.Snapshot;
     var shortLabel = Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d";
 }

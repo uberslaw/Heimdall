@@ -1,5 +1,3 @@
-using System.Text;
-using System.Text.RegularExpressions;
 using Heimdall.Api.Services;
 using Heimdall.Shared.Contracts;
 using Microsoft.AspNetCore.Mvc;
@@ -9,18 +7,17 @@ namespace Heimdall.Api.Pages;
 
 public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
 {
-    private static readonly Regex SafeRdpTarget = new(
-        @"^(?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)*|\d{1,3}(?:\.\d{1,3}){3})$",
-        RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
     public IReadOnlyList<RemoteMachineService.RemoteMachineRow> Rows { get; private set; } = [];
     public int OnlineCount { get; private set; }
     public int OfflineCount { get; private set; }
     public int RdpAcceptingCount { get; private set; }
     public bool HasActiveRestartOperations { get; private set; }
 
-    public async Task OnGetAsync(CancellationToken ct)
+    public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
+        if (!OpsPartial.IsPartial(Request))
+            return OpsPartial.RedirectToOpsTab(Request, "online");
+
         Rows = await remote.ListAsync(ct);
         OnlineCount = Rows.Count(r => r.IsOnline);
         OfflineCount = Rows.Count - OnlineCount;
@@ -28,6 +25,7 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
         HasActiveRestartOperations = Rows.Any(r =>
             r.RestartProgress is not null
             && RemoteMachineService.IsActiveRestartPhase(r.RestartProgress.Phase));
+        return Page();
     }
 
     /// <summary>
@@ -36,22 +34,8 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
     /// </summary>
     public IActionResult OnGetConnectRdp(string hostname)
     {
-        if (string.IsNullOrWhiteSpace(hostname))
-            return BadRequest();
-
-        var host = hostname.Trim();
-        if (host.Length > 253 || !SafeRdpTarget.IsMatch(host))
-            return BadRequest();
-
-        // Minimal RDP file — equivalent to: mstsc /v:HOSTNAME
-        var content =
-            "full address:s:" + host + "\r\n" +
-            "prompt for credentials:i:1\r\n" +
-            "authentication level:i:2\r\n";
-
-        var fileName = SanitizeRdpFileName(host) + ".rdp";
-        var bytes = Encoding.ASCII.GetBytes(content);
-        return File(bytes, "application/x-rdp", fileName);
+        var file = RdpConnectFile.TryCreate(hostname);
+        return file is null ? BadRequest() : file;
     }
 
     public async Task<IActionResult> OnPostPingAsync(string hostname, CancellationToken ct)
@@ -60,7 +44,7 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
         {
             if (WantsAjax())
                 return new JsonResult(new { ok = false, error = "Missing hostname." }) { StatusCode = 400 };
-            return RedirectToPage();
+            return RedirectToOpsOnline();
         }
 
         var result = await remote.PingAsync(hostname.Trim(), ct);
@@ -83,7 +67,7 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
         }
 
         TempData["Message"] = message;
-        return RedirectToPage();
+        return RedirectToOpsOnline();
     }
 
     public async Task<IActionResult> OnPostProbeRdpAsync(string hostname, CancellationToken ct)
@@ -101,7 +85,7 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
             if (WantsAjax())
                 return new JsonResult(new { ok = false, error = $"Machine '{hostname}' not found." }) { StatusCode = 404 };
             TempData["Error"] = $"Machine '{hostname}' not found.";
-            return RedirectToPage();
+            return RedirectToOpsOnline();
         }
 
         var message = result.RdpResponding
@@ -124,7 +108,7 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
         }
 
         TempData["Message"] = message;
-        return RedirectToPage();
+        return RedirectToOpsOnline();
     }
 
     public async Task<IActionResult> OnPostRestartRdsAsync(string hostname, CancellationToken ct)
@@ -142,7 +126,7 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
             if (WantsAjax())
                 return new JsonResult(new { ok = false, error = $"Machine '{hostname}' not found." }) { StatusCode = 404 };
             TempData["Error"] = $"Machine '{hostname}' not found.";
-            return RedirectToPage();
+            return RedirectToOpsOnline();
         }
 
         var message =
@@ -161,8 +145,10 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
         }
 
         TempData["Message"] = message;
-        return RedirectToPage();
+        return RedirectToOpsOnline();
     }
+
+    private IActionResult RedirectToOpsOnline() => RedirectToPage("/Ops", new { tab = "online" });
 
     private bool WantsAjax() =>
         string.Equals(Request.Headers.Accept.ToString(), "application/json", StringComparison.OrdinalIgnoreCase)
@@ -217,18 +203,4 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
 
     public static bool IsRdpTesting(RemoteMachineService.RemoteMachineRow row) =>
         row.RestartProgress?.Phase is RestartRdsPhases.Verifying or RestartRdsPhases.Acknowledged;
-
-    private static string SanitizeRdpFileName(string host)
-    {
-        var sb = new StringBuilder(host.Length);
-        foreach (var c in host)
-        {
-            if (char.IsAsciiLetterOrDigit(c) || c is '.' or '-')
-                sb.Append(c);
-            else
-                sb.Append('_');
-        }
-
-        return sb.Length == 0 ? "remote" : sb.ToString();
-    }
 }

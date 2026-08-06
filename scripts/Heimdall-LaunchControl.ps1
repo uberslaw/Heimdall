@@ -2428,8 +2428,9 @@ function Start-RedeployApi {
     $exit = Wait-ProcessWithUiPump -Process $p -StatusText "Redeploying API (accept UAC; preserves config)..."
     if ($exit -ne 0) {
         Update-UiStep 1 "[X] 2. Republish failed (exit $exit)"
-        Write-HeimdallLog "Redeploy API exited with code $exit" -Level ERROR
-        Set-UiStatus "Redeploy API failed (exit $exit)"
+        $republishLogHint = Join-Path $env:ProgramData "Heimdall\logs\republish-api-deploy.log"
+        Write-HeimdallLog "Redeploy API exited with code $exit (see $republishLogHint and latest republish-api-*.log)" -Level ERROR
+        Set-UiStatus "Redeploy API failed (exit $exit) — check ProgramData\Heimdall\logs\republish-api*"
         return
     }
     Update-UiStep 1 "[OK] 2. Republish finished"

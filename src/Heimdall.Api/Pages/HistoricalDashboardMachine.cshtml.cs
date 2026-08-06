@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Pages;
 
-public class HistoricalDashboardMachineModel(FleetDashboardService fleet, HeimdallDbContext db) : PageModel
+public class HistoricalDashboardMachineModel(FleetDashboardService fleet, HeimdallDbContext db, FloodAccessGuard flood) : PageModel
 {
     [BindProperty(SupportsGet = true)]
     public int Id { get; set; }
@@ -26,6 +26,9 @@ public class HistoricalDashboardMachineModel(FleetDashboardService fleet, Heimda
 
     public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
+        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+            return denied;
+
         var machine = await db.Machines.AsNoTracking().FirstOrDefaultAsync(m => m.Id == Id, ct);
         if (machine is null)
         {

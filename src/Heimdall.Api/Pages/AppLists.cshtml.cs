@@ -13,6 +13,10 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     public List<Team> Teams { get; private set; } = [];
     public IReadOnlyList<MachineHierarchy.RegionNode> Tree { get; private set; } = [];
     public List<Machine> AllMachines { get; private set; } = [];
+    /// <summary>Column widths for monospace machine-lookup option text (hostname · friendly · IP).</summary>
+    public int MachineOptionHostWidth { get; private set; } = 12;
+    public int MachineOptionFriendlyWidth { get; private set; } = 12;
+    public int MachineOptionIpWidth { get; private set; } = 15;
     public int CatalogTotalCount { get; private set; }
     public int CatalogUnclassifiedCount { get; private set; }
     public int CatalogDiscoverySourceCount { get; private set; }
@@ -610,6 +614,42 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         foreach (var m in AllMachines)
             MachineHierarchy.EnsureDefaults(m);
         Tree = MachineHierarchy.BuildTree(AllMachines);
+        ComputeMachineOptionWidths();
+    }
+
+    private void ComputeMachineOptionWidths()
+    {
+        const int minHost = 8, minFriendly = 8, minIp = 7;
+        const int maxHost = 28, maxFriendly = 24, maxIp = 15;
+        if (AllMachines.Count == 0)
+        {
+            MachineOptionHostWidth = minHost;
+            MachineOptionFriendlyWidth = minFriendly;
+            MachineOptionIpWidth = minIp;
+            return;
+        }
+
+        MachineOptionHostWidth = Math.Clamp(AllMachines.Max(m => m.Hostname.Length), minHost, maxHost);
+        MachineOptionFriendlyWidth = Math.Clamp(
+            AllMachines.Max(m => string.IsNullOrWhiteSpace(m.FriendlyName) ? 1 : m.FriendlyName.Trim().Length),
+            minFriendly, maxFriendly);
+        MachineOptionIpWidth = Math.Clamp(
+            AllMachines.Max(m => string.IsNullOrWhiteSpace(m.LastIp) ? 1 : m.LastIp.Trim().Length),
+            minIp, maxIp);
+    }
+
+    /// <summary>Fixed-width monospace label: hostname · friendly name · IP (nbsp-padded columns).</summary>
+    public static string FormatMachineLookupOption(Machine m, int hostW, int friendlyW, int ipW)
+    {
+        static string Col(string? value, int width)
+        {
+            var s = string.IsNullOrWhiteSpace(value) ? "—" : value.Trim();
+            if (s.Length > width)
+                s = width <= 1 ? s[..1] : s[..(width - 1)] + "…";
+            return s + new string('\u00A0', Math.Max(0, width - s.Length));
+        }
+
+        return $"{Col(m.Hostname, hostW)} · {Col(m.FriendlyName, friendlyW)} · {Col(m.LastIp, ipW)}";
     }
 
     private async Task LoadListsAsync()

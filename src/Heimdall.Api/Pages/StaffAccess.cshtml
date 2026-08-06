@@ -1,230 +1,215 @@
 @page
-
 @model StaffAccessModel
-
+@using Heimdall.Shared.Contracts
 @{
-
-    ViewData["Title"] = "Staff Access";
-
+    ViewData["Title"] = "Staff RDP";
 }
 
-
-
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-    <h1 class="hd-title mb-1">Staff Access</h1>
+    <h1 class="hd-title mb-1">Staff RDP</h1>
     <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="staff-access">Help</a>
 </div>
 
 <p class="hd-sub">
-
     @if (Model.WindowsAuthRequired)
-
     {
-
-        @:Access is tied to your Windows login on this PC. You'll only see Remote Access Groups registered for your account.
-
+        @:Public-team machines · book up to 24h · Connect opens an .rdp file (mstsc). Access is tied to your Windows login.
     }
-
     else if (Model.DevBypassActive)
-
     {
-
         @:Development mode — Windows login verification is off. Do not use this setting in production.
-
     }
-
     else
-
     {
-
-        @:Sign in with your registered staff email to see the machines your team can remote into.
-
+        @:Sign in to see public-team machines, book a window, and Connect via RDP.
     }
-
 </p>
 
-
-
 @if (Model.DevBypassActive)
-
 {
-
     <div class="alert alert-warning">
-
         <strong>Dev bypass active.</strong> Staff Access is not verifying Windows identity. Set
-
         <code>Heimdall:StaffAccess:AllowDevBypass</code> to <code>false</code> before deploying.
-
     </div>
-
 }
-
-
 
 @if (Model.WindowsAuthRequired && Model.WindowsUser is not null)
-
 {
-
     <p class="text-secondary small mb-3">Windows login detected: <strong>@Model.WindowsUser</strong></p>
-
 }
-
-
 
 @if (TempData["Message"] is string msg)
-
 {
-
     <div class="alert alert-success">@msg</div>
-
 }
-
-@if (TempData["Error"] is string err)
-
+@if (TempData["Warning"] is string warn)
 {
-
-    <div class="alert alert-danger">@err</div>
-
+    <div class="alert alert-warning">@warn</div>
 }
-
-
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
 
 @if (Model.SignedInEmail is not null)
-
 {
-
     <div class="hd-panel mb-4">
-
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-
             <h2 class="h5 mb-0">Signed in as @Model.SignedInEmail</h2>
-
             <form method="post" asp-page-handler="SignOut">
-
                 <button type="submit" class="btn btn-ghost btn-sm">Sign out</button>
-
             </form>
-
         </div>
 
-
-
-        @if (Model.MyGroups.Count == 0)
-
+        @if (Model.MyGroups.Count > 0)
         {
-
-            <p class="text-secondary mb-0">
-
-                No Remote Access Groups found for this email anymore — it may have been removed. Ask an admin to re-add it.
-
-            </p>
-
-        }
-
-        else
-
-        {
-
-            <p class="text-secondary mb-2">Your group(s):</p>
-
-            <div class="d-flex flex-wrap gap-2">
-
+            <p class="text-secondary small mb-2">Live metrics (Remote Access Groups):</p>
+            <div class="d-flex flex-wrap gap-2 mb-0">
                 @foreach (var g in Model.MyGroups)
-
                 {
-
-                    <a class="btn btn-hd" asp-page="/Staff" asp-route-id="@g.Id">@g.Name</a>
-
+                    <a class="btn btn-ghost btn-sm" asp-page="/Staff" asp-route-id="@g.Id">@g.Name · Live metrics</a>
                 }
-
             </div>
-
         }
-
+        else
+        {
+            <p class="text-secondary small mb-0">
+                No Remote Access Group membership — showing all public-facing team machines.
+                Ask an admin to add your email under Admin → Remote Access Groups for live metrics.
+            </p>
+        }
     </div>
 
+    <div class="hd-panel mb-4">
+        <h2 class="h5 mb-3">RDP pool</h2>
+        <p class="text-secondary small mb-3">
+            Bookable when Idle / Disconnected / offline. An <strong>Active</strong> user shows green — you can still book (warning) and Connect (break-glass).
+            Mark teams public under Admin → Teams (<code>Is public-facing</code>).
+        </p>
+        <div class="table-responsive">
+            <table class="hd-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Machine</th>
+                        <th>Team</th>
+                        <th>Status</th>
+                        <th>Active User</th>
+                        <th>Booking</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @if (Model.PoolRows.Count == 0)
+                {
+                    <tr>
+                        <td colspan="6" class="text-secondary">
+                            No public-facing machines yet. An admin must tick <strong>Public-facing</strong> on a team and assign machines to it.
+                        </td>
+                    </tr>
+                }
+                @foreach (var r in Model.PoolRows)
+                {
+                    <tr>
+                        <td>
+                            <strong title="@r.Hostname">@r.DisplayName</strong>
+                            @if (!string.IsNullOrWhiteSpace(r.FriendlyName))
+                            {
+                                <span class="text-secondary small d-block">@r.Hostname</span>
+                            }
+                        </td>
+                        <td>@(r.TeamName ?? "—")</td>
+                        <td>
+                            @if (r.IsOnline)
+                            {
+                                <span class="badge-pill badge-active">Online</span>
+                            }
+                            else
+                            {
+                                <span class="badge-pill badge-ended">Offline</span>
+                            }
+                        </td>
+                        <td>
+                            @if (!string.IsNullOrWhiteSpace(r.ActiveUser))
+                            {
+                                <span class="badge-pill @StaffAccessModel.ActiveUserBadgeClass(r.HasActiveSession, r.CurrentBooking, r.BookingIsMine)">
+                                    @r.ActiveUser
+                                    @if (r.ActiveUserState is SessionState st)
+                                    {
+                                        <span class="text-secondary"> · @st</span>
+                                    }
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="text-secondary">—</span>
+                            }
+                        </td>
+                        <td class="small">
+                            @StaffAccessModel.FormatBooking(r.CurrentBooking)
+                            @if (r.CurrentBooking is not null && (r.BookingIsMine || Model.IsAdmin))
+                            {
+                                <form method="post" asp-page-handler="CancelBooking" class="d-inline ms-1">
+                                    <input type="hidden" name="CancelBookingId" value="@r.CurrentBooking.Id" />
+                                    <button type="submit" class="btn btn-ghost btn-sm">Cancel</button>
+                                </form>
+                            }
+                        </td>
+                        <td class="text-nowrap">
+                            <form method="post" asp-page-handler="Book" class="d-inline-flex flex-wrap align-items-center gap-1">
+                                <input type="hidden" name="BookMachineId" value="@r.MachineId" />
+                                <select class="form-select form-select-sm" name="BookDuration" style="width:auto;min-width:5.5rem;">
+                                    <option value="1h">1h</option>
+                                    <option value="2h" selected>2h</option>
+                                    <option value="4h">4h</option>
+                                    <option value="8h">8h</option>
+                                    <option value="eod">EOD</option>
+                                    <option value="24h">24h</option>
+                                </select>
+                                <button type="submit" class="btn btn-hd btn-sm"
+                                        @(r.HasActiveSession ? "title=Active session present — booking allowed with warning" : null)>
+                                    Book
+                                </button>
+                            </form>
+                            <a class="btn btn-ghost btn-sm"
+                               asp-page-handler="ConnectRdp"
+                               asp-route-hostname="@r.Hostname"
+                               title="Download/open .rdp (opens mstsc)">Connect</a>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
 }
-
-
 
 @if (Model.SignedInEmail is null)
-
 {
-
     <div class="hd-panel">
-
         @if (Model.WindowsAuthRequired)
-
         {
-
             <h2 class="h5 mb-3">Confirm your staff email</h2>
-
             <p class="text-secondary small">
-
                 If we couldn't match your Windows login automatically, enter the email your admin registered for you.
-
                 It must match this Windows account (same mailbox / UPN / username).
-
             </p>
-
         }
-
         else
-
         {
-
             <h2 class="h5 mb-3">Sign in</h2>
-
         }
-
         <form method="post" asp-page-handler="SignIn" class="row g-2 align-items-end">
-
             <div class="col-auto" style="min-width: 320px;">
-
                 <label class="form-label">Email</label>
-
                 <input class="form-control" asp-for="Email" type="email" placeholder="you@example.com" required autofocus />
-
             </div>
-
             <div class="col-auto">
-
                 <button type="submit" class="btn btn-hd">Continue</button>
-
             </div>
-
         </form>
-
-        @if (Model.WindowsAuthRequired)
-
-        {
-
-            <p class="text-secondary small mt-3 mb-0">
-
-                Your browser sends your Windows identity to this site (Negotiate/NTLM on the intranet). You cannot sign in as someone else without their Windows session.
-
-                Admins: add staff emails under Admin → Remote Access Groups using the same address as their AD UPN or <code>user@your-domain</code>.
-
-            </p>
-
-        }
-
-        else
-
-        {
-
-            <p class="text-secondary small mt-3 mb-0">
-
-                Lightweight POC sign-in — knowing a registered email is enough. Enable Windows auth in production via
-
-                <code>Heimdall:StaffAccess:RequireWindowsAuth</code>.
-
-            </p>
-
-        }
-
+        <p class="text-secondary small mt-3 mb-0">
+            After sign-in you see machines on teams marked <strong>public-facing</strong>.
+            Live metrics still use Remote Access Groups when assigned.
+        </p>
     </div>
-
 }
-
-

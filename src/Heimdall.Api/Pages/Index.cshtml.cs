@@ -26,8 +26,11 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
     [BindProperty(SupportsGet = true)]
     public List<string> SelectedCities { get; set; } = [];
 
-    public async Task OnGetAsync(CancellationToken ct)
+    public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
+        if (!OpsPartial.IsPartial(Request))
+            return OpsPartial.RedirectToOpsTab(Request, "machines");
+
         Period = MachineUtilisationService.NormalizePeriod(Period);
         PeriodLabel = MachineUtilisationService.PeriodOptions.First(p => p.Key == Period).Label;
 
@@ -61,15 +64,16 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
         var utilByMachine = await util.ComputeAsync(machines.Select(m => m.Id).ToList(), Period, ct);
 
         var teams = await db.Teams.AsNoTracking().OrderBy(t => t.Name).ToListAsync(ct);
-        var appLists = await db.AppLists.AsNoTracking()
-            .Include(a => a.Entries)
-            .Where(a => a.TeamId != null && !a.IsTeamExcluded)
+        var activeLinks = await db.TeamAppListLinks.AsNoTracking()
+            .Include(l => l.AppList)
+            .ThenInclude(a => a.Entries)
+            .Where(l => !l.IsExcluded)
             .ToListAsync(ct);
-        var appsByTeam = appLists
-            .GroupBy(a => a.TeamId!.Value)
+        var appsByTeam = activeLinks
+            .GroupBy(l => l.TeamId)
             .ToDictionary(
                 g => g.Key,
-                g => g.SelectMany(l => l.Entries)
+                g => g.SelectMany(l => l.AppList.Entries)
                     .Select(e => string.IsNullOrWhiteSpace(e.DisplayName) ? e.ProcessName : e.DisplayName!)
                     .Where(n => !string.IsNullOrWhiteSpace(n))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -106,6 +110,7 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
                 m.Team?.Name,
                 status,
                 lastUser?.Username,
+                m.LastIp,
                 u));
         }
 
@@ -134,6 +139,7 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
             sections.Add(new TeamSection(null, "Unassigned", "", "", unassigned));
 
         Sections = sections;
+        return Page();
     }
 
     /// <summary>Shared range keys used by Apps / Sessions / Machine detail (legacy util windows).</summary>
@@ -240,6 +246,7 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
         string? TeamName,
         MachineStatus Status,
         string? LastUser,
+        string? LastIp,
         MachineUtilisationService.MachineUtilRow Util);
 
     public sealed record TeamSection(

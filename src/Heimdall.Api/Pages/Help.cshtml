@@ -9,6 +9,7 @@
 
 <nav class="hd-panel mb-4" aria-label="Help sections">
     <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-ghost btn-sm" href="#ops">Ops</a>
         <a class="btn btn-ghost btn-sm" href="#machines">Machines</a>
         <a class="btn btn-ghost btn-sm" href="#applications">Application Usage</a>
         <a class="btn btn-ghost btn-sm" href="#app-lists">App lists</a>
@@ -20,7 +21,7 @@
         <a class="btn btn-ghost btn-sm" href="#remote-machines">Online Status</a>
         <a class="btn btn-ghost btn-sm" href="#tuflow-runs">TUFLOW Runs</a>
         <a class="btn btn-ghost btn-sm" href="#historical-dashboard">Historical Dashboard</a>
-        <a class="btn btn-ghost btn-sm" href="#staff-access">Staff Access</a>
+        <a class="btn btn-ghost btn-sm" href="#staff-access">Staff RDP</a>
         <a class="btn btn-ghost btn-sm" href="#remote-access-groups">Remote Access Groups</a>
         <a class="btn btn-ghost btn-sm" href="#tracking-config">Tracking config</a>
         <a class="btn btn-ghost btn-sm" href="#teams">Teams</a>
@@ -32,16 +33,26 @@
     </div>
 </nav>
 
+<section id="ops" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Ops</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> Digital Technology console — machines, sessions, online status, client version, cost, and stats in one place.</p>
+    <ol class="small mb-0">
+        <li>Open <a asp-page="/Ops">Ops</a>. Tabs load on demand (only the active tab’s data runs on first paint).</li>
+        <li>Legacy URLs (<code>/</code>, Sessions, Online Status, Client Version, Cost, Stats) redirect into the matching Ops tab.</li>
+        <li>Online Status still uses on-demand Ping / Test RDP — probes are not run on every page load.</li>
+    </ol>
+</section>
+
 <section id="machines" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Machines</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> fleet list by team — status and utilisation at a glance.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> fleet list by team — status and utilisation at a glance (Ops → All machines).</p>
     <ol class="small mb-0">
         <li>Machines are grouped under <strong>team section headings</strong>. Active app-list names for that team appear beside the heading.</li>
         <li><strong>Status</strong> (5‑minute check-in): green Active = online with a non-disconnected session; yellow Idle = online, no active session; red Off = no recent check-in.</li>
         <li><strong>Period</strong> (Today / 24h / 5d / 7d / 30d / All) sets Active / Passive / Free % and GPU·CPU·IO columns. Click an Active/Passive/Free cell to cycle that row’s period.</li>
         <li>Active % is non-disconnected session time over the calendar window. Passive and hardware totals need fleet samples (Historical Dashboard enrollment today); otherwise they show —.</li>
-        <li>Name links to machine detail. Assign teams and app lists under <a asp-page="/Teams">Machines → Teams</a>.</li>
-        <li>Nav <strong>Machines → Sessions</strong> lists logon sessions.</li>
+        <li>Name links to machine detail. Assign teams and app lists under <a asp-page="/Teams">Admin → Teams</a>.</li>
+        <li>Sessions live under <a asp-page="/Ops" asp-route-tab="sessions">Ops → Sessions</a>.</li>
     </ol>
 </section>
 
@@ -61,10 +72,9 @@
         <strong>Purpose:</strong> named schemas of processes (e.g. a team's toolset). Discovering apps on a machine never auto-tracks them — you approve first.
     </p>
     <ol class="small">
-        <li><strong>Existing lists</strong> — browse, edit, or select several and <em>Export Selected</em> (App list CSV/JSON, or Classification CSV for the AI workflow below).
-            Three <strong>System</strong> lists (<em>Core Windows</em>, <em>SOE</em>, <em>Specialization</em>) sync from approved classifications on page load — editable and applicable to scopes, but not deletable. Other lists show <em>Delete</em> (rose).</li>
         <li><strong>Create app list</strong> — name it, optionally link a team, and paste process names (one per line, or <code>DisplayName,ProcessName</code>). <em>Create List</em> / <em>Save List</em> (silver); <em>Cancel</em> (rose).</li>
-        <li><strong>Upload CSV / JSON</strong> — <em>Choose File</em> then <em>Upload File</em>; same shape as Export Selected for round-tripping.</li>
+        <li><strong>Existing lists</strong> (full width) — browse, edit, or select several and <em>Export Selected</em> (App list CSV/JSON, or Classification CSV for the AI workflow below).
+            Three <strong>System</strong> lists (<em>Core Windows</em>, <em>SOE</em>, <em>Specialization</em>) sync from approved classifications on page load — editable and applicable to scopes, but not deletable. Other lists show <em>Delete</em> (rose).</li>
         <li><strong>Apply list to scope</strong> — pick a list, optionally tick <em>Global</em>, or select regions/offices/machines in the tree, then <em>Apply List</em>.</li>
         <li>
             <strong>Machine lookup &amp; analysis</strong> — pick a machine, then:
@@ -78,14 +88,19 @@
             </ul>
         </li>
         <li>
-            <strong>Bulk Update Software Classifications</strong> — <em>Export Classified</em>, <em>Export All</em> (full catalog including unclassified), or <em>Export Machine</em>;
+            <strong>Bulk Update Software Classifications</strong> and <strong>Upload CSV / JSON</strong> sit side by side on the last row.
+            Bulk Update: <em>Export Classified</em>, <em>Export All</em> (full catalog including unclassified), or <em>Export Machine</em>;
             fill <code>Category</code>/<code>Subcategory</code>/<code>Group</code>/<code>Description</code> in AI, then <em>Import CSV</em> (gold).
             Header: <code>ProcessName,ExecutablePath,Group,Description,DisplayName,Category,Subcategory</code>.
             Import proposes pending suggestions on the catalog (does not commit groups until Approve/Set).
-            <em>Backfill Discovered</em> (rose) imports discovery keys not yet in the catalog and merges blank-path / volatile-folder duplicates where safe.
+            Upload: <em>Choose File</em> then <em>Upload File</em>; same shape as Export Selected for round-tripping lists.
             Catalog identity is <strong>ProcessName + ExecutablePath</strong> (empty path = unknown location). Volatile segments (DriverStore hashes, WindowsApps package versions, version folders) are normalized on upsert so the same app does not spawn endless rows.
             Rows missing a path can be filled by <em>Request Inventory</em> on App lists (agent WMI + file version scan) or by importing a CSV with <code>ExecutablePath</code> set.
             See <a asp-page="/Discovery" asp-fragment="discovery">Discovery &amp; Classification</a> to Approve or Set groups.
+        </li>
+        <li>
+            <strong>Backfill Discovered</strong> — manual rose button when the catalog is behind discovery sources; also runs <strong>automatically once per day</strong> (default shortly after API start, then daily at 00:00 UTC — configurable under <code>Heimdall:CatalogBackfill</code>).
+            Idempotent: Upsert skips existing keys and merges blank-path / volatile-folder duplicates where safe (no re-import of duplicates).
         </li>
         <li>
             <strong>Import CSV</strong> stamps Category/Subcategory/Description and a pending <code>SuggestedGroup</code> onto matching catalog rows (name+path resolution, including blank-path coalesce).
@@ -160,7 +175,7 @@
 
 <section id="remote-machines" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Online Status</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> RDP/RDS health at a glance — service status, reachability, and a way to restart RDS remotely. (Route: <code>/RemoteMachines</code>.)</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> RDP/RDS health — also under <a asp-page="/Ops" asp-route-tab="online">Ops → Online status</a>.</p>
     <ol class="small mb-0">
         <li>Review per-machine RDP health, ping, and Terminal Services status (refreshed by the agent, plus on-demand from the API server).</li>
         <li>Use <em>Connect</em> to download a small <code>.rdp</code> file for that hostname (opens with Windows Remote Desktop / mstsc). Browsers cannot run <code>mstsc /v:</code> directly.</li>
@@ -171,14 +186,14 @@
 <section id="tuflow-runs" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">TUFLOW Runs</h2>
     <p class="text-secondary small mb-2">
-        <strong>Purpose:</strong> queue a TUFLOW start or graceful stop from the console on Historical Dashboard–enrolled fleet machines
-        (see <a asp-page="/TuflowRuns">TUFLOW Runs</a> and <a asp-page="/FleetSimProgress">Fleet Sim Progress</a>).
+        <strong>Purpose:</strong> queue a TUFLOW start or graceful stop on Flood-enrolled machines.
+        Nav under <strong>Flood</strong> (visible only to <code>Heimdall:StaffAccess:AdminEmails</code> ∪ <code>Heimdall:FloodTeamEmails</code>).
     </p>
     <ol class="small">
         <li>Enroll the modelling host on <strong>Historical Dashboard → Enrollment</strong> first.</li>
         <li>On <strong>TUFLOW Runs</strong>, enter exe path, <code>.tcf</code>, optional scenarios/events/run name, then Start. The agent picks up within ~20s.</li>
         <li><strong>Stop gracefully</strong> asks the launcher to send a process-group break so TUFLOW can finish the current checkpoint (resume-friendly if your <code>.tcf</code> writes restart files — see <code>tuflow-automation/tcf/</code>).</li>
-        <li>Progress comes from TUFLOW’s own <code>.tsf</code>; crashes from <code>.tlf</code> ERROR lines. Machine detail also shows a TUFLOW panel + recent run history.</li>
+        <li>Progress comes from TUFLOW’s own <code>.tsf</code>; crashes from <code>.tlf</code> ERROR lines. Machine detail also shows a TUFLOW panel + recent run history for flood-gated users.</li>
         <li>Agent needs <code>%ProgramFiles%\Heimdall\Agent\TuflowLauncher\TuflowLauncher.exe</code> (included when you pack/install the client or run <code>Install-Agent</code>).</li>
     </ol>
     <p class="text-secondary small mb-0">
@@ -206,12 +221,15 @@
 </section>
 
 <section id="staff-access" class="hd-panel mb-4 hd-help-section">
-    <h2 class="h5">Staff Access</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> a restricted, read-mostly view for non-admin staff to check live metrics on the machines they're allowed to see.</p>
+    <h2 class="h5">Staff RDP</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> public-team machine pool — book up to 24 hours and Connect via an <code>.rdp</code> file (opens mstsc).</p>
     <ol class="small mb-0">
-        <li>Staff sign in with their Windows/AD identity — access is limited to machines in a <a asp-page="/RemoteAccessGroups" asp-fragment="remote-access-groups">Remote Access Group</a> their email belongs to.</li>
-        <li>They can optionally favourite specific processes to prioritise in their live view.</li>
-        <li>If someone can't see a machine, check they're a member (by email) of a group that includes it.</li>
+        <li>Sign in with your Windows/AD identity (Negotiate). The pool shows machines whose team is marked <strong>public-facing</strong> under Admin → Teams.</li>
+        <li>If you belong to a Remote Access Group, the pool is further limited to those hosts; if you have no RAG membership, you see all public-facing machines.</li>
+        <li><strong>Active User</strong> (green) means an Active session is present — you can still book (warning) and Connect (break-glass).</li>
+        <li><strong>Book</strong> rejects overlapping bookings; cancel your own booking (admins can cancel any). Duration: 1h / 2h / 4h / 8h / end-of-day / 24h.</li>
+        <li><strong>Connect</strong> downloads/opens a tiny <code>.rdp</code> file — browsers cannot launch <code>mstsc</code> directly; use Open with Remote Desktop.</li>
+        <li>Live CPU/GPU metrics remain on the per-group Staff page linked as “Live metrics” when you have RAG membership.</li>
     </ol>
 </section>
 
@@ -238,9 +256,10 @@
 
 <section id="teams" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Teams</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> org teams for Machines sections, people (remote viewing), and which app lists are actively tracking or ignoring. Under <strong>Machines → Teams</strong>.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> org teams for Ops machine sections, people, app lists, and Staff RDP visibility. Under <strong>Admin → Teams</strong>.</p>
     <ol class="small mb-0">
         <li>Create, rename, or delete teams (canonical names are seeded: Flood, Acoustics, Visualisation, Buildings, Energy, TSS, General, Traffic, Civil).</li>
+        <li>Tick <strong>Public-facing</strong> so machines on that team appear in the Staff RDP pool (do not mark Flood/TUFLOW teams public).</li>
         <li><strong>Edit Team</strong> — add people by username (<code>firstname.lastname</code>; CSV supported) and manage <strong>Team Members</strong>.</li>
         <li><strong>Edit Fleet</strong> — pick a team, Edit, then move machines between Current Fleet and Current Team; Save to persist.</li>
         <li>Link app lists with <em>Track List</em> (Actively Tracking) or tick <em>Do Not Track</em> (Ignoring). <a asp-page="/AppLists">Customize</a> opens the App lists page.</li>
@@ -259,7 +278,7 @@
 
 <section id="cost" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Cost</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> hardware purchase cost, warranty, support hours, and inventory/reimage identity per machine — the input side of cost-justification.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> hardware purchase cost, warranty, support hours, and inventory/reimage identity — under <a asp-page="/Ops" asp-route-tab="cost">Ops → Cost</a>.</p>
     <ol class="small mb-0">
         <li>Edit a row to record purchase cost/currency, warranty dates, and hardware specs (or let the agent auto-fill what it can detect).</li>
         <li>Support hourly rate feeds into the <a asp-page="/Socratize" asp-fragment="socratize">Socratize</a> brief's cost-per-hour comparison.</li>
@@ -269,7 +288,7 @@
 
 <section id="stats" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Stats</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> usage analytics by machine scope (region/office/group/machine) in filterable, sortable tables — the reporting rollup.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> usage analytics by machine scope — under <a asp-page="/Ops" asp-route-tab="stats">Ops → Stats</a>.</p>
     <ol class="small mb-0">
         <li>Pick a scope tab and date range; tables cover utilisation, app usage, and session counts for that scope.</li>
         <li>Click column headers to sort; use the filter box to narrow rows by name.</li>

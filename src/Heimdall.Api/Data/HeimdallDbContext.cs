@@ -16,11 +16,13 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<MetricPolicy> MetricPolicies => Set<MetricPolicy>();
     public DbSet<Team> Teams => Set<Team>();
     public DbSet<PersonTeam> PersonTeams => Set<PersonTeam>();
+    public DbSet<MachineBooking> MachineBookings => Set<MachineBooking>();
     public DbSet<UtilizationCriteria> UtilizationCriteria => Set<UtilizationCriteria>();
     public DbSet<AppLicenseCost> AppLicenseCosts => Set<AppLicenseCost>();
     public DbSet<AppList> AppLists => Set<AppList>();
     public DbSet<AppListEntry> AppListEntries => Set<AppListEntry>();
     public DbSet<AppListAssignment> AppListAssignments => Set<AppListAssignment>();
+    public DbSet<TeamAppListLink> TeamAppListLinks => Set<TeamAppListLink>();
     public DbSet<AppListAuditLog> AppListAuditLogs => Set<AppListAuditLog>();
     public DbSet<MachineIdentityEvent> MachineIdentityEvents => Set<MachineIdentityEvent>();
     public DbSet<RemoteAccessGroup> RemoteAccessGroups => Set<RemoteAccessGroup>();
@@ -129,6 +131,16 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<MachineBooking>(e =>
+        {
+            e.HasIndex(x => new { x.MachineId, x.StartUtc, x.EndUtc });
+            e.HasIndex(x => x.BookedByEmail);
+            e.HasOne(x => x.Machine)
+                .WithMany()
+                .HasForeignKey(x => x.MachineId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         modelBuilder.Entity<UtilizationCriteria>(e =>
         {
             e.HasIndex(x => new { x.Scope, x.ScopeValue });
@@ -149,6 +161,19 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
                 .WithMany()
                 .HasForeignKey(x => x.TeamId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<TeamAppListLink>(e =>
+        {
+            e.HasIndex(x => new { x.TeamId, x.AppListId }).IsUnique();
+            e.HasOne(x => x.Team)
+                .WithMany(x => x.AppListLinks)
+                .HasForeignKey(x => x.TeamId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.AppList)
+                .WithMany(x => x.TeamLinks)
+                .HasForeignKey(x => x.AppListId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<AppListEntry>(e =>

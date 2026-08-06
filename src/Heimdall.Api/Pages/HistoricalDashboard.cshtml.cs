@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Heimdall.Api.Pages;
 
-public class HistoricalDashboardModel(FleetDashboardService fleet) : PageModel
+public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGuard flood) : PageModel
 {
     [BindProperty(SupportsGet = true)]
     public string Tab { get; set; } = "live";
@@ -47,13 +47,20 @@ public class HistoricalDashboardModel(FleetDashboardService fleet) : PageModel
     public int MachinesActiveToday { get; private set; }
     public double AvgActiveRuntimePerMachine { get; private set; }
 
-    public async Task OnGetAsync(CancellationToken ct)
+    public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
+        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+            return denied;
+
         await LoadAsync(ct);
+        return Page();
     }
 
     public async Task<IActionResult> OnPostEnrollAsync(CancellationToken ct)
     {
+        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+            return denied;
+
         var (ok, message) = await fleet.EnrollAsync(EnrollMachineId, EnrollNotes, ct);
         TempData[ok ? "Message" : "Error"] = message;
         return RedirectToPage(new { tab = "enroll", q = Q });
@@ -61,6 +68,9 @@ public class HistoricalDashboardModel(FleetDashboardService fleet) : PageModel
 
     public async Task<IActionResult> OnPostUnenrollAsync(CancellationToken ct)
     {
+        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+            return denied;
+
         var (ok, message) = await fleet.UnenrollAsync(UnenrollId, ct);
         TempData[ok ? "Message" : "Error"] = message;
         return RedirectToPage(new { tab = "enroll" });

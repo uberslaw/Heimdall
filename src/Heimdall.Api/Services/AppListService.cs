@@ -127,8 +127,9 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
     ];
 
     /// <summary>
-    /// Ensure the three classification-backed system lists exist and upsert their entries from
-    /// ProcessGroupAssignment / SoeApps (plus catalog display names). Idempotent.
+    /// Ensure the three classification-backed system lists always exist (even with zero entries),
+    /// then upsert entries from ProcessGroupAssignment / SoeApps (plus catalog display names).
+    /// Idempotent — safe to call on every App Lists page load.
     /// </summary>
     public async Task SyncSystemListsFromClassificationsAsync(CancellationToken ct = default)
     {
@@ -162,6 +163,7 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
                     .FirstOrDefaultAsync(a => a.Name == canonicalName && !a.IsAutoDiscovered, ct);
             }
 
+            // Always create the shell list when missing — empty is fine until classifications exist.
             if (list is null)
             {
                 list = new AppList
@@ -183,6 +185,7 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
                     list.IsSystem = true;
                     list.SystemKey = systemKey;
                     list.Name = canonicalName;
+                    list.UpdatedUtc = now;
                     anyChange = true;
                 }
             }
@@ -1043,19 +1046,33 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         var lists = await db.AppLists.AsNoTracking()
             .Include(a => a.Entries)
             .Include(a => a.Team)
-            .Where(a => a.TeamId != null)
+            .Include(a => a.TeamLinks)
+            .ThenInclude(l => l.Team)
+            .Where(a => a.TeamLinks.Count > 0)
             .OrderBy(a => a.Name)
             .ToListAsync(ct);
 
         // Show all team-linked lists; flag those matching users seen on this machine.
         return lists
-            .Select(a => new TeamAppListOption(
-                a.Id,
-                a.Name,
-                a.Team?.Name,
-                a.Entries.Count,
-                a.TeamId is int tid && teamIds.Contains(tid),
-                a.Entries.Select(e => e.ProcessName).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList()))
+            .Select(a =>
+            {
+                var linkTeamNames = a.TeamLinks
+                    .Select(l => l.Team?.Name)
+                    .Where(n => !string.IsNullOrWhiteSpace(n))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var teamName = a.Team?.Name
+                    ?? (linkTeamNames.Count > 0 ? string.Join(", ", linkTeamNames) : null);
+                var matches = a.TeamLinks.Any(l => teamIds.Contains(l.TeamId));
+                return new TeamAppListOption(
+                    a.Id,
+                    a.Name,
+                    teamName,
+                    a.Entries.Count,
+                    matches,
+                    a.Entries.Select(e => e.ProcessName).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList());
+            })
             .OrderByDescending(o => o.MatchesMachineUsers)
             .ThenBy(o => o.ListName, StringComparer.OrdinalIgnoreCase)
             .ToList();

@@ -26,8 +26,11 @@ public class SessionsModel(StatsQueryService stats, HeimdallDbContext db) : Page
     [BindProperty(SupportsGet = true)]
     public bool OnlyDisconnectedApps { get; set; }
 
-    public async Task OnGetAsync(CancellationToken ct)
+    public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
+        if (!OpsPartial.IsPartial(Request))
+            return OpsPartial.RedirectToOpsTab(Request, "sessions");
+
         var (key, label, days) = IndexModel.ResolveRange(Range);
         Range = key;
         RangeLabel = label;
@@ -69,6 +72,8 @@ public class SessionsModel(StatsQueryService stats, HeimdallDbContext db) : Page
                     s.AppProcesses))
                 .ToList();
         }
+
+        return Page();
     }
 
     private static string? ResolveTeam(List<PersonTeam> people, string username, string? domain)

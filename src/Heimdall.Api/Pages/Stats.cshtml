@@ -3,6 +3,8 @@
 @using Heimdall.Api.Services
 @{
     ViewData["Title"] = "Stats";
+    if (OpsPartial.IsPartial(ViewContext.HttpContext.Request))
+        Layout = null;
     var snap = Model.Snapshot;
     var view = Model.View?.ToLowerInvariant() ?? "logon-count";
 

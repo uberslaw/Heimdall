@@ -2,6 +2,8 @@
 @model RemoteMachinesModel
 @{
     ViewData["Title"] = "Online Status";
+    if (OpsPartial.IsPartial(ViewContext.HttpContext.Request))
+        Layout = null;
 }
 
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">

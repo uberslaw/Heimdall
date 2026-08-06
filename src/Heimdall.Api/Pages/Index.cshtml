@@ -3,13 +3,14 @@
 @using Heimdall.Api.Services
 @{
     ViewData["Title"] = "Machines";
+    if (OpsPartial.IsPartial(ViewContext.HttpContext.Request))
+        Layout = null;
 }
 
-<div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <h1 class="hd-title mb-1">Machines</h1>
     <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="machines">Help</a>
 </div>
-<p class="hd-sub mb-3">By team · status · utilisation</p>
 
 <form method="get" class="hd-panel mb-3" id="machines-filter-form">
     <div class="row g-3 align-items-end">
@@ -102,6 +103,7 @@ else
                         {
                             <div class="hd-machine-host text-secondary">@m.Hostname</div>
                         }
+                        <div class="text-secondary small">@(string.IsNullOrWhiteSpace(m.LastIp) ? "—" : m.LastIp.Trim())</div>
                     </td>
                     <td class="hd-col-status" data-sort-value="@m.Status">
                         <span class="hd-status-pill" title="@m.Status">

@@ -34,9 +34,13 @@ public class ClientVersionModel(
     [BindProperty]
     public List<string> SelectedHostnames { get; set; } = [];
 
-    public async Task OnGetAsync(CancellationToken ct)
+    public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
+        if (!OpsPartial.IsPartial(Request))
+            return OpsPartial.RedirectToOpsTab(Request, "clients");
+
         await LoadAsync(ct);
+        return Page();
     }
 
     public async Task<IActionResult> OnPostSetPublishedVersionAsync(CancellationToken ct)
@@ -44,20 +48,20 @@ public class ClientVersionModel(
         if (string.IsNullOrWhiteSpace(NewPublishedVersion))
         {
             TempData["Error"] = "Enter a version number (e.g. 3) before saving.";
-            return RedirectToPage();
+            return RedirectToOpsClients();
         }
 
         var simple = VersionCompare.TryGetSimpleVersion(NewPublishedVersion);
         if (simple is null)
         {
             TempData["Error"] = "Enter a valid version (integer, or legacy SemVer which maps to 1).";
-            return RedirectToPage();
+            return RedirectToOpsClients();
         }
 
         var setBy = string.IsNullOrWhiteSpace(User.Identity?.Name) ? "Client Version page" : User.Identity!.Name;
         await publishedVersion.SetAsync(simple.Value.ToString(), setBy, ct);
         TempData["Message"] = $"Published client version set to {simple.Value}. Clients now compare against this.";
-        return RedirectToPage();
+        return RedirectToOpsClients();
     }
 
     public async Task<IActionResult> OnPostDeployAsync(CancellationToken ct)
@@ -65,7 +69,7 @@ public class ClientVersionModel(
         if (SelectedHostnames.Count == 0)
         {
             TempData["Error"] = "Select at least one machine to deploy.";
-            return RedirectToPage();
+            return RedirectToOpsClients();
         }
 
         var (queued, message) = await clientUpdates.QueueUpdatesAsync(SelectedHostnames, ct);
@@ -73,8 +77,11 @@ public class ClientVersionModel(
             TempData["Error"] = message;
         else
             TempData["Message"] = message;
-        return RedirectToPage();
+        return RedirectToOpsClients();
     }
+
+    private static IActionResult RedirectToOpsClients() =>
+        new RedirectResult("/Ops?tab=clients");
 
     private async Task LoadAsync(CancellationToken ct)
     {

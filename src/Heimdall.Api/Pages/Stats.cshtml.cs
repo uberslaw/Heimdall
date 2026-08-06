@@ -39,8 +39,11 @@ public class StatsModel(StatsQueryService stats) : PageModel
     public DateTimeOffset FromUtc { get; private set; }
     public DateTimeOffset ToUtc { get; private set; }
 
-    public async Task OnGetAsync(CancellationToken ct)
+    public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
+        if (!OpsPartial.IsPartial(Request))
+            return OpsPartial.RedirectToOpsTab(Request, "stats");
+
         ScopeOptions = await stats.GetScopeOptionsAsync(ct);
         ResolveDateRange();
 
@@ -50,7 +53,7 @@ public class StatsModel(StatsQueryService stats) : PageModel
         if (kind != StatsScopeKind.All && string.IsNullOrWhiteSpace(ScopeValue))
         {
             Snapshot = null;
-            return;
+            return Page();
         }
 
         Snapshot = await stats.QueryAsync(
@@ -62,6 +65,7 @@ public class StatsModel(StatsQueryService stats) : PageModel
             MinRuntimeMin,
             MaxRuntimeMin,
             ct);
+        return Page();
     }
 
     private void ResolveDateRange()

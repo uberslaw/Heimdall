@@ -38,97 +38,8 @@
     }
 </div>
 
-<div class="row g-4">
-    <div class="col-lg-5">
-        <details class="hd-panel mb-4 hd-collapsible" data-key="existing-lists">
-            <summary class="h5 mb-3">Existing lists <span class="text-secondary small">(@Model.Lists.Count)</span></summary>
-            @if (Model.Lists.Count == 0)
-            {
-                <p class="text-secondary mb-0">No app lists yet.</p>
-            }
-            else
-            {
-                <form method="post" asp-page-handler="ExportSelectedLists" id="lists-export-form">
-                    <div class="hd-existing-lists-wrap">
-                        <table class="hd-table hd-existing-lists-table mb-2">
-                            <thead>
-                                <tr>
-                                    <th class="hd-existing-lists-col-check"><input class="form-check-input" type="checkbox" id="lists-select-all" title="Select all" /></th>
-                                    <th class="hd-existing-lists-col-name">Name</th>
-                                    <th class="hd-existing-lists-col-team">Team</th>
-                                    <th class="hd-existing-lists-col-apps">Apps</th>
-                                    <th class="hd-existing-lists-col-scopes">Scopes</th>
-                                    <th class="hd-existing-lists-col-actions"><span class="visually-hidden">Actions</span></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                            @foreach (var l in Model.Lists)
-                            {
-                                <tr>
-                                    <td class="hd-existing-lists-col-check"><input class="form-check-input lists-row-check" type="checkbox" name="SelectedListIds" value="@l.Id" /></td>
-                                    <td class="hd-existing-lists-col-name" title="@l.Name">
-                                        <span class="hd-existing-lists-name-inner">
-                                            <strong class="hd-existing-lists-truncate">@l.Name</strong>
-                                            @if (l.IsSystem)
-                                            {
-                                                <span class="badge-pill badge-active" title="Synced from classifications; cannot delete">System</span>
-                                            }
-                                            else if (l.IsAutoDiscovered)
-                                            {
-                                                <span class="badge-pill badge-ended">auto</span>
-                                            }
-                                        </span>
-                                    </td>
-                                    <td class="hd-existing-lists-col-team hd-existing-lists-truncate" title="@(l.TeamName ?? "—")">@(l.TeamName ?? "—")</td>
-                                    <td class="hd-existing-lists-col-apps">@l.EntryCount</td>
-                                    <td class="hd-existing-lists-col-scopes">@l.AssignmentCount</td>
-                                    <td class="hd-existing-lists-col-actions">
-                                        <a class="hd-btn hd-btn-silver hd-btn-icon-round"
-                                           asp-page-handler="Edit"
-                                           asp-route-id="@l.Id"
-                                           title="Edit @l.Name"
-                                           aria-label="Edit @l.Name">
-                                            <svg class="hd-btn-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
-                                                <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
-                                            </svg>
-                                            <span class="hd-btn-label">Edit</span>
-                                        </a>
-                                        @if (!l.IsSystem)
-                                        {
-                                            <form method="post" asp-page-handler="DeleteList" class="d-inline">
-                                                <input type="hidden" name="id" value="@l.Id" />
-                                                <button type="submit"
-                                                        class="hd-btn hd-btn-rose hd-btn-icon-round"
-                                                        title="Delete @l.Name"
-                                                        aria-label="Delete @l.Name"
-                                                        onclick="return confirm('Delete app list “@l.Name” (@l.EntryCount apps)? This cannot be undone.');">
-                                                    <svg class="hd-btn-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
-                                                        <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
-                                                        <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
-                                                    </svg>
-                                                    <span class="hd-btn-label">Delete</span>
-                                                </button>
-                                            </form>
-                                        }
-                                    </td>
-                                </tr>
-                            }
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="d-flex flex-wrap gap-2 align-items-center hd-existing-lists-export">
-                        <select class="form-select form-select-sm hd-existing-lists-export-format" name="format">
-                            <option value="csv">App list CSV</option>
-                            <option value="json">App list JSON</option>
-                            <option value="classification-csv">Classification CSV</option>
-                        </select>
-                        <button type="submit" class="hd-btn hd-btn-silver">Export Selected</button>
-                    </div>
-                </form>
-            }
-        </details>
 
-        <details class="hd-panel mb-4 hd-collapsible" data-key="create-list" open="@(Model.EditId is not null)">
+<details class="hd-panel mb-4 hd-collapsible" data-key="create-list">
             <summary class="h5 mb-3">@(Model.EditId is null ? "Create app list" : $"Edit list #{Model.EditId}")</summary>
             <form method="post" asp-page-handler="SaveList">
                 <input type="hidden" asp-for="EditId" />
@@ -153,6 +64,7 @@
                             <option value="@t.Id">@t.Name</option>
                         }
                     </select>
+                    <div class="form-text">Primary team label only. To track or ignore a list on one or more teams, use <a asp-page="/Teams">Teams → App lists by team</a>.</div>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Notes</label>
@@ -172,40 +84,96 @@
             </form>
         </details>
 
-        <details class="hd-panel mb-4 hd-collapsible" data-key="upload">
-            <summary class="h5 mb-3">
-                Upload CSV / JSON
-                <span class="text-secondary" title="Header ProcessName or DisplayName,ProcessName; optional Team, ListName columns. JSON: array of {processName, displayName?, team?, listName?}. Export selected below produces files in this exact format.">ⓘ</span>
-            </summary>
-            <form method="post" asp-page-handler="Upload" enctype="multipart/form-data">
-                <div class="mb-3">
-                    <label class="form-label">Default team (if column omitted)</label>
-                    <select class="form-select" asp-for="DefaultUploadTeamId">
-                        <option value="">— none —</option>
-                        @foreach (var t in Model.Teams)
+<details class="hd-panel mb-4 hd-collapsible" data-key="existing-lists">
+            <summary class="h5 mb-3">Existing lists <span class="text-secondary small">(@Model.Lists.Count)</span></summary>
+            @if (Model.Lists.Count == 0)
+            {
+                <p class="text-secondary mb-0">No app lists yet.</p>
+            }
+            else
+            {
+                @* Export form wraps only the footer — row checkboxes use form="…" so Delete forms are not nested (invalid HTML). *@
+                <div class="hd-existing-lists-wrap">
+                    <table class="hd-table hd-existing-lists-table mb-2">
+                        <thead>
+                            <tr>
+                                <th class="hd-existing-lists-col-check"><input class="form-check-input" type="checkbox" id="lists-select-all" title="Select all" form="lists-export-form" /></th>
+                                <th class="hd-existing-lists-col-name">Name</th>
+                                <th class="hd-existing-lists-col-team">Team</th>
+                                <th class="hd-existing-lists-col-apps">Apps</th>
+                                <th class="hd-existing-lists-col-scopes">Scopes</th>
+                                <th class="hd-existing-lists-col-actions"><span class="visually-hidden">Actions</span></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var l in Model.Lists)
                         {
-                            <option value="@t.Id">@t.Name</option>
+                            <tr>
+                                <td class="hd-existing-lists-col-check"><input class="form-check-input lists-row-check" type="checkbox" name="SelectedListIds" value="@l.Id" form="lists-export-form" /></td>
+                                <td class="hd-existing-lists-col-name" title="@l.Name">
+                                    <span class="hd-existing-lists-name-inner">
+                                        <strong class="hd-existing-lists-truncate">@l.Name</strong>
+                                        @if (l.IsSystem)
+                                        {
+                                            <span class="badge-pill badge-active" title="Synced from classifications; cannot delete">System</span>
+                                        }
+                                        else if (l.IsAutoDiscovered)
+                                        {
+                                            <span class="badge-pill badge-ended">auto</span>
+                                        }
+                                    </span>
+                                </td>
+                                <td class="hd-existing-lists-col-team hd-existing-lists-truncate" title="@(l.TeamName ?? "—")">@(l.TeamName ?? "—")</td>
+                                <td class="hd-existing-lists-col-apps">@l.EntryCount</td>
+                                <td class="hd-existing-lists-col-scopes">@l.AssignmentCount</td>
+                                <td class="hd-existing-lists-col-actions">
+                                    <a class="hd-btn hd-btn-silver hd-btn-icon-round"
+                                       asp-page-handler="Edit"
+                                       asp-route-id="@l.Id"
+                                       title="Edit @l.Name"
+                                       aria-label="Edit @l.Name">
+                                        <svg class="hd-btn-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+                                            <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
+                                        </svg>
+                                        <span class="hd-btn-label">Edit</span>
+                                    </a>
+                                    @if (!l.IsSystem)
+                                    {
+                                        <form method="post" asp-page-handler="DeleteList" class="d-inline">
+                                            <input type="hidden" name="id" value="@l.Id" />
+                                            <button type="submit"
+                                                    class="hd-btn hd-btn-rose hd-btn-icon-round"
+                                                    title="Delete @l.Name"
+                                                    aria-label="Delete @l.Name"
+                                                    onclick="return confirm('Delete app list “@l.Name” (@l.EntryCount apps)? This cannot be undone.');">
+                                                <svg class="hd-btn-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+                                                    <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+                                                    <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+                                                </svg>
+                                                <span class="hd-btn-label">Delete</span>
+                                            </button>
+                                        </form>
+                                    }
+                                </td>
+                            </tr>
                         }
-                    </select>
+                        </tbody>
+                    </table>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">File</label>
-                    <div class="hd-file-picker" data-hd-file-picker>
-                        <label class="hd-btn hd-btn-silver hd-file-picker-label">
-                            Choose File
-                            <input class="hd-file-picker-input" type="file" name="UploadFile" accept=".csv,.json,text/csv,application/json" required
-                                   title="Header ProcessName or DisplayName,ProcessName; optional Team, ListName columns for bulk create." />
-                        </label>
-                        <span class="hd-file-picker-name">No file chosen</span>
+                <form method="post" asp-page-handler="ExportSelectedLists" id="lists-export-form">
+                    <div class="d-flex flex-wrap gap-2 align-items-center hd-existing-lists-export">
+                        <select class="form-select form-select-sm hd-existing-lists-export-format" name="format">
+                            <option value="csv">App list CSV</option>
+                            <option value="json">App list JSON</option>
+                            <option value="classification-csv">Classification CSV</option>
+                        </select>
+                        <button type="submit" class="hd-btn hd-btn-silver">Export Selected</button>
                     </div>
-                </div>
-                <button type="submit" class="hd-btn hd-btn-silver">Upload File</button>
-            </form>
+                </form>
+            }
         </details>
-    </div>
 
-    <div class="col-lg-7">
-        <details class="hd-panel mb-4 hd-collapsible" data-key="apply-scope" open="@string.Equals(Request.Query["section"], "apply", StringComparison.OrdinalIgnoreCase)">
+<details class="hd-panel mb-4 hd-collapsible" data-key="apply-scope">
             <summary class="h5 mb-3">Apply list to scope</summary>
             <form method="post" asp-page-handler="Apply" id="apply-form">
                 <div class="mb-3">
@@ -232,17 +200,17 @@
             </form>
         </details>
 
-        <details class="hd-panel mb-4 hd-collapsible" data-key="machine-focus" id="machine-focus" open="@(Model.Lookup is not null)">
+<details class="hd-panel mb-4 hd-collapsible" data-key="machine-focus" id="machine-focus" open="@(Model.Lookup is not null)">
             <summary class="h5 mb-3">Machine lookup &amp; analysis</summary>
             <form method="post" class="row g-2 align-items-end mb-3" id="machine-lookup-form">
                 <div class="col-md-8">
                     <label class="form-label">Machine</label>
-                    <select class="form-select" asp-for="LookupHostname" required
+                    <select class="form-select font-monospace hd-machine-lookup-select" asp-for="LookupHostname" required
                             onchange="if(this.value){ window.location.href = '@Url.Page("/AppLists")?host=' + encodeURIComponent(this.value) + '#machine-focus'; }">
-                        <option value="">— select —</option>
+                        <option value="">— hostname · friendly name · IP —</option>
                         @foreach (var m in Model.AllMachines)
                         {
-                            <option value="@m.Hostname">@m.Hostname</option>
+                            <option value="@m.Hostname">@AppListsModel.FormatMachineLookupOption(m, Model.MachineOptionHostWidth, Model.MachineOptionFriendlyWidth, Model.MachineOptionIpWidth)</option>
                         }
                     </select>
                 </div>
@@ -495,7 +463,7 @@
                             <p class="small text-secondary">Tracks <em>only</em> the chosen team schema on this machine (discards discovered proposals; disables auto-discovered machine lists).</p>
                             @if (Model.TeamOptions.Count == 0)
                             {
-                                <p class="text-secondary small mb-0">No team-linked app lists yet. Create a list with a Team on the left.</p>
+                                <p class="text-secondary small mb-0">No team-linked app lists yet. Link lists on <a asp-page="/Teams">Teams</a> (App lists by team).</p>
                             }
                             else
                             {
@@ -530,7 +498,9 @@
             }
         </details>
 
-        <details class="hd-panel mb-4 hd-collapsible" data-key="csv-classifications" id="csv-classifications">
+<div class="row g-4">
+    <div class="col-lg-6">
+<details class="hd-panel mb-4 hd-collapsible" data-key="csv-classifications" id="csv-classifications">
             <summary class="h5 mb-3">
                 Bulk Update Software Classifications
                 <span class="text-secondary" title="Export → fill Category/Subcategory/Group in AI → Import proposes suggestions. Approve on Discovery &amp; Classification.">ⓘ</span>
@@ -550,14 +520,14 @@
                 @if (Model.CatalogBlankPathCount > 0)
                 {
                     <span class="text-secondary"> · @Model.CatalogBlankPathCount missing path</span>
-                    <span class="text-secondary"> — <a asp-page="/Discovery" asp-route-blankPathOnly="true">view on Discovery</a> or use <strong>Request Inventory</strong> below</span>
+                    <span class="text-secondary"> — <a asp-page="/Discovery" asp-route-blankPathOnly="true">view on Discovery</a> or use <strong>Request Inventory</strong> in Machine lookup</span>
                 }
                 · <a asp-page="/Discovery">Discovery &amp; Classification</a> to Approve or browse the catalog.
             </p>
             @if (Model.ShowCatalogBackfill)
             {
                 <div class="alert alert-warning py-2 px-3 small mb-2 d-flex flex-wrap align-items-center gap-2">
-                    <span>@Model.CatalogMissingFromDiscoveryCount discovery key(s) are not in the central catalog yet (from ProcessRuns, inventories, and lists). Backfill imports them and merges blank-path / version-folder duplicates where safe.</span>
+                    <span>@Model.CatalogMissingFromDiscoveryCount discovery key(s) are not in the central catalog yet (from ProcessRuns, inventories, and lists). Backfill imports them and merges blank-path / version-folder duplicates where safe. A daily automatic backfill also runs on the API (idempotent — skips duplicates).</span>
                     <form method="post" asp-page-handler="BackfillCatalog" class="d-inline">
                         @if (Model.FocusHostname is not null)
                         {
@@ -598,6 +568,38 @@
                         <button type="submit" class="hd-btn hd-btn-gold w-100">Import CSV</button>
                     </div>
                 </div>
+            </form>
+        </details>
+    </div>
+    <div class="col-lg-6">
+<details class="hd-panel mb-4 hd-collapsible" data-key="upload">
+            <summary class="h5 mb-3">
+                Upload CSV / JSON
+                <span class="text-secondary" title="Header ProcessName or DisplayName,ProcessName; optional Team, ListName columns. JSON: array of {processName, displayName?, team?, listName?}. Export Selected on Existing lists produces files in this exact format.">ⓘ</span>
+            </summary>
+            <form method="post" asp-page-handler="Upload" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <label class="form-label">Default team (if column omitted)</label>
+                    <select class="form-select" asp-for="DefaultUploadTeamId">
+                        <option value="">— none —</option>
+                        @foreach (var t in Model.Teams)
+                        {
+                            <option value="@t.Id">@t.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">File</label>
+                    <div class="hd-file-picker" data-hd-file-picker>
+                        <label class="hd-btn hd-btn-silver hd-file-picker-label">
+                            Choose File
+                            <input class="hd-file-picker-input" type="file" name="UploadFile" accept=".csv,.json,text/csv,application/json" required
+                                   title="Header ProcessName or DisplayName,ProcessName; optional Team, ListName columns for bulk create." />
+                        </label>
+                        <span class="hd-file-picker-name">No file chosen</span>
+                    </div>
+                </div>
+                <button type="submit" class="hd-btn hd-btn-silver">Upload File</button>
             </form>
         </details>
     </div>

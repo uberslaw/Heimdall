@@ -84,6 +84,12 @@ ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
                     }
                 </select>
             </div>
+            <div class="mb-3 form-check">
+                <input class="form-check-input" type="checkbox" asp-for="TeamIsPublicFacing" id="teamPublicFacing" />
+                <label class="form-check-label" for="teamPublicFacing">
+                    Public-facing (machines on this team appear in Staff RDP pool)
+                </label>
+            </div>
             <div class="d-flex gap-2 flex-wrap">
                 <button type="submit" class="btn btn-hd">@(Model.EditingTeamId is null ? "Create" : "Save")</button>
                 @if (Model.EditingTeamId is not null)
@@ -107,6 +113,7 @@ ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
                         <tr>
                             <th>Name</th>
                             <th>Code</th>
+                            <th>Public</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -122,6 +129,16 @@ ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
                                 <strong>@node.Name</strong>
                             </td>
                             <td>@(node.Code ?? "—")</td>
+                            <td>
+                                @if (node.IsPublicFacing)
+                                {
+                                    <span class="badge-pill badge-active">Yes</span>
+                                }
+                                else
+                                {
+                                    <span class="text-secondary">—</span>
+                                }
+                            </td>
                             <td class="text-end text-nowrap">
                                 <a class="btn btn-ghost btn-sm" asp-page="/Teams" asp-route-editTeam="@node.Id">Edit</a>
                                 <form method="post" asp-page-handler="DeleteTeam" class="d-inline"
@@ -302,14 +319,14 @@ ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
     <div class="hd-panel mb-4">
         <h2 class="h5 mb-2">App lists by team</h2>
         <p class="text-secondary small mb-3">
-            Actively Tracking lists appear in the Machines section header. Ignoring lists stay linked but hidden from that header.
+            The same app list can be linked to many teams. Actively Tracking lists appear in the Machines section header for that team; Ignoring lists stay linked but hidden from the header.
             <a asp-page="/AppLists">Customize lists</a>
         </p>
 
-        <form method="post" asp-page-handler="LinkAppList" class="row g-2 align-items-end mb-4">
+        <form method="post" asp-page-handler="LinkAppList" class="row g-2 align-items-end mb-4" id="team-applist-link-form">
             <div class="col-md-4">
                 <label class="form-label small">Team</label>
-                <select class="form-select form-select-sm" name="LinkTeamId" required>
+                <select class="form-select form-select-sm" name="LinkTeamId" id="link-team-id" required>
                     @foreach (var t in Model.TeamOptions)
                     {
                         <option value="@t.Id">@t.Label</option>
@@ -318,12 +335,8 @@ ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
             </div>
             <div class="col-md-4">
                 <label class="form-label small">App list</label>
-                <select class="form-select form-select-sm" name="LinkAppListId" required>
+                <select class="form-select form-select-sm" name="LinkAppListId" id="link-applist-id" required>
                     <option value="">— select —</option>
-                    @foreach (var a in Model.UnlinkedAppLists)
-                    {
-                        <option value="@a.Id">@a.Name (@a.EntryCount)</option>
-                    }
                 </select>
             </div>
             <div class="col-auto">
@@ -354,7 +367,14 @@ ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
                             <li class="hd-team-app-item mb-2">
                                 <div class="d-flex flex-wrap gap-2 align-items-center">
                                     <a asp-page="/AppLists" asp-route-section="create" class="hd-team-app-name text-truncate" title="@a.Name">@a.Name</a>
+                                    <form method="post" asp-page-handler="SetAppListExcluded" class="d-inline">
+                                        <input type="hidden" name="LinkTeamId" value="@block.TeamId" />
+                                        <input type="hidden" name="AppListId" value="@a.Id" />
+                                        <input type="hidden" name="excluded" value="true" />
+                                        <button type="submit" class="btn btn-ghost btn-sm py-0">Ignore</button>
+                                    </form>
                                     <form method="post" asp-page-handler="UnlinkAppList" class="d-inline">
+                                        <input type="hidden" name="LinkTeamId" value="@block.TeamId" />
                                         <input type="hidden" name="AppListId" value="@a.Id" />
                                         <button type="submit" class="btn btn-ghost btn-sm py-0">Unlink</button>
                                     </form>
@@ -387,11 +407,13 @@ ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
                                 <div class="d-flex flex-wrap gap-2 align-items-center">
                                     <a asp-page="/AppLists" class="hd-team-app-name text-truncate" title="@a.Name">@a.Name</a>
                                     <form method="post" asp-page-handler="SetAppListExcluded" class="d-inline">
+                                        <input type="hidden" name="LinkTeamId" value="@block.TeamId" />
                                         <input type="hidden" name="AppListId" value="@a.Id" />
                                         <input type="hidden" name="excluded" value="false" />
                                         <button type="submit" class="btn btn-ghost btn-sm py-0">Activate</button>
                                     </form>
                                     <form method="post" asp-page-handler="UnlinkAppList" class="d-inline">
+                                        <input type="hidden" name="LinkTeamId" value="@block.TeamId" />
                                         <input type="hidden" name="AppListId" value="@a.Id" />
                                         <button type="submit" class="btn btn-ghost btn-sm py-0">Unlink</button>
                                     </form>
@@ -611,6 +633,40 @@ ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
                 enterEdit();
             }
         } catch (ex) { }
+    })();
+
+    (function () {
+        var lists = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(
+            Model.LinkableAppLists.Select(a => new { id = a.Id, name = a.Name, entryCount = a.EntryCount })));
+        var linkedByTeam = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(
+            Model.LinkedAppListIdsByTeam.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value)));
+        var teamSel = document.getElementById('link-team-id');
+        var listSel = document.getElementById('link-applist-id');
+        if (!teamSel || !listSel) return;
+
+        function populate() {
+            var tid = String(teamSel.value);
+            var linked = linkedByTeam[tid] || [];
+            var linkedSet = {};
+            for (var i = 0; i < linked.length; i++) linkedSet[linked[i]] = true;
+            var prev = listSel.value;
+            listSel.innerHTML = '';
+            var placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = '— select —';
+            listSel.appendChild(placeholder);
+            lists.forEach(function (a) {
+                if (linkedSet[a.id]) return;
+                var opt = document.createElement('option');
+                opt.value = String(a.id);
+                opt.textContent = a.name + ' (' + a.entryCount + ')';
+                listSel.appendChild(opt);
+            });
+            if (prev && !linkedSet[parseInt(prev, 10)]) listSel.value = prev;
+        }
+
+        teamSel.addEventListener('change', populate);
+        populate();
     })();
     </script>
 }

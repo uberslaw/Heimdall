@@ -12,17 +12,22 @@
 // TuflowRunService.QueueStartAsync, which itself already checks IsFloodEnrolledAsync before creating one).
 
 using Heimdall.Api.Services;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Heimdall.Api.Pages;
 
-public class FleetSimProgressModel(TuflowRunService runs) : PageModel
+public class FleetSimProgressModel(TuflowRunService runs, FloodAccessGuard flood) : PageModel
 {
     public IReadOnlyList<FleetSimProgressRow> Rows { get; private set; } = [];
 
-    public async Task OnGetAsync(CancellationToken ct)
+    public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
+        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+            return denied;
+
         Rows = await runs.GetFleetProgressAsync(ct);
+        return Page();
     }
 
     public static string FormatSpan(TimeSpan span) => span.TotalHours >= 1

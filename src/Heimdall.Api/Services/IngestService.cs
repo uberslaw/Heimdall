@@ -1467,6 +1467,43 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE AppLists ADD COLUMN SystemKey TEXT NULL");
         await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_AppLists_SystemKey ON AppLists(SystemKey) WHERE SystemKey IS NOT NULL");
 
+        // Many-to-many team ↔ app list apply/ignore links (replaces sole use of AppLists.TeamId for Teams page)
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS TeamAppListLinks (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                TeamId INTEGER NOT NULL,
+                AppListId INTEGER NOT NULL,
+                IsExcluded INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (TeamId) REFERENCES Teams(Id) ON DELETE CASCADE,
+                FOREIGN KEY (AppListId) REFERENCES AppLists(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_TeamAppListLinks_TeamId_AppListId ON TeamAppListLinks(TeamId, AppListId)");
+        // Idempotent backfill from legacy AppLists.TeamId / IsTeamExcluded
+        await TryExec(db, """
+            INSERT OR IGNORE INTO TeamAppListLinks (TeamId, AppListId, IsExcluded)
+            SELECT TeamId, Id, COALESCE(IsTeamExcluded, 0)
+            FROM AppLists
+            WHERE TeamId IS NOT NULL
+            """);
+
+        // Phase 1 — Staff RDP pool + booking
+        await TryExec(db, "ALTER TABLE Teams ADD COLUMN IsPublicFacing INTEGER NOT NULL DEFAULT 0");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS MachineBookings (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MachineId INTEGER NOT NULL,
+                BookedByEmail TEXT NOT NULL,
+                StartUtc TEXT NOT NULL,
+                EndUtc TEXT NOT NULL,
+                CreatedUtc TEXT NOT NULL,
+                Notes TEXT NULL,
+                FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_MachineBookings_MachineId_StartUtc_EndUtc ON MachineBookings(MachineId, StartUtc, EndUtc)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_MachineBookings_BookedByEmail ON MachineBookings(BookedByEmail)");
+
         await EnsureCanonicalTeamsAsync(db);
     }
 

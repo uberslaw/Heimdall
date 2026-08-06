@@ -161,3 +161,8 @@ Heimdall should treat the **batch path** (and optional stop script) as the allow
 - Multi-host farms / pools: one job → one host vs enqueue across a pool
 - Does **Start** mean “run the whole batch as today” or “enqueue the next scenario / one instance under the cap”?
 - Credentials and network drives (`P:\` paths): agent service account must see the same shares the interactive modelling sessions use
+
+## Free space / folder tree-size view
+
+- On-demand agent scan of free disk space and large folder trees (MFT-style or throttled walk) — not always-on sampling
+- Surfaces in Ops / machine detail when requested; avoid continuous filesystem walking on every heartbeat

@@ -75,11 +75,15 @@ public class CostModel(HeimdallDbContext db) : PageModel
     [BindProperty(SupportsGet = true)]
     public string? Warranty { get; set; }
 
-    public async Task OnGetAsync(int? edit)
+    public async Task<IActionResult> OnGetAsync(int? edit)
     {
+        if (!OpsPartial.IsPartial(Request))
+            return OpsPartial.RedirectToOpsTab(Request, "cost");
+
         await LoadAsync();
         if (edit is int id)
             await LoadEditAsync(id);
+        return Page();
     }
 
     public async Task<IActionResult> OnPostSaveAsync()
@@ -87,14 +91,14 @@ public class CostModel(HeimdallDbContext db) : PageModel
         if (EditingMachineId is not int id)
         {
             TempData["Error"] = "No machine selected.";
-            return RedirectToPage();
+            return RedirectToOpsCost();
         }
 
         var machine = await db.Machines.FirstOrDefaultAsync(m => m.Id == id);
         if (machine is null)
         {
             TempData["Error"] = "Machine not found.";
-            return RedirectToPage();
+            return RedirectToOpsCost();
         }
 
         machine.PurchaseCost = PurchaseCost;
@@ -119,7 +123,7 @@ public class CostModel(HeimdallDbContext db) : PageModel
 
         await db.SaveChangesAsync();
         TempData["Message"] = $"Saved cost/hardware for {machine.Hostname}.";
-        return RedirectToPage(new { edit = id, q = Q, warranty = Warranty });
+        return RedirectToOpsCost(id);
     }
 
     public async Task<IActionResult> OnPostClearOverrideAsync(int machineId)
@@ -128,13 +132,22 @@ public class CostModel(HeimdallDbContext db) : PageModel
         if (machine is null)
         {
             TempData["Error"] = "Machine not found.";
-            return RedirectToPage();
+            return RedirectToOpsCost();
         }
 
         machine.HardwareManualOverride = false;
         await db.SaveChangesAsync();
         TempData["Message"] = $"Cleared manual override on {machine.Hostname} — agent may fill blank hardware fields on next heartbeat.";
-        return RedirectToPage(new { edit = machineId, q = Q, warranty = Warranty });
+        return RedirectToOpsCost(machineId);
+    }
+
+    private IActionResult RedirectToOpsCost(int? edit = null)
+    {
+        var q = new List<string> { "tab=cost" };
+        if (edit is int id) q.Add("edit=" + id);
+        if (!string.IsNullOrWhiteSpace(Q)) q.Add("q=" + Uri.EscapeDataString(Q));
+        if (!string.IsNullOrWhiteSpace(Warranty)) q.Add("warranty=" + Uri.EscapeDataString(Warranty));
+        return new RedirectResult("/Ops?" + string.Join("&", q));
     }
 
     private async Task LoadEditAsync(int id)
