@@ -2899,7 +2899,7 @@ details.hd-panel[data-key="existing-lists"] {
   min-width: 10rem;
 }
 
-/* 200% of prior summary (Bootstrap .small ≈ 0.875rem → 1.75rem; dots 0.55rem → 1.1rem). */
+/* Period-card summary: labels above, numbers centered under each heading. */
 .hd-machines-summary {
   margin: 0;
   flex: 1 1 auto;
@@ -2908,21 +2908,20 @@ details.hd-panel[data-key="existing-lists"] {
   justify-content: flex-end;
   align-items: flex-start;
   gap: 1rem 1.75rem;
-  text-align: left;
+  text-align: center;
   white-space: normal;
 }
 
 .hd-machines-stat {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 0.15rem;
   min-width: 4.25rem;
+  text-align: center;
 }
 
 .hd-machines-stat-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
   color: var(--hd-gold, var(--hd-accent));
   font-size: 0.78rem;
   font-weight: 600;
@@ -2931,18 +2930,18 @@ details.hd-panel[data-key="existing-lists"] {
   line-height: 1.2;
 }
 
+/* Active / Idle / Off labels use former status-dot colours (no dots). */
+.hd-machines-stat-label.hd-status-active { color: #3db8a0; }
+.hd-machines-stat-label.hd-status-idle { color: #d4a017; }
+.hd-machines-stat-label.hd-status-off { color: #c45c5c; }
+
 .hd-machines-stat-value {
   color: var(--hd-silver, #c8ced8);
   font-size: 1.5rem;
   font-weight: 500;
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
-}
-
-.hd-machines-summary .hd-status-dot {
-  width: 0.7rem;
-  height: 0.7rem;
-  flex-shrink: 0;
+  text-align: center;
 }
 
 .hd-machines-panel {
@@ -3044,22 +3043,11 @@ details.hd-panel[data-key="existing-lists"] {
   font-size: 0.78rem;
 }
 
-/* Summary count dots (Computers header) — kept as color legend. */
-.hd-status-dot {
-  display: inline-block;
-  width: 0.55rem;
-  height: 0.55rem;
-  border-radius: 50%;
-  flex: 0 0 0.55rem;
-}
-
-.hd-status-dot.hd-status-active { background: #3db8a0; }
-.hd-status-dot.hd-status-idle { background: #d4a017; }
-.hd-status-dot.hd-status-off { background: #c45c5c; }
-
-/* Computers table: colored status text (no dots), sized like machine name. */
+/* Computers table: colored status text (no dots), same size/weight as machine name. */
 .hd-machines-table .hd-status-text {
+  font-size: 1em;
   font-weight: 600;
+  line-height: inherit;
   color: var(--hd-silver, #c8ced8);
 }
 
