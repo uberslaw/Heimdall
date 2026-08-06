@@ -267,7 +267,7 @@
                 <p class="small font-monospace">@(Model.Lookup.MergedProcesses.Count == 0 ? "—" : string.Join(", ", Model.Lookup.MergedProcesses))</p>
 
                 <hr />
-                <h3 class="h6 mb-2">Team apps</h3>
+                <h3 class="h6 mb-2" id="team-apps">Team apps</h3>
                 <p class="small text-secondary mb-3">
                     Find team applications on this machine: Specialization list overlay (grey = not installed here),
                     plus inventory that is Spec or not on any app list. Search path/exe, then add to a list, track, remove from Spec, or ignore.
@@ -277,7 +277,9 @@
                     <input type="search" class="form-control form-control-sm" id="team-apps-keyword" placeholder="Filter both tables…" autocomplete="off" />
                 </div>
 
-                var teamListOptions = Model.EditableAppLists;
+                @{
+                    var teamListOptions = Model.EditableAppLists;
+                }
                 <form method="post" id="team-apps-form" class="mb-4">
                     <input type="hidden" name="AnalyzeHostname" value="@Model.FocusHostname" />
                     <input type="hidden" name="LookupHostname" value="@Model.FocusHostname" />
