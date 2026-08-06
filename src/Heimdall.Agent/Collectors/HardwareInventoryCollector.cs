@@ -259,6 +259,49 @@ public static class HardwareInventoryCollector
         }
     }
 
+    /// <summary>Cheap per-upload logical disk free/used (fixed local drives only).</summary>
+    public static IReadOnlyList<Heimdall.Shared.Contracts.DiskVolumeDto> TryCollectVolumes()
+    {
+        try
+        {
+            var list = new List<Heimdall.Shared.Contracts.DiskVolumeDto>();
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT DeviceID, VolumeName, Size, FreeSpace FROM Win32_LogicalDisk WHERE DriveType = 3");
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                var id = obj["DeviceID"]?.ToString()?.Trim();
+                if (string.IsNullOrWhiteSpace(id)) continue;
+                var size = ToUInt64(obj["Size"]);
+                var free = ToUInt64(obj["FreeSpace"]);
+                if (size == 0) continue;
+                var totalGb = Math.Round(size / (1024.0 * 1024.0 * 1024.0), 1);
+                var freeGb = Math.Round(free / (1024.0 * 1024.0 * 1024.0), 1);
+                list.Add(new Heimdall.Shared.Contracts.DiskVolumeDto
+                {
+                    Name = id.TrimEnd('\\'),
+                    Label = Clean(obj["VolumeName"]?.ToString()),
+                    TotalGb = totalGb,
+                    FreeGb = freeGb
+                });
+            }
+
+            return list
+                .OrderBy(v => v.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static ulong ToUInt64(object? value)
+    {
+        if (value is null) return 0;
+        if (value is ulong u) return u;
+        return ulong.TryParse(value.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var p) ? p : 0;
+    }
+
     private static string? TryGpuNames()
     {
         try

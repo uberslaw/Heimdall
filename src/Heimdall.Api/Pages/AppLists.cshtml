@@ -277,9 +277,7 @@
                     <input type="search" class="form-control form-control-sm" id="team-apps-keyword" placeholder="Filter both tables…" autocomplete="off" />
                 </div>
 
-                @{
-                    var teamListOptions = Model.EditableAppLists;
-                }
+                var teamListOptions = Model.EditableAppLists;
                 <form method="post" id="team-apps-form" class="mb-4">
                     <input type="hidden" name="AnalyzeHostname" value="@Model.FocusHostname" />
                     <input type="hidden" name="LookupHostname" value="@Model.FocusHostname" />

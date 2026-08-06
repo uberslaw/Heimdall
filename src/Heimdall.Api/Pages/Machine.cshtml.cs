@@ -1,17 +1,26 @@
+using System.Text.Json;
+using Heimdall.Api.Data;
 using Heimdall.Api.Services;
 using Heimdall.Shared.Contracts;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Pages;
 
 public class MachineModel(
+    HeimdallDbContext db,
     StatsQueryService stats,
     AppListService appLists,
     ConfigService config,
     TuflowRunService tuflowRuns,
     FloodAccessGuard flood) : PageModel
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     [BindProperty(SupportsGet = true)]
     public string? Hostname { get; set; }
 
@@ -38,6 +47,11 @@ public class MachineModel(
     public AppListService.MachineAppListsView? AppListsView { get; private set; }
     public IReadOnlyList<AppListService.AppListPickerRow> AppListPicker { get; private set; } = [];
     public IReadOnlyList<string> MachineExcludedProcesses { get; private set; } = [];
+
+    public bool PendingInventory { get; private set; }
+    public DateTimeOffset? InventoryCollectedUtc { get; private set; }
+    public IReadOnlyList<DiskVolumeDto> DiskVolumes { get; private set; } = [];
+    public DateTimeOffset? DiskVolumesUtc { get; private set; }
 
     /// <summary>Null-if-not-Flood-enrolled — the .cshtml hides the whole TUFLOW panel when this is null
     /// or FloodEnrolled is false. See TuflowRunService.GetMachineViewAsync.</summary>
@@ -73,6 +87,29 @@ public class MachineModel(
     {
         await LoadAsync(ct);
         return Page();
+    }
+
+    public async Task<IActionResult> OnPostRequestInventoryAsync(CancellationToken ct)
+    {
+        var host = Hostname?.Trim();
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            TempData["Error"] = "Missing hostname.";
+            return RedirectToPage("/Index");
+        }
+
+        try
+        {
+            await appLists.RequestAgentInventoryAsync(host, ct);
+            TempData["Message"] =
+                $"Full process inventory requested for {host}. Agent picks this up on next config refresh (~5 min), then uploads on next heartbeat (~1 min).";
+        }
+        catch (Exception ex)
+        {
+            TempData["Error"] = ex.Message;
+        }
+
+        return RedirectToMachine(host);
     }
 
     public async Task<IActionResult> OnPostApplyAppListAsync(CancellationToken ct)
@@ -162,6 +199,30 @@ public class MachineModel(
         CanAccessFlood = flood.CanAccessFlood(HttpContext);
         if (CanAccessFlood)
             Tuflow = await tuflowRuns.GetMachineViewAsync(host, ct);
+
+        var machine = await db.Machines.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Hostname == host, ct);
+        if (machine is not null)
+        {
+            PendingInventory = machine.PendingAppAnalysis;
+            InventoryCollectedUtc = machine.InventoryCollectedUtc;
+            DiskVolumesUtc = machine.DiskVolumesUtc;
+            DiskVolumes = DeserializeVolumes(machine.DiskVolumesJson);
+        }
+    }
+
+    private static IReadOnlyList<DiskVolumeDto> DeserializeVolumes(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+        try
+        {
+            return JsonSerializer.Deserialize<List<DiskVolumeDto>>(json, JsonOptions) ?? [];
+        }
+        catch
+        {
+            return [];
+        }
     }
 
     private IActionResult RedirectToMachine(string? host) =>
