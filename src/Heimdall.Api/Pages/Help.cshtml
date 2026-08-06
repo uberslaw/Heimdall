@@ -10,7 +10,7 @@
 <nav class="hd-panel mb-4" aria-label="Help sections">
     <div class="d-flex flex-wrap gap-2">
         <a class="btn btn-ghost btn-sm" href="#fleet">Fleet</a>
-        <a class="btn btn-ghost btn-sm" href="#machines">Machines</a>
+        <a class="btn btn-ghost btn-sm" href="#machines">Computers</a>
         <a class="btn btn-ghost btn-sm" href="#applications">Application Usage</a>
         <a class="btn btn-ghost btn-sm" href="#app-lists">App lists</a>
         <a class="btn btn-ghost btn-sm" href="#app-list-changelog">App list changelog</a>
@@ -45,14 +45,15 @@
 </section>
 
 <section id="machines" class="hd-panel mb-4 hd-help-section">
-    <h2 class="h5">Machines</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> fleet list by team — status and utilisation at a glance (Fleet → All machines).</p>
+    <h2 class="h5">Computers</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> fleet list by team — status and utilisation at a glance (Fleet → All computers).</p>
     <ol class="small mb-0">
-        <li>Machines are grouped under <strong>team section headings</strong>. Active app-list names for that team appear beside the heading.</li>
+        <li>Computers are grouped under <strong>team section headings</strong>. Active app-list names for that team appear beside the heading.</li>
+        <li>Summary counts (Computers / Active / Idle / Off) sit beside the Period control — gold labels with status dots, silver numbers underneath. Click any column header to sort asc/desc.</li>
         <li><strong>Status</strong> (5‑minute check-in): green Active = online with a non-disconnected session; yellow Idle = online, no active session; red Off = no recent check-in.</li>
         <li><strong>Period</strong> (Today / 24h / 5d / 7d / 30d / All) sets Active / Passive / Free % and GPU·CPU·IO columns. Click an Active/Passive/Free cell to cycle that row’s period.</li>
         <li>Active % is non-disconnected session time over the calendar window. Passive and hardware totals need fleet samples (Historical Dashboard enrollment today); otherwise they show —.</li>
-        <li>Name links to machine detail. Assign teams and app lists under <a asp-page="/Teams">Admin → Teams</a>.</li>
+        <li>Name links to computer detail. Assign teams and app lists under <a asp-page="/Teams">Admin → Teams</a>.</li>
         <li>Sessions live under <a asp-page="/Fleet" asp-route-tab="sessions">Fleet → Sessions</a>.</li>
     </ol>
 </section>

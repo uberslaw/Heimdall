@@ -15,7 +15,7 @@
 }
 
 <p class="hd-meta-line mb-2">
-    <a asp-page="/Index" asp-route-range="@Model.Range">← Machines</a>
+    <a asp-page="/Index" asp-route-range="@Model.Range">← Computers</a>
     @if (d is not null)
     {
         <span> · </span>
@@ -39,7 +39,7 @@
 @if (string.IsNullOrWhiteSpace(Model.Hostname))
 {
     <div class="hd-panel">
-        <p class="text-secondary mb-0">No hostname specified. Pick a machine from the <a asp-page="/Index">Machines</a> list.</p>
+        <p class="text-secondary mb-0">No hostname specified. Pick a computer from the <a asp-page="/Index">Computers</a> list.</p>
     </div>
 }
 else if (Model.HostNotFound)

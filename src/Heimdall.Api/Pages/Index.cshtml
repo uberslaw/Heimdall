@@ -2,13 +2,13 @@
 @model IndexModel
 @using Heimdall.Api.Services
 @{
-    ViewData["Title"] = "Machines";
+    ViewData["Title"] = "Computers";
     if (OpsPartial.IsPartial(ViewContext.HttpContext.Request))
         Layout = null;
 }
 
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
-    <h1 class="hd-title mb-1">Machines</h1>
+    <h1 class="hd-title mb-1">Computers</h1>
     <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="machines">Help</a>
 </div>
 
@@ -30,13 +30,33 @@
                 }
             </select>
         </div>
-        <p class="hd-machines-summary text-secondary">
-            @Model.MachineCount machines ·
-            <span class="hd-status-dot hd-status-active" aria-hidden="true"></span> @Model.ActiveCount Active ·
-            <span class="hd-status-dot hd-status-idle" aria-hidden="true"></span> @Model.IdleCount Idle ·
-            <span class="hd-status-dot hd-status-off" aria-hidden="true"></span> @Model.OffCount Off
-            · period <strong>@Model.PeriodLabel</strong>
-        </p>
+        <div class="hd-machines-summary" role="group" aria-label="Computer counts">
+            <div class="hd-machines-stat">
+                <div class="hd-machines-stat-label">Computers</div>
+                <div class="hd-machines-stat-value">@Model.MachineCount</div>
+            </div>
+            <div class="hd-machines-stat">
+                <div class="hd-machines-stat-label">
+                    Active
+                    <span class="hd-status-dot hd-status-active" aria-hidden="true"></span>
+                </div>
+                <div class="hd-machines-stat-value">@Model.ActiveCount</div>
+            </div>
+            <div class="hd-machines-stat">
+                <div class="hd-machines-stat-label">
+                    Idle
+                    <span class="hd-status-dot hd-status-idle" aria-hidden="true"></span>
+                </div>
+                <div class="hd-machines-stat-value">@Model.IdleCount</div>
+            </div>
+            <div class="hd-machines-stat">
+                <div class="hd-machines-stat-label">
+                    Off
+                    <span class="hd-status-dot hd-status-off" aria-hidden="true"></span>
+                </div>
+                <div class="hd-machines-stat-value">@Model.OffCount</div>
+            </div>
+        </div>
     </div>
 </form>
 
@@ -52,24 +72,24 @@ else
     <table class="hd-table hd-machines-table hd-sortable" id="machines-table" data-period="@Model.Period">
         <thead>
             <tr>
-                <th class="hd-col-name" data-sort="text">Name</th>
-                <th class="hd-col-status" data-sort="text">Status</th>
-                <th class="hd-col-user" data-sort="text">Last user</th>
-                <th class="hd-col-pct" data-sort="num" title="Click a cell to cycle period for that row">Active</th>
-                <th class="hd-col-pct" data-sort="num">Passive</th>
-                <th class="hd-col-pct" data-sort="num">Free</th>
-                <th class="hd-col-hw" data-sort="num">GPU h</th>
-                <th class="hd-col-hw" data-sort="num">CPU h</th>
-                <th class="hd-col-io" data-sort="num">Dr</th>
-                <th class="hd-col-io" data-sort="num">Dw</th>
-                <th class="hd-col-io" data-sort="num">NTx</th>
-                <th class="hd-col-io" data-sort="num">NRx</th>
+                <th class="hd-col-name" data-sort="text" scope="col" title="Sort">Name</th>
+                <th class="hd-col-status" data-sort="text" scope="col" title="Sort">Status</th>
+                <th class="hd-col-user" data-sort="text" scope="col" title="Sort">Last user</th>
+                <th class="hd-col-pct" data-sort="num" scope="col" title="Sort — click a cell to cycle period for that row">Active</th>
+                <th class="hd-col-pct" data-sort="num" scope="col" title="Sort">Passive</th>
+                <th class="hd-col-pct" data-sort="num" scope="col" title="Sort">Free</th>
+                <th class="hd-col-hw" data-sort="num" scope="col" title="Sort">GPU h</th>
+                <th class="hd-col-hw" data-sort="num" scope="col" title="Sort">CPU h</th>
+                <th class="hd-col-io" data-sort="num" scope="col" title="Sort">Dr</th>
+                <th class="hd-col-io" data-sort="num" scope="col" title="Sort">Dw</th>
+                <th class="hd-col-io" data-sort="num" scope="col" title="Sort">NTx</th>
+                <th class="hd-col-io" data-sort="num" scope="col" title="Sort">NRx</th>
             </tr>
         </thead>
         <tbody>
         @foreach (var teamSection in Model.Sections)
         {
-            <tr class="hd-team-section">
+            <tr class="hd-team-section" data-team-section="@teamSection.TeamName">
                 <td colspan="12">
                     <span class="hd-team-name">@teamSection.TeamName</span>
                     @if (!string.IsNullOrWhiteSpace(teamSection.AppsShort))
@@ -118,10 +138,67 @@ else
 }
 </div>
 
-@section Scripts {
-<script src="~/js/hd-table.js" asp-append-version="true"></script>
+@* Inline (not @section) so Fleet partial fetch still runs these scripts. *@
 <script>
 (() => {
+  const table = document.getElementById('machines-table');
+  if (table) {
+    const headers = [...table.querySelectorAll('thead th[data-sort]')];
+    headers.forEach((th, colIdx) => {
+      if (th.dataset.sortBound === 'true') return;
+      th.dataset.sortBound = 'true';
+      th.style.cursor = 'pointer';
+      th.addEventListener('click', () => {
+        const type = th.dataset.sort;
+        const tbody = table.tBodies[0];
+        if (!tbody) return;
+        const sectionHeaders = new Map();
+        tbody.querySelectorAll('tr.hd-team-section').forEach((tr) => {
+          sectionHeaders.set(tr.dataset.teamSection || '', tr);
+        });
+        const machineRows = [...tbody.querySelectorAll('tr.hd-machine-row')];
+        const asc = th.dataset.dir !== 'asc';
+        headers.forEach((h) => {
+          h.dataset.dir = '';
+          h.classList.remove('sorted-asc', 'sorted-desc');
+        });
+        th.dataset.dir = asc ? 'asc' : 'desc';
+        th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
+
+        const cellVal = (row) => {
+          const cell = row.children[colIdx];
+          let v = cell?.dataset.sortValue ?? cell?.textContent ?? '';
+          if (type === 'num' || type === 'date') {
+            v = parseFloat(v);
+            return Number.isNaN(v) ? -Infinity : v;
+          }
+          return String(v).toLowerCase();
+        };
+        machineRows.sort((a, b) => {
+          const va = cellVal(a);
+          const vb = cellVal(b);
+          if (typeof va === 'number' && typeof vb === 'number')
+            return asc ? va - vb : vb - va;
+          return asc
+            ? String(va).localeCompare(String(vb))
+            : String(vb).localeCompare(String(va));
+        });
+
+        tbody.replaceChildren();
+        const written = new Set();
+        machineRows.forEach((row) => {
+          const section = row.dataset.sortSection || '';
+          if (!written.has(section)) {
+            written.add(section);
+            const header = sectionHeaders.get(section);
+            if (header) tbody.appendChild(header);
+          }
+          tbody.appendChild(row);
+        });
+      });
+    });
+  }
+
   const periods = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(
       MachineUtilisationService.PeriodOptions.Select(p => p.Key).ToList()));
   function nextPeriod(cur) {
@@ -131,16 +208,16 @@ else
   async function refreshRow(row, period) {
     const id = row.dataset.machineId;
     if (!id) return;
-    const url = new URL(window.location.pathname, window.location.origin);
+    const url = new URL('/Index', window.location.origin);
     url.searchParams.set('handler', 'Util');
     url.searchParams.set('machineId', id);
     url.searchParams.set('period', period);
+    url.searchParams.set('partial', '1');
     const res = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
     if (!res.ok) return;
     const u = await res.json();
     row.dataset.period = u.period;
     const cells = row.querySelectorAll('td');
-    // name, status, user, active, passive, free, gpu, cpu, dr, dw, ntx, nrx
     const map = [
       [3, u.active, u.activeSort, u.periodLabel],
       [4, u.passive, u.passiveSort, u.periodLabel],
@@ -160,7 +237,7 @@ else
       if (tip) td.title = 'Period ' + tip + ' — click to cycle';
     });
   }
-  document.querySelectorAll('.hd-util-cycle').forEach((cell) => {
+  document.querySelectorAll('#machines-table .hd-util-cycle').forEach((cell) => {
     cell.style.cursor = 'pointer';
     cell.addEventListener('click', () => {
       const row = cell.closest('tr');
@@ -171,4 +248,3 @@ else
   });
 })();
 </script>
-}
