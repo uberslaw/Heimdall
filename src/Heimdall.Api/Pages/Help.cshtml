@@ -83,6 +83,16 @@
                 <li><em>Request Inventory</em> (silver) — agent uploads every running process on its next cycle (~5 min + ~1 min upload).</li>
                 <li>Selecting a different machine reloads this section automatically.</li>
                 <li>Inventory moves: <em>Move Core</em> / <em>Move SOE</em> / <em>Move Spec</em>; <em>Export Selected</em> for checked rows.</li>
+                <li>
+                    <strong>Team apps</strong> (after a host is selected) — machine-centric Specialization / team hunting:
+                    <ul>
+                        <li><em>Specialization on this machine</em> — every entry on the global Spec system list; rows not found on this host are greyed out.</li>
+                        <li><em>On machine — Spec or unlisted</em> — inventory that is Specialization or not in any app list (good place to find team tools).</li>
+                        <li>Search filters both tables by process name or path.</li>
+                        <li>Select rows, pick a target (non-system) list, then <em>Add to list</em> or <em>Track</em> (add + apply list to this machine). Optional checkbox controls assign-on-add.</li>
+                        <li><em>Remove Spec</em> clears Specialization classification (and re-syncs the Spec system list). <em>Ignore</em> marks the process Ignored in the Discovery catalog so it drops out of pending noise.</li>
+                    </ul>
+                </li>
                 <li>Proposals: <em>Approve All</em> / <em>Approve Selected</em> (gold), <em>Dismiss All</em> (rose).</li>
                 <li><em>Clear Noise</em> (rose) strips Core Windows &amp; SOE from an auto-discovered list.</li>
             </ul>

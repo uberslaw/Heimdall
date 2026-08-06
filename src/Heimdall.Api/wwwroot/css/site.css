@@ -1313,6 +1313,16 @@ table.hd-sortable th.sorted-desc::after {
   opacity: 0.55;
 }
 
+.hd-row-absent td {
+  opacity: 0.45;
+  color: var(--hd-muted);
+}
+
+.hd-row-absent td strong {
+  font-weight: 500;
+  color: var(--hd-muted);
+}
+
 .hd-meta-line {
   color: var(--hd-muted);
   font-size: 0.88rem;

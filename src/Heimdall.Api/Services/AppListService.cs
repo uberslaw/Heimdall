@@ -1276,4 +1276,202 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
     public record AppListPickerRow(int Id, string Name, int EntryCount);
     public record MachineAppListsView(string Hostname, IReadOnlyList<ActiveAppListInfo> ActiveLists, IReadOnlyList<string> MergedProcesses, AppAnalysisStatus AnalysisStatus, IReadOnlyList<ProposedApp> PendingProposals);
     public record TeamAppListOption(int AppListId, string ListName, string? TeamName, int EntryCount, bool MatchesMachineUsers, IReadOnlyList<string> ProcessNames);
+
+    public record SpecOverlayRow(
+        string ProcessName,
+        string? DisplayName,
+        bool OnMachine,
+        string? ExecutablePath);
+
+    public record TeamCandidateRow(
+        string ProcessName,
+        string DisplayName,
+        string? ExecutablePath,
+        AppGroup Group,
+        bool InAnyAppList,
+        InventoryStatus Status);
+
+    /// <summary>Specialization system list entries with presence on the given host.</summary>
+    public async Task<IReadOnlyList<SpecOverlayRow>> GetSpecializationOverlayAsync(string hostname, CancellationToken ct)
+    {
+        var inventory = await GetMachineInventoryAsync(hostname, ct);
+        var onMachine = inventory.ToDictionary(
+            r => r.ProcessName,
+            r => r.ExecutablePath,
+            StringComparer.OrdinalIgnoreCase);
+
+        await SyncSystemListsFromClassificationsAsync(ct);
+        var specList = await db.AppLists.AsNoTracking()
+            .Include(a => a.Entries)
+            .FirstOrDefaultAsync(a => a.SystemKey == "Specialization", ct);
+        if (specList is null)
+            return [];
+
+        return specList.Entries
+            .OrderBy(e => e.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .Select(e =>
+            {
+                var present = onMachine.TryGetValue(e.ProcessName, out var path);
+                return new SpecOverlayRow(
+                    e.ProcessName,
+                    e.DisplayName,
+                    present,
+                    present ? path : null);
+            })
+            .ToList();
+    }
+
+    /// <summary>
+    /// Inventory apps that are Specialization <em>or</em> not present in any AppList entry — team-app hunting.
+    /// </summary>
+    public async Task<IReadOnlyList<TeamCandidateRow>> GetMachineTeamCandidatesAsync(string hostname, CancellationToken ct)
+    {
+        var inventory = await GetMachineInventoryAsync(hostname, ct);
+        if (inventory.Count == 0)
+            return [];
+
+        var listed = (await db.AppListEntries.AsNoTracking()
+                .Select(e => e.ProcessName)
+                .ToListAsync(ct))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return inventory
+            .Where(r =>
+                r.Group == AppGroup.Specialization
+                || !listed.Contains(r.ProcessName))
+            .Select(r => new TeamCandidateRow(
+                r.ProcessName,
+                r.DisplayName,
+                r.ExecutablePath,
+                r.Group,
+                listed.Contains(r.ProcessName),
+                r.Status))
+            .OrderBy(r => r.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public static bool MatchesKeyword(string? processName, string? displayName, string? path, string? keyword)
+    {
+        if (string.IsNullOrWhiteSpace(keyword))
+            return true;
+        var q = keyword.Trim();
+        return (processName?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (displayName?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (path?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
+    /// <summary>Add processes to an existing list without wiping other entries. Optionally assign list to the machine.</summary>
+    public async Task<int> AddEntriesToListAsync(
+        int appListId,
+        IEnumerable<(string ProcessName, string? DisplayName)> entries,
+        string? assignToHostname,
+        CancellationToken ct)
+    {
+        var list = await db.AppLists.Include(a => a.Entries).FirstOrDefaultAsync(a => a.Id == appListId, ct)
+            ?? throw new InvalidOperationException("App list not found.");
+        if (list.IsSystem)
+            throw new InvalidOperationException("Cannot add apps into a system classification list this way — use Move Spec / Discovery instead.");
+
+        var existing = list.Entries.Select(e => e.ProcessName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var addedItems = new List<ProcessCatalogService.CatalogItem>();
+        foreach (var (processName, displayName) in entries)
+        {
+            var proc = ConfigService.NormalizeProcessName(processName);
+            if (proc.Length == 0 || !existing.Add(proc))
+                continue;
+            var display = string.IsNullOrWhiteSpace(displayName) || displayName == proc ? null : displayName.Trim();
+            list.Entries.Add(new AppListEntry
+            {
+                ProcessName = proc,
+                DisplayName = display
+            });
+            addedItems.Add(new ProcessCatalogService.CatalogItem(proc, null, display));
+        }
+
+        if (addedItems.Count > 0)
+        {
+            list.UpdatedUtc = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync(ct);
+            await catalog.UpsertAsync(addedItems, null, $"added to list “{list.Name}”", ct);
+            await AuditAsync("updated", $"Added {addedItems.Count} app(s) to “{list.Name}”.", list.Id, list.Name, ct: ct);
+        }
+
+        if (!string.IsNullOrWhiteSpace(assignToHostname))
+        {
+            await AssignAsync(appListId, [(ConfigScope.Machine, assignToHostname.Trim())], ct);
+        }
+
+        return addedItems.Count;
+    }
+
+    /// <summary>Remove processes from Specialization classification and re-sync the system Spec list.</summary>
+    public async Task<int> RemoveFromSpecializationAsync(IEnumerable<string> processNames, CancellationToken ct)
+    {
+        var names = processNames
+            .Select(ConfigService.NormalizeProcessName)
+            .Where(n => n.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (names.Count == 0)
+            return 0;
+
+        var assignments = await db.ProcessGroupAssignments
+            .Where(a => names.Contains(a.ProcessName) && a.Group == AppGroup.Specialization)
+            .ToListAsync(ct);
+        if (assignments.Count == 0)
+        {
+            // Still drop any stray Spec list entries via sync after clearing nothing
+            await SyncSystemListsFromClassificationsAsync(ct);
+            return 0;
+        }
+
+        db.ProcessGroupAssignments.RemoveRange(assignments);
+        await db.SaveChangesAsync(ct);
+        await SyncSystemListsFromClassificationsAsync(ct);
+        await AuditAsync("updated",
+            $"Removed {assignments.Count} app(s) from Specialization classification.",
+            ct: ct);
+        return assignments.Count;
+    }
+
+    /// <summary>Catalog-level ignore (same as Discovery) for process names — upserts catalog rows if needed.</summary>
+    public async Task<int> IgnoreCatalogProcessesAsync(IEnumerable<string> processNames, CancellationToken ct)
+    {
+        var names = processNames
+            .Select(ConfigService.NormalizeProcessName)
+            .Where(n => n.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (names.Count == 0)
+            return 0;
+
+        await catalog.UpsertAsync(
+            names.Select(n => new ProcessCatalogService.CatalogItem(n, null, null)),
+            null, "ignored from machine team apps", ct);
+
+        var entries = await db.ProcessCatalogEntries
+            .Where(e => names.Contains(e.ProcessName))
+            .ToListAsync(ct);
+        var n = 0;
+        foreach (var e in entries)
+        {
+            if (e.Ignored) continue;
+            e.Ignored = true;
+            e.SuggestedGroup = null;
+            e.SuggestionReason = null;
+            n++;
+        }
+        if (n > 0)
+            await db.SaveChangesAsync(ct);
+        return n;
+    }
+
+    public async Task<IReadOnlyList<AppListPickerRow>> GetEditableAppListsAsync(CancellationToken ct)
+    {
+        return await db.AppLists.AsNoTracking()
+            .Where(a => !a.IsSystem)
+            .OrderBy(a => a.Name)
+            .Select(a => new AppListPickerRow(a.Id, a.Name, a.Entries.Count))
+            .ToListAsync(ct);
+    }
 }

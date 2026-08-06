@@ -266,6 +266,134 @@
                 <h3 class="h6">Merged processes currently tracked (from lists)</h3>
                 <p class="small font-monospace">@(Model.Lookup.MergedProcesses.Count == 0 ? "—" : string.Join(", ", Model.Lookup.MergedProcesses))</p>
 
+                <hr />
+                <h3 class="h6 mb-2">Team apps</h3>
+                <p class="small text-secondary mb-3">
+                    Find team applications on this machine: Specialization list overlay (grey = not installed here),
+                    plus inventory that is Spec or not on any app list. Search path/exe, then add to a list, track, remove from Spec, or ignore.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label small" for="team-apps-keyword">Search name or path</label>
+                    <input type="search" class="form-control form-control-sm" id="team-apps-keyword" placeholder="Filter both tables…" autocomplete="off" />
+                </div>
+
+                var teamListOptions = Model.EditableAppLists;
+                <form method="post" id="team-apps-form" class="mb-4">
+                    <input type="hidden" name="AnalyzeHostname" value="@Model.FocusHostname" />
+                    <input type="hidden" name="LookupHostname" value="@Model.FocusHostname" />
+                    <div class="row g-2 align-items-end mb-3">
+                        <div class="col-md-5">
+                            <label class="form-label small">Target app list</label>
+                            <select class="form-select form-select-sm" name="TargetAppListId" id="team-apps-target-list">
+                                <option value="">— select list —</option>
+                                @foreach (var l in teamListOptions)
+                                {
+                                    <option value="@l.Id">@l.Name (@l.EntryCount)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-check mt-4">
+                                <input class="form-check-input" type="checkbox" name="AlsoAssignToMachine" value="true" id="also-assign-machine" checked />
+                                <label class="form-check-label small" for="also-assign-machine">Apply list to this machine</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4 d-flex flex-wrap gap-2">
+                            <button type="submit" formaction="?handler=AddToAppList" class="hd-btn hd-btn-silver hd-btn-sm">Add to list</button>
+                            <button type="submit" formaction="?handler=TrackTeamApps" class="hd-btn hd-btn-gold hd-btn-sm" title="Add to list and apply to this machine">Track</button>
+                            <button type="submit" formaction="?handler=RemoveFromSpecialization" class="hd-btn hd-btn-silver hd-btn-sm"
+                                    onclick="return confirm('Remove selected from Specialization classification?');">Remove Spec</button>
+                            <button type="submit" formaction="?handler=IgnoreCatalog" class="hd-btn hd-btn-rose hd-btn-sm"
+                                    onclick="return confirm('Ignore selected in Discovery catalog?');">Ignore</button>
+                        </div>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-lg-6">
+                            <h4 class="h6">Specialization on this machine (@Model.SpecOverlay.Count)</h4>
+                            <p class="small text-secondary mb-2">Grey rows are on the global Spec list but not found on this host.</p>
+                            <div class="table-responsive">
+                                <table class="hd-table hd-team-apps-table mb-0" id="spec-overlay-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="width:2rem"><input type="checkbox" id="spec-select-all" title="Select all visible" /></th>
+                                            <th>Process</th>
+                                            <th>Path</th>
+                                            <th>Present</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                    @if (Model.SpecOverlay.Count == 0)
+                                    {
+                                        <tr><td colspan="4" class="text-secondary">Specialization list is empty — classify apps on Discovery first.</td></tr>
+                                    }
+                                    @foreach (var row in Model.SpecOverlay)
+                                    {
+                                        var label = string.IsNullOrWhiteSpace(row.DisplayName) || row.DisplayName == row.ProcessName
+                                            ? row.ProcessName
+                                            : $"{row.DisplayName} ({row.ProcessName})";
+                                        <tr class="@(row.OnMachine ? null : "hd-row-absent")"
+                                            data-filter-text="@($"{row.ProcessName} {row.DisplayName} {row.ExecutablePath}".ToLowerInvariant())">
+                                            <td>
+                                                <input class="form-check-input team-app-check" type="checkbox" name="SelectedTeamAppProcesses" value="@row.ProcessName" />
+                                            </td>
+                                            <td title="@label"><strong>@row.ProcessName</strong>
+                                                @if (!string.IsNullOrWhiteSpace(row.DisplayName) && row.DisplayName != row.ProcessName)
+                                                {
+                                                    <div class="text-secondary small">@row.DisplayName</div>
+                                                }
+                                            </td>
+                                            <td class="small text-secondary" title="@(row.ExecutablePath ?? "")">@(row.ExecutablePath ?? "—")</td>
+                                            <td>@(row.OnMachine ? "Y" : "N")</td>
+                                        </tr>
+                                    }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <h4 class="h6">On machine — Spec or unlisted (@Model.TeamCandidates.Count)</h4>
+                            <p class="small text-secondary mb-2">Inventory that is Specialization or not in any app list.</p>
+                            <div class="table-responsive">
+                                <table class="hd-table hd-team-apps-table mb-0" id="team-candidates-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="width:2rem"><input type="checkbox" id="cand-select-all" /></th>
+                                            <th>Process</th>
+                                            <th>Path</th>
+                                            <th>Group</th>
+                                            <th>Listed</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                    @if (Model.TeamCandidates.Count == 0)
+                                    {
+                                        <tr><td colspan="5" class="text-secondary">No Spec/unlisted inventory — Request Inventory or Analyze first.</td></tr>
+                                    }
+                                    @foreach (var row in Model.TeamCandidates)
+                                    {
+                                        <tr data-filter-text="@($"{row.ProcessName} {row.DisplayName} {row.ExecutablePath}".ToLowerInvariant())">
+                                            <td>
+                                                <input class="form-check-input team-app-check" type="checkbox" name="SelectedTeamAppProcesses" value="@row.ProcessName" />
+                                            </td>
+                                            <td title="@row.ProcessName"><strong>@row.ProcessName</strong>
+                                                @if (!string.Equals(row.DisplayName, row.ProcessName, StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <div class="text-secondary small">@row.DisplayName</div>
+                                                }
+                                            </td>
+                                            <td class="small text-secondary" title="@(row.ExecutablePath ?? "")">@(row.ExecutablePath ?? "—")</td>
+                                            <td><span class="badge-pill badge-group-@row.Group.ToString().ToLowerInvariant()">@ProcessClassification.GroupLabel(row.Group)</span></td>
+                                            <td>@(row.InAnyAppList ? "Y" : "N")</td>
+                                        </tr>
+                                    }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+
                 @if (Model.FocusPendingInventory)
                 {
                     <div class="alert alert-secondary py-2 small mb-3">
@@ -688,6 +816,44 @@
       nameEl.textContent = file?.name ?? 'No file chosen';
       nameEl.classList.toggle('is-chosen', !!file);
     });
+  });
+
+  // Team apps: keyword filter across Spec overlay + Spec/unlisted candidates.
+  function applyTeamAppsFilter() {
+    const q = (document.getElementById('team-apps-keyword')?.value || '').trim().toLowerCase();
+    document.querySelectorAll('.hd-team-apps-table tbody tr[data-filter-text]').forEach((tr) => {
+      const hay = tr.dataset.filterText || '';
+      tr.style.display = !q || hay.includes(q) ? '' : 'none';
+    });
+  }
+  document.getElementById('team-apps-keyword')?.addEventListener('input', applyTeamAppsFilter);
+
+  function wireSelectAll(masterId, tableId) {
+    const master = document.getElementById(masterId);
+    if (!master) return;
+    master.addEventListener('change', () => {
+      document.querySelectorAll(`#${tableId} tbody tr`).forEach((tr) => {
+        if (tr.style.display === 'none') return;
+        const cb = tr.querySelector('.team-app-check');
+        if (cb && !cb.disabled) cb.checked = master.checked;
+      });
+    });
+  }
+  wireSelectAll('spec-select-all', 'spec-overlay-table');
+  wireSelectAll('cand-select-all', 'team-candidates-table');
+
+  // Add/Track need a target list; Remove Spec / Ignore do not.
+  document.getElementById('team-apps-form')?.addEventListener('submit', (ev) => {
+    const submitter = ev.submitter;
+    const action = (submitter?.getAttribute('formaction') || '').toLowerCase();
+    const needsList = action.includes('addtoapplist') || action.includes('trackteamapps');
+    if (!needsList) return;
+    const list = document.getElementById('team-apps-target-list');
+    if (list && !list.value) {
+      ev.preventDefault();
+      list.focus();
+      alert('Pick a target app list first.');
+    }
   });
 })();
 </script>

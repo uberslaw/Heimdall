@@ -29,6 +29,9 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     public IReadOnlyList<AppListService.TeamAppListOption> TeamOptions { get; private set; } = [];
     public List<AppListService.ProposedApp> PendingProposals { get; private set; } = [];
     public IReadOnlyList<AppListService.ClassifiedProcessRow> MachineInventory { get; private set; } = [];
+    public IReadOnlyList<AppListService.SpecOverlayRow> SpecOverlay { get; private set; } = [];
+    public IReadOnlyList<AppListService.TeamCandidateRow> TeamCandidates { get; private set; } = [];
+    public IReadOnlyList<AppListService.AppListPickerRow> EditableAppLists { get; private set; } = [];
     public bool HasAutoDiscoveredList { get; private set; }
     public int AutoDiscoveredEntryCount { get; private set; }
     public string? FocusHostname { get; private set; }
@@ -56,6 +59,11 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     [BindProperty] public IFormFile? UploadFile { get; set; }
     [BindProperty] public IFormFile? ClassificationCsvFile { get; set; }
     [BindProperty] public List<int> SelectedListIds { get; set; } = [];
+
+    [BindProperty] public string? TeamAppsKeyword { get; set; }
+    [BindProperty] public List<string> SelectedTeamAppProcesses { get; set; } = [];
+    [BindProperty] public int TargetAppListId { get; set; }
+    [BindProperty] public bool AlsoAssignToMachine { get; set; } = true;
 
     /// <summary>True while editing a system classification list (name locked).</summary>
     public bool EditingIsSystem { get; private set; }
@@ -279,6 +287,82 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         await appLists.DismissAnalysisAsync(host, HttpContext.RequestAborted);
         TempData["Message"] = $"Dismissed analysis for {host}. Discovered apps will not be tracked.";
         return RedirectToPage(new { host });
+    }
+
+    public async Task<IActionResult> OnPostAddToAppListAsync()
+    {
+        var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            TempData["Error"] = "Pick a machine first.";
+            return RedirectToPage();
+        }
+        if (TargetAppListId <= 0)
+        {
+            TempData["Error"] = "Pick a target app list.";
+            return RedirectToPage(new { host });
+        }
+        if (SelectedTeamAppProcesses.Count == 0)
+        {
+            TempData["Error"] = "Select at least one app.";
+            return RedirectToPage(new { host });
+        }
+
+        try
+        {
+            var entries = SelectedTeamAppProcesses.Select(p => (p, (string?)null));
+            var added = await appLists.AddEntriesToListAsync(
+                TargetAppListId,
+                entries,
+                AlsoAssignToMachine ? host : null,
+                HttpContext.RequestAborted);
+            TempData["Message"] = AlsoAssignToMachine
+                ? $"Added {added} app(s) to the list and applied it to {host}."
+                : $"Added {added} app(s) to the list.";
+        }
+        catch (Exception ex)
+        {
+            TempData["Error"] = ex.Message;
+        }
+        return RedirectToPage(new { host });
+    }
+
+    public async Task<IActionResult> OnPostTrackTeamAppsAsync()
+    {
+        AlsoAssignToMachine = true;
+        return await OnPostAddToAppListAsync();
+    }
+
+    public async Task<IActionResult> OnPostRemoveFromSpecializationAsync()
+    {
+        var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
+        if (SelectedTeamAppProcesses.Count == 0)
+        {
+            TempData["Error"] = "Select at least one Specialization app to remove.";
+            return RedirectToPage(new { host });
+        }
+
+        var n = await appLists.RemoveFromSpecializationAsync(SelectedTeamAppProcesses, HttpContext.RequestAborted);
+        TempData["Message"] = n == 0
+            ? "No Specialization classifications removed (selection may not have been Spec)."
+            : $"Removed {n} app(s) from Specialization.";
+        return RedirectToPage(string.IsNullOrWhiteSpace(host) ? null : new { host });
+    }
+
+    public async Task<IActionResult> OnPostIgnoreCatalogAsync()
+    {
+        var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
+        if (SelectedTeamAppProcesses.Count == 0)
+        {
+            TempData["Error"] = "Select at least one app to ignore.";
+            return RedirectToPage(new { host });
+        }
+
+        var n = await appLists.IgnoreCatalogProcessesAsync(SelectedTeamAppProcesses, HttpContext.RequestAborted);
+        TempData["Message"] = n == 0
+            ? "Nothing new to ignore (already ignored or not in catalog)."
+            : $"Ignored {n} catalog process(es) — hidden from Discovery by default.";
+        return RedirectToPage(string.IsNullOrWhiteSpace(host) ? null : new { host });
     }
 
     public async Task<IActionResult> OnPostMoveToCoreWindowsAsync()
@@ -586,6 +670,9 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         TeamOptions = await appLists.GetTeamListsForHostAsync(hostname, HttpContext.RequestAborted);
         PendingProposals = Lookup.PendingProposals.ToList();
         MachineInventory = await appLists.GetMachineInventoryAsync(hostname, HttpContext.RequestAborted);
+        SpecOverlay = await appLists.GetSpecializationOverlayAsync(hostname, HttpContext.RequestAborted);
+        TeamCandidates = await appLists.GetMachineTeamCandidatesAsync(hostname, HttpContext.RequestAborted);
+        EditableAppLists = await appLists.GetEditableAppListsAsync(HttpContext.RequestAborted);
         FocusStatus = Lookup.AnalysisStatus;
         AnalyzeHostname = hostname;
 
