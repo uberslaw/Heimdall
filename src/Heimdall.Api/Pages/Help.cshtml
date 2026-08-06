@@ -66,7 +66,7 @@
         <li><strong>Status</strong> (5‑minute check-in): green Active = online with a non-disconnected session; yellow Idle = online, no active session; red Off = no recent check-in.</li>
         <li><strong>Period</strong> (Today / 24h / 5d / 7d / 30d / All) sets Active / Passive / Free % and GPU·CPU·IO columns. Click an Active/Passive/Free cell to cycle that row’s period.</li>
         <li>Active % is non-disconnected session time over the calendar window. Passive, GPU/CPU hours, and disk/network columns use <strong>always-on 30s fleet samples</strong> from every Heimdall client (independent of Flood enrollment). Until samples arrive those cells show —.</li>
-        <li>Name links to computer detail. Assign teams and app lists under <a asp-page="/Teams">Admin → Teams</a>.</li>
+        <li>Name links to computer detail. Assign teams and app lists under <a asp-page="/Teams">Applications → Teams</a>.</li>
         <li>Sessions live under <a asp-page="/Fleet" asp-route-tab="sessions">Fleet → Sessions</a>.</li>
     </ol>
 </section>
@@ -252,7 +252,7 @@
     <h2 class="h5">Staff RDP</h2>
     <p class="text-secondary small mb-2"><strong>Purpose:</strong> public-team machine pool — book up to 24 hours and Connect via an <code>.rdp</code> file (opens mstsc).</p>
     <ol class="small mb-0">
-        <li>Sign in with your Windows/AD identity (Negotiate). The pool shows machines whose team is marked <strong>public-facing</strong> under Admin → Teams.</li>
+        <li>Sign in with your Windows/AD identity (Negotiate). The pool shows machines whose team is marked <strong>public-facing</strong> under Applications → Teams.</li>
         <li>If you belong to a Remote Access Group, the pool is further limited to those hosts; if you have no RAG membership, you see all public-facing machines.</li>
         <li><strong>Active User</strong> (green) means an Active session is present — you can still book (warning) and Connect (break-glass).</li>
         <li><strong>Book</strong> rejects overlapping bookings; cancel your own booking (admins can cancel any). Duration: 1h / 2h / 4h / 8h / end-of-day / 24h.</li>
@@ -284,11 +284,17 @@
 
 <section id="teams" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Teams</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> org teams for Fleet machine sections, people, app lists, and Staff RDP visibility. Under <strong>Admin → Teams</strong>.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> org teams for Fleet machine sections, people, app lists, and Staff RDP visibility. Under <strong>Applications → Teams</strong>.</p>
     <ol class="small mb-0">
         <li>The list shows each team’s people, machines, and tracking / ignored app-list counts. Use <strong>Add team</strong> or <strong>Import CSV</strong>; open a row for detail.</li>
         <li>On <strong>Edit team</strong>, set name, code, parent, and <strong>Public-facing</strong> (machines appear in the Staff RDP pool — do not mark Flood/TUFLOW teams public).</li>
-        <li><strong>Membership</strong> — add/edit/remove people (<code>firstname.lastname</code>); assign or unassign machines (never deletes a machine from the database).</li>
+        <li>
+            <strong>Entra membership</strong> — configure <code>Heimdall:Entra</code> (<code>TenantId</code>, <code>ClientId</code>, <code>ClientSecret</code>; prefer env <code>Heimdall__Entra__ClientSecret</code>).
+            App registration needs Application permissions <code>Group.Read.All</code> and <code>User.Read.All</code> (or <code>GroupMember.Read.All</code>) with admin consent.
+            On Edit team, paste the Entra group <strong>Object ID</strong>; on team detail use <em>Sync from Entra</em> to replace People with transitive group members
+            (username from on-prem SAM when present, else UPN/mail local-part; optional <code>DefaultNetBiosDomain</code>).
+        </li>
+        <li><strong>Membership</strong> — add/edit/remove people (<code>firstname.lastname</code>); assign or unassign machines (never deletes a machine from the database). Manual people on an Entra-linked team are replaced on the next sync.</li>
         <li><strong>App lists</strong> — link lists as Tracking or Do not track for the whole team; use <strong>Machine overrides</strong> to force track or ignore a list on one host (override wins).</li>
         <li>CSV import supports <code>Username,Team</code> or full columns including <code>ParentTeam</code> and optional <code>Code</code>. Catalog editing stays on <a asp-page="/AppLists">App lists</a>.</li>
     </ol>

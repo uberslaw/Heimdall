@@ -1,11 +1,12 @@
 using Heimdall.Api.Data;
+using Heimdall.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Pages.Teams;
 
-public class DetailModel(HeimdallDbContext db) : PageModel
+public class DetailModel(HeimdallDbContext db, EntraGraphService graph, EntraTeamMembershipSyncService entraSync) : PageModel
 {
     public Team Team { get; private set; } = null!;
     public string Tab { get; private set; } = "membership";
@@ -14,6 +15,8 @@ public class DetailModel(HeimdallDbContext db) : PageModel
     public IReadOnlyList<AppListRow> TrackingLists { get; private set; } = [];
     public IReadOnlyList<AppListRow> IgnoredLists { get; private set; } = [];
     public int OverrideCount { get; private set; }
+    public bool EntraConfigured => graph.IsConfigured;
+    public bool HasEntraGroup => !string.IsNullOrWhiteSpace(Team.EntraGroupId);
 
     [BindProperty]
     public int PersonId { get; set; }
@@ -92,6 +95,16 @@ public class DetailModel(HeimdallDbContext db) : PageModel
         db.TeamAppListLinks.Remove(link);
         await db.SaveChangesAsync();
         return RedirectToPage(new { id, tab = "apps" });
+    }
+
+    public async Task<IActionResult> OnPostSyncEntraAsync(int id)
+    {
+        var result = await entraSync.SyncTeamAsync(id, HttpContext.RequestAborted);
+        if (result.Ok)
+            TempData["Message"] = result.Summary;
+        else
+            TempData["Error"] = result.Summary;
+        return RedirectToPage(new { id, tab = "membership" });
     }
 
     private async Task<bool> LoadAsync(int id)

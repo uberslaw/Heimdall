@@ -12,6 +12,10 @@
         <p class="text-secondary small mb-0">
             @(Model.Team.Code is string c ? $"Code {c} · " : "")
             @(Model.Team.IsPublicFacing ? "Public-facing" : "Not public-facing")
+            @if (Model.HasEntraGroup)
+            {
+                <text> · Entra: @(Model.Team.EntraGroupName ?? Model.Team.EntraGroupId)</text>
+            }
         </p>
     </div>
     <div class="d-flex flex-wrap gap-2 align-items-center">
@@ -20,6 +24,10 @@
     </div>
 </div>
 
+@if (TempData["Message"] is string okMsg)
+{
+    <div class="alert alert-success">@okMsg</div>
+}
 @if (TempData["Error"] is string err)
 {
     <div class="alert alert-danger">@err</div>
@@ -40,6 +48,55 @@
 
 @if (isMembership)
 {
+    <div class="hd-panel mb-4">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+            <div>
+                <h2 class="h5 mb-1">Entra membership</h2>
+                @if (!Model.EntraConfigured)
+                {
+                    <p class="small text-secondary mb-0">
+                        Graph is not configured yet. Set <code>Heimdall:Entra</code> TenantId / ClientId / ClientSecret
+                        (secret via env <code>Heimdall__Entra__ClientSecret</code>), then link a group on Edit team.
+                    </p>
+                }
+                else if (!Model.HasEntraGroup)
+                {
+                    <p class="small text-secondary mb-0">
+                        No Entra group linked.
+                        <a asp-page="/Teams/EditTeam" asp-route-id="@Model.Team.Id">Edit team</a> to paste a group Object ID.
+                    </p>
+                }
+                else
+                {
+                    <p class="small text-secondary mb-0">
+                        Linked: <strong>@(Model.Team.EntraGroupName ?? "group")</strong>
+                        <code class="ms-1">@Model.Team.EntraGroupId</code>
+                        @if (Model.Team.EntraMembersSyncedUtc is DateTimeOffset synced)
+                        {
+                            <span class="ms-2">Last sync @synced.ToString("u") UTC</span>
+                        }
+                        else
+                        {
+                            <span class="ms-2">Not synced yet</span>
+                        }
+                    </p>
+                    @if (!string.IsNullOrWhiteSpace(Model.Team.EntraLastSyncError))
+                    {
+                        <p class="small text-danger mb-0 mt-1">@Model.Team.EntraLastSyncError</p>
+                    }
+                }
+            </div>
+            @if (Model.EntraConfigured && Model.HasEntraGroup)
+            {
+                <form method="post" asp-page-handler="SyncEntra"
+                      onsubmit="return confirm('Replace this team’s People list with transitive members of the linked Entra group?');">
+                    <input type="hidden" name="id" value="@Model.Team.Id" />
+                    <button type="submit" class="hd-btn hd-btn-gold hd-btn-sm">Sync from Entra</button>
+                </form>
+            }
+        </div>
+    </div>
+
     <div class="hd-panel mb-4">
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
             <h2 class="h5 mb-0">People</h2>

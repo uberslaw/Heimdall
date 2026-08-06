@@ -116,6 +116,7 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
         {
             e.HasIndex(x => x.Name);
             e.HasIndex(x => x.Code);
+            e.HasIndex(x => x.EntraGroupId);
             e.HasOne(x => x.ParentTeam)
                 .WithMany(x => x.Children)
                 .HasForeignKey(x => x.ParentTeamId)
