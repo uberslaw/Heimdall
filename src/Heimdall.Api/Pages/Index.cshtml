@@ -12,9 +12,9 @@
     <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="machines">Help</a>
 </div>
 
-<form method="get" class="hd-panel mb-3" id="machines-filter-form">
-    <div class="row g-3 align-items-end">
-        <div class="col-md-4 col-lg-3">
+<form method="get" class="hd-panel mb-3 hd-machines-period-card" id="machines-filter-form">
+    <div class="hd-machines-period-row">
+        <div class="hd-machines-period-controls">
             <label class="form-label" for="util-period">Period</label>
             <select class="form-select form-select-sm" name="period" id="util-period" onchange="this.form.requestSubmit()">
                 @foreach (var opt in MachineUtilisationService.PeriodOptions)
@@ -30,32 +30,21 @@
                 }
             </select>
         </div>
-        <div class="col-md-8 col-lg-9">
-            @{
-                ViewData["SelectedCountries"] = Model.SelectedCountries;
-                ViewData["SelectedCities"] = Model.SelectedCities;
-                ViewData["LocationTreeId"] = "machines-location-tree";
-            }
-            <partial name="_LocationFilter" model="Model.LocationTree" />
-        </div>
+        <p class="hd-machines-summary text-secondary">
+            @Model.MachineCount machines ·
+            <span class="hd-status-dot hd-status-active" aria-hidden="true"></span> @Model.ActiveCount Active ·
+            <span class="hd-status-dot hd-status-idle" aria-hidden="true"></span> @Model.IdleCount Idle ·
+            <span class="hd-status-dot hd-status-off" aria-hidden="true"></span> @Model.OffCount Off
+            · period <strong>@Model.PeriodLabel</strong>
+        </p>
     </div>
 </form>
-
-<p class="hd-machines-summary text-secondary small mb-3">
-    @Model.MachineCount machines ·
-    <span class="hd-status-dot hd-status-active" aria-hidden="true"></span> @Model.ActiveCount Active ·
-    <span class="hd-status-dot hd-status-idle" aria-hidden="true"></span> @Model.IdleCount Idle ·
-    <span class="hd-status-dot hd-status-off" aria-hidden="true"></span> @Model.OffCount Off
-    · period <strong>@Model.PeriodLabel</strong>
-</p>
 
 <div class="hd-panel hd-machines-panel">
 @if (Model.Sections.Count == 0)
 {
     <p class="text-secondary mb-0">
-        @(Model.SelectedCountries.Count + Model.SelectedCities.Count > 0
-            ? "No machines match the selected locations."
-            : "No agents reporting yet. Install the Heimdall agent and point it at this API.")
+        No agents reporting yet. Install the Heimdall agent and point it at this API.
     </p>
 }
 else

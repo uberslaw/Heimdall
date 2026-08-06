@@ -10,7 +10,6 @@ namespace Heimdall.Api.Pages;
 public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : PageModel
 {
     public IReadOnlyList<TeamSection> Sections { get; private set; } = [];
-    public IReadOnlyList<MachineHierarchy.CountryNode> LocationTree { get; private set; } = [];
     public int MachineCount { get; private set; }
     public int ActiveCount { get; private set; }
     public int IdleCount { get; private set; }
@@ -19,12 +18,6 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
 
     [BindProperty(SupportsGet = true)]
     public string Period { get; set; } = "7d";
-
-    [BindProperty(SupportsGet = true)]
-    public List<string> SelectedCountries { get; set; } = [];
-
-    [BindProperty(SupportsGet = true)]
-    public List<string> SelectedCities { get; set; } = [];
 
     public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
@@ -43,17 +36,6 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
             .ToListAsync(ct);
         foreach (var m in machines)
             MachineHierarchy.EnsureDefaults(m);
-
-        LocationTree = MachineHierarchy.BuildCountryTree(machines);
-
-        var countryFilter = SelectedCountries.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList();
-        var cityFilter = SelectedCities.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList();
-        if (countryFilter.Count > 0 || cityFilter.Count > 0)
-        {
-            machines = machines
-                .Where(m => MachineHierarchy.MatchesLocationFilter(m, countryFilter, cityFilter))
-                .ToList();
-        }
 
         var sessions = await db.Sessions.AsNoTracking().ToListAsync(ct);
         var openByMachine = sessions
