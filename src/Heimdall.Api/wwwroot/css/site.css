@@ -359,37 +359,88 @@ html[data-theme="cosmic"] .hd-nav {
   text-decoration: none;
 }
 
-/* Fleet tab row — override Bootstrap white active pill (unreadable on Cosmic). */
+/* Fleet page header: “Fleet Computers” + tabs on one row */
+.hd-fleet-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+}
+
+.hd-fleet-header-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.55rem 0.85rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.hd-fleet-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35em;
+  white-space: nowrap;
+  margin: 0;
+  line-height: 1.15;
+}
+
+.hd-fleet-title-fleet,
+.hd-fleet-title-page {
+  font: inherit;
+  color: inherit;
+}
+
+.hd-fleet-help {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* Fleet tab row — same pill background for every tab; gold rim on hover/active */
 .hd-ops-tabs {
-  border-bottom-color: var(--hd-border);
-  --bs-nav-tabs-border-color: var(--hd-border);
-  --bs-nav-tabs-link-hover-border-color: var(--hd-border) var(--hd-border) var(--hd-border);
+  border-bottom: none;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  --bs-nav-tabs-border-color: transparent;
+  --bs-nav-tabs-link-hover-border-color: var(--hd-gold, var(--hd-accent));
   --bs-nav-tabs-link-active-color: var(--hd-gold, var(--hd-accent));
   --bs-nav-tabs-link-active-bg: var(--hd-panel);
-  --bs-nav-tabs-link-active-border-color: var(--hd-border) var(--hd-border) var(--hd-panel);
+  --bs-nav-tabs-link-active-border-color: var(--hd-gold, var(--hd-accent));
   --bs-nav-link-color: var(--hd-gold, var(--hd-accent));
   --bs-nav-link-hover-color: var(--hd-gold-light, var(--hd-link-hover));
 }
 
+.hd-ops-tabs .nav-item {
+  margin: 0;
+}
+
 .hd-ops-tabs .nav-link {
   color: var(--hd-gold, var(--hd-accent));
-  background: transparent;
-  border-color: transparent;
+  background-color: var(--hd-panel);
+  border: 1px solid var(--hd-border);
+  border-radius: 0.4rem;
   cursor: pointer;
+  padding: 0.35rem 0.75rem;
+  margin: 0;
+  line-height: 1.25;
+  font-weight: 500;
 }
 
 .hd-ops-tabs .nav-link:hover,
 .hd-ops-tabs .nav-link:focus {
   color: var(--hd-gold-light, var(--hd-link-hover));
   isolation: isolate;
-  border-color: var(--hd-border) var(--hd-border) transparent;
+  background-color: var(--hd-panel);
+  border-color: var(--hd-gold, var(--hd-accent));
 }
 
 .hd-ops-tabs .nav-link.active {
   color: var(--hd-gold, var(--hd-accent));
   background-color: var(--hd-panel);
-  border-color: var(--hd-border) var(--hd-border) var(--hd-panel);
+  border-color: var(--hd-gold, var(--hd-accent));
   font-weight: 600;
+  box-shadow: inset 0 0 0 1px rgba(212, 184, 106, 0.25);
 }
 
 .hd-nav-dropdown,

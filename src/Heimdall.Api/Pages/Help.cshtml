@@ -52,7 +52,7 @@
         <li>Summary counts (Computers / Active / Idle / Off) sit beside the Period control — gold labels with status dots, silver numbers underneath. Click any column header to sort asc/desc.</li>
         <li><strong>Status</strong> (5‑minute check-in): green Active = online with a non-disconnected session; yellow Idle = online, no active session; red Off = no recent check-in.</li>
         <li><strong>Period</strong> (Today / 24h / 5d / 7d / 30d / All) sets Active / Passive / Free % and GPU·CPU·IO columns. Click an Active/Passive/Free cell to cycle that row’s period.</li>
-        <li>Active % is non-disconnected session time over the calendar window. Passive and hardware totals need fleet samples (Historical Dashboard enrollment today); otherwise they show —.</li>
+        <li>Active % is non-disconnected session time over the calendar window. Passive, GPU/CPU hours, and disk/network columns need <strong>fleet metric samples</strong> (Historical Dashboard / Flood enrollment — 30s sampler). They are <em>not</em> driven by app tracking lists; without enrollment those cells show —.</li>
         <li>Name links to computer detail. Assign teams and app lists under <a asp-page="/Teams">Admin → Teams</a>.</li>
         <li>Sessions live under <a asp-page="/Fleet" asp-route-tab="sessions">Fleet → Sessions</a>.</li>
     </ol>
