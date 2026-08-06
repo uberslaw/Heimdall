@@ -53,6 +53,7 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
                 var eligibleInventory = batch.DiscoveredProcesses
                     .Where(p => DiscoveryCatalogFilter.IsEligible(p.ProcessName, p.ExecutablePath))
                     .ToList();
+                machine.InventoryCollectedUtc = DateTimeOffset.UtcNow;
                 await db.SaveChangesAsync(ct);
                 await appLists.AnalyzeMachineAsync(machine.Hostname, eligibleInventory, requestAgentInventoryIfEmpty: false, ct);
                 return;
@@ -246,6 +247,13 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
             machine.HardwareRamGb = heartbeat.HardwareRamGb;
         if (machine.HardwareDiskGb is null && heartbeat.HardwareDiskGb is > 0)
             machine.HardwareDiskGb = heartbeat.HardwareDiskGb;
+
+        // Volume free/used refreshes every upload when the agent sends it (cheap WMI).
+        if (heartbeat.DiskVolumes.Count > 0)
+        {
+            machine.DiskVolumesJson = System.Text.Json.JsonSerializer.Serialize(heartbeat.DiskVolumes);
+            machine.DiskVolumesUtc = heartbeat.TimestampUtc;
+        }
     }
 
     private static string? NullIfEmpty(string? s) =>
@@ -1513,6 +1521,9 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN FriendlyName TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN TeamId INTEGER NULL");
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_Machines_TeamId ON Machines(TeamId)");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN InventoryCollectedUtc TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN DiskVolumesJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN DiskVolumesUtc TEXT NULL");
         await TryExec(db, "ALTER TABLE AppLists ADD COLUMN IsTeamExcluded INTEGER NOT NULL DEFAULT 0");
         await TryExec(db, "ALTER TABLE AppLists ADD COLUMN IsSystem INTEGER NOT NULL DEFAULT 0");
         await TryExec(db, "ALTER TABLE AppLists ADD COLUMN SystemKey TEXT NULL");

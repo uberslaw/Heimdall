@@ -55,6 +55,9 @@ public sealed class HeartbeatDto
     /// <summary>Creation time of %SystemRoot% — often closer to original image.</summary>
     public DateTimeOffset? WindowsFolderCreatedUtc { get; init; }
 
+    /// <summary>Fixed local volumes with free/used space (refreshed each upload when agent collects them).</summary>
+    public List<DiskVolumeDto> DiskVolumes { get; init; } = [];
+
     /// <summary>Primary IPv4 reported by agent (best-effort).</summary>
     public string? PrimaryIpAddress { get; init; }
 

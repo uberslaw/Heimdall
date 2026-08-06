@@ -106,6 +106,48 @@ else if (d is not null)
         </div>
     </div>
 
+    <div class="hd-panel mb-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+            <h2 class="hd-section-title mb-0">Storage</h2>
+            @if (Model.DiskVolumesUtc is DateTimeOffset volUtc)
+            {
+                <span class="text-secondary small">Updated @MachineModel.FormatLocalTimestamp(volUtc)</span>
+            }
+        </div>
+        @if (Model.DiskVolumes.Count == 0)
+        {
+            <p class="text-secondary small mb-0">
+                No volume free-space data yet. After the next agent upload (with an updated agent), fixed local drives appear here.
+            </p>
+        }
+        else
+        {
+            <div class="hd-disk-volumes">
+                @foreach (var v in Model.DiskVolumes)
+                {
+                    var pct = v.UsedPct;
+                    var tone = pct >= 90 ? "hd-disk-bar-crit" : pct >= 80 ? "hd-disk-bar-warn" : "hd-disk-bar-ok";
+                    <div class="hd-disk-volume">
+                        <div class="hd-disk-volume-head">
+                            <strong>@v.Name</strong>
+                            @if (!string.IsNullOrWhiteSpace(v.Label))
+                            {
+                                <span class="text-secondary small">@v.Label</span>
+                            }
+                            <span class="hd-disk-volume-meta text-secondary small">
+                                @v.FreeGb.ToString("0.#") GB free of @v.TotalGb.ToString("0.#") GB
+                                · @pct.ToString("0")% used
+                            </span>
+                        </div>
+                        <div class="hd-disk-bar" role="progressbar" aria-valuenow="@((int)pct)" aria-valuemin="0" aria-valuemax="100">
+                            <div class="hd-disk-bar-fill @tone" style="width:@pct.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)%"></div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
     @if (Model.CanAccessFlood && Model.Tuflow is { FloodEnrolled: true } tuflow)
     {
         <div class="hd-panel mb-3">
@@ -229,7 +271,31 @@ else if (d is not null)
     @if (appLists is not null)
     {
         <div class="hd-panel mb-3">
-            <h2 class="hd-section-title">App lists</h2>
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+                <h2 class="hd-section-title mb-0">App lists</h2>
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                    <form method="post" asp-page-handler="RequestInventory" class="d-inline">
+                        <input type="hidden" asp-for="Hostname" />
+                        <input type="hidden" asp-for="Range" />
+                        <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm"
+                                @(Model.PendingInventory ? "disabled" : null)
+                                title="Ask the agent to upload all running processes (config ~5 min + upload ~1 min)">
+                            Request full inventory
+                        </button>
+                    </form>
+                    <a class="hd-btn hd-btn-black hd-btn-sm" asp-page="/AppLists" asp-route-host="@d.Hostname" asp-fragment="team-apps">Open Team apps</a>
+                </div>
+            </div>
+            @if (Model.PendingInventory)
+            {
+                <p class="small mb-2" style="color:var(--hd-gold, var(--hd-accent));">
+                    Inventory pending — waiting for agent config refresh, then next upload.
+                </p>
+            }
+            else if (Model.InventoryCollectedUtc is DateTimeOffset invUtc)
+            {
+                <p class="text-secondary small mb-2">Last inventory @MachineModel.FormatLocalTimestamp(invUtc)</p>
+            }
             @if (appLists.ActiveLists.Count == 0)
             {
                 <p class="text-secondary small mb-3">No app lists apply to this machine yet. Assign one below or use <a asp-page="/AppLists" asp-route-host="@d.Hostname">Analyze apps</a>.</p>

@@ -3216,3 +3216,40 @@ details.hd-panel[data-key="existing-lists"] {
 }
 
 
+
+/* Machine detail — volume free/used */
+.hd-disk-volumes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.hd-disk-volume-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.hd-disk-volume-meta {
+  margin-left: auto;
+}
+
+.hd-disk-bar {
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--hd-panel-2);
+  border: 1px solid var(--hd-border);
+  overflow: hidden;
+}
+
+.hd-disk-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  min-width: 2px;
+}
+
+.hd-disk-bar-ok { background: #3db8a0; }
+.hd-disk-bar-warn { background: var(--hd-warn, #d4a017); }
+.hd-disk-bar-crit { background: #c45c5c; }
