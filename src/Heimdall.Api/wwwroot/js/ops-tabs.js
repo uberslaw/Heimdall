@@ -43,8 +43,8 @@
   function loadTab(key, src, pushUrl) {
     activateTab(key);
     if (pushUrl) {
-      var url = "/Ops?tab=" + encodeURIComponent(key);
-      history.pushState({ hdOpsTab: key }, "", url);
+      var url = "/Fleet?tab=" + encodeURIComponent(key);
+      history.pushState({ hdFleetTab: key }, "", url);
     }
 
     if (cache[key]) {
@@ -62,6 +62,7 @@
     fetch(src, {
       credentials: "same-origin",
       headers: {
+        "X-Fleet-Partial": "1",
         "X-Ops-Partial": "1",
         Accept: "text/html"
       },
@@ -82,7 +83,7 @@
         setLoading(false);
         body.hidden = false;
         body.innerHTML =
-          '<div class="alert alert-danger">Failed to load this tab. <a href="/Ops?tab=' +
+          '<div class="alert alert-danger">Failed to load this tab. <a href="/Fleet?tab=' +
           encodeURIComponent(key) +
           '">Reload</a></div>';
       });
