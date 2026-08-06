@@ -76,18 +76,18 @@ else
     <table class="hd-table hd-machines-table hd-sortable" id="machines-table" data-period="@Model.Period">
         <thead>
             <tr>
-                <th class="hd-col-name" data-sort="text" scope="col" title="Sort">Name</th>
-                <th class="hd-col-status" data-sort="text" scope="col" title="Sort">Status</th>
-                <th class="hd-col-user" data-sort="text" scope="col" title="Sort">Last user</th>
-                <th class="hd-col-pct" data-sort="num" scope="col" title="Sort — click a cell to cycle period for that row">Active</th>
-                <th class="hd-col-pct" data-sort="num" scope="col" title="Sort">Passive</th>
-                <th class="hd-col-pct" data-sort="num" scope="col" title="Sort">Free</th>
-                <th class="hd-col-hw" data-sort="num" scope="col" title="Sort">GPU h</th>
-                <th class="hd-col-hw" data-sort="num" scope="col" title="Sort">CPU h</th>
-                <th class="hd-col-io" data-sort="num" scope="col" title="Sort">Dr</th>
-                <th class="hd-col-io" data-sort="num" scope="col" title="Sort">Dw</th>
-                <th class="hd-col-io" data-sort="num" scope="col" title="Sort">NTx</th>
-                <th class="hd-col-io" data-sort="num" scope="col" title="Sort">NRx</th>
+                <th class="hd-col-name" data-sort="text" scope="col" title="Friendly name (or hostname) with last known IP underneath. Hover the name for hostname and serial.">Name</th>
+                <th class="hd-col-status" data-sort="text" scope="col" title="From the latest agent check-in (5‑minute window): Active = online with a non-disconnected session; Idle = online, no active session; Off = no recent check-in.">Status</th>
+                <th class="hd-col-user" data-sort="text" scope="col" title="Username from the preferred session: Active first, then most recently observed, then highest ActiveSeconds.">Last user</th>
+                <th class="hd-col-pct" data-sort="num" scope="col" title="Share of the selected period spent in non-disconnected sessions (session overlap with the window). Click a cell to cycle that row’s period. Example: 40% over 7d ≈ ~67h of active session time.">Active</th>
+                <th class="hd-col-pct" data-sort="num" scope="col" title="Best-effort: ~30s fleet sample intervals where a disconnected session overlaps and CPU or GPU &gt; 5%. Shows — until samples exist. Example: RDP disconnected but the machine is still busy.">Passive</th>
+                <th class="hd-col-pct" data-sort="num" scope="col" title="Remainder of the calendar window after Active and Passive (Passive counted as 0% if unknown). Free% ≈ 100 − Active% − Passive%.">Free</th>
+                <th class="hd-col-hw" data-sort="num" scope="col" title="GPU-hours from always-on ~30s fleet samples: Σ (GPU% ÷ 100 × Δt hours). Shows — until samples arrive.">GPU h</th>
+                <th class="hd-col-hw" data-sort="num" scope="col" title="CPU-hours from always-on ~30s fleet samples: Σ (CPU% ÷ 100 × Δt hours). Shows — until samples arrive.">CPU h</th>
+                <th class="hd-col-io" data-sort="num" scope="col" title="Disk read volume integrated from sample rates (MBps × Δt), shown compact (K/M/G). Shows — until samples arrive.">Dr</th>
+                <th class="hd-col-io" data-sort="num" scope="col" title="Disk write volume integrated from sample rates (MBps × Δt), shown compact (K/M/G). Shows — until samples arrive.">Dw</th>
+                <th class="hd-col-io" data-sort="num" scope="col" title="Network transmit (outbound) volume from sample rates (MBps × Δt), compact K/M/G. Shows — until samples arrive.">NTx</th>
+                <th class="hd-col-io" data-sort="num" scope="col" title="Network receive (inbound) volume from sample rates (MBps × Δt), compact K/M/G. Shows — until samples arrive.">NRx</th>
             </tr>
         </thead>
         <tbody>
@@ -119,10 +119,7 @@ else
                         <div class="text-secondary small">@(string.IsNullOrWhiteSpace(m.LastIp) ? "—" : m.LastIp.Trim())</div>
                     </td>
                     <td class="hd-col-status" data-sort-value="@m.Status">
-                        <span class="hd-status-pill" title="@m.Status">
-                            <span class="hd-status-dot hd-status-@m.Status.ToString().ToLowerInvariant()" aria-hidden="true"></span>
-                            <span class="hd-status-label">@m.Status</span>
-                        </span>
+                        <span class="hd-status-text hd-status-@m.Status.ToString().ToLowerInvariant()" title="@m.Status">@m.Status</span>
                     </td>
                     <td class="hd-col-user" data-sort-value="@(m.LastUser ?? "")" title="@(m.LastUser ?? "")">@(m.LastUser ?? "—")</td>
                     <td class="hd-col-pct hd-util-cycle" data-sort-value="@u.ActivePct" title="Period @MachineUtilisationService.PeriodOptions.First(p => p.Key == u.PeriodKey).Label — click to cycle">@MachineUtilisationService.FormatPct(u.ActivePct)</td>
@@ -161,7 +158,8 @@ else
           sectionHeaders.set(tr.dataset.teamSection || '', tr);
         });
         const machineRows = [...tbody.querySelectorAll('tr.hd-machine-row')];
-        const asc = th.dataset.dir !== 'asc';
+        // First click / empty dir → descending; then toggle asc ↔ desc.
+        const asc = th.dataset.dir === 'desc';
         headers.forEach((h) => {
           h.dataset.dir = '';
           h.classList.remove('sorted-asc', 'sorted-desc');

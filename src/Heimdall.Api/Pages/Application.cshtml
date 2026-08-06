@@ -197,7 +197,8 @@ else if (d is not null)
         const type = th.dataset.sort;
         const tbody = table.tBodies[0];
         const rows = [...tbody.querySelectorAll('tr')].filter(r => r.children.length > 1);
-        const asc = th.dataset.dir !== 'asc';
+        // First click / empty dir → descending; then toggle asc ↔ desc.
+        const asc = th.dataset.dir === 'desc';
         headers.forEach(h => { h.dataset.dir = ''; h.classList.remove('sorted-asc', 'sorted-desc'); });
         th.dataset.dir = asc ? 'asc' : 'desc';
         th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');

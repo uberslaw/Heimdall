@@ -42,7 +42,7 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
     public string Sort { get; set; } = "name";
 
     [BindProperty(SupportsGet = true)]
-    public string Dir { get; set; } = "asc";
+    public string Dir { get; set; } = "desc";
 
     public async Task OnGetAsync()
     {
