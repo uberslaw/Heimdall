@@ -195,6 +195,16 @@ public sealed class Worker(
         }
 
         var hw = _hardware;
+        List<DiskVolumeDto> volumes = [];
+        try
+        {
+            volumes = HardwareInventoryCollector.TryCollectVolumes().ToList();
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Logical disk volume collect failed");
+        }
+
         List<string> acks;
         List<CommandExecutionReportDto> reports;
         lock (_commandsToAck)
@@ -236,6 +246,7 @@ public sealed class Worker(
                 SmbiosUuid = hw?.SmbiosUuid,
                 OsInstallDateUtc = hw?.OsInstallDateUtc,
                 WindowsFolderCreatedUtc = hw?.WindowsFolderCreatedUtc,
+                DiskVolumes = volumes,
                 PrimaryIpAddress = NetworkInfoHelper.TryGetPrimaryIPv4(),
                 TermServiceStatus = TermServiceHelper.GetStatus(),
                 TuflowRunStatus = TuflowRunHelper.ReadCurrentStatus(),

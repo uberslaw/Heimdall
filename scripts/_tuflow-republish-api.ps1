@@ -23,8 +23,19 @@ try {
     if (Test-Path -LiteralPath $publish) {
         Remove-Item -LiteralPath $publish -Recurse -Force
     }
-    dotnet publish 'C:\Heimdall\src\Heimdall.Api\Heimdall.Api.csproj' -c Release -o $publish --self-contained false -v q
-    if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed: $LASTEXITCODE" }
+    $publishLog = Join-Path $logDir ("republish-api-publish-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
+    # Capture compile errors — quiet (-v q) alone hides why publish fails.
+    & dotnet publish 'C:\Heimdall\src\Heimdall.Api\Heimdall.Api.csproj' -c Release -o $publish --self-contained false -v minimal *>&1 |
+        Tee-Object -FilePath $publishLog |
+        ForEach-Object { $_ }
+    if ($LASTEXITCODE -ne 0) {
+        Write-RepublishLog "Publish log: $publishLog"
+        $errLines = Get-Content -LiteralPath $publishLog -ErrorAction SilentlyContinue |
+            Where-Object { $_ -match 'error ' } |
+            Select-Object -First 20
+        foreach ($e in $errLines) { Write-RepublishLog "  $e" }
+        throw "dotnet publish failed: $LASTEXITCODE (see $publishLog)"
+    }
 
     Write-RepublishLog 'Stopping HeimdallApi...'
     Stop-Service HeimdallApi -Force -ErrorAction SilentlyContinue

@@ -33,6 +33,12 @@ public class Machine
     public string? AppAnalysisProposalJson { get; set; }
     /// <summary>Last merged process inventory snapshot from agent discovery + ProcessRuns (paths for UI/CSV).</summary>
     public string? DiscoveredInventoryJson { get; set; }
+    /// <summary>When the agent last uploaded a process inventory snapshot (UTC).</summary>
+    public DateTimeOffset? InventoryCollectedUtc { get; set; }
+    /// <summary>JSON array of <see cref="Heimdall.Shared.Contracts.DiskVolumeDto"/> from the agent.</summary>
+    public string? DiskVolumesJson { get; set; }
+    /// <summary>When DiskVolumesJson was last refreshed (UTC).</summary>
+    public DateTimeOffset? DiskVolumesUtc { get; set; }
 
     // --- Cost / hardware inventory (manual + optional agent enrich) ---
     public decimal? PurchaseCost { get; set; }
