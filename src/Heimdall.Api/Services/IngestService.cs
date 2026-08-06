@@ -464,6 +464,57 @@ public class ConfigService(HeimdallDbContext db)
             }
         }
 
+        // Team app-list links + per-machine overrides (override wins)
+        if (machine is not null)
+        {
+            var ignoredListIds = await db.MachineAppListOverrides.AsNoTracking()
+                .Where(o => o.MachineId == machine.Id && o.IsExcluded)
+                .Select(o => o.AppListId)
+                .ToListAsync(ct);
+            var ignoredSet = ignoredListIds.ToHashSet();
+
+            // Drop assignment-sourced processes from ignored lists
+            if (ignoredSet.Count > 0)
+            {
+                var ignoredNames = await db.AppListEntries.AsNoTracking()
+                    .Where(e => ignoredSet.Contains(e.AppListId))
+                    .Select(e => e.ProcessName)
+                    .ToListAsync(ct);
+                include.RemoveAll(p => ignoredNames.Contains(p, StringComparer.OrdinalIgnoreCase));
+            }
+
+            if (machine.TeamId is int teamId)
+            {
+                var trackLinks = await db.TeamAppListLinks.AsNoTracking()
+                    .Include(l => l.AppList).ThenInclude(a => a.Entries)
+                    .Where(l => l.TeamId == teamId && !l.IsExcluded)
+                    .ToListAsync(ct);
+                foreach (var link in trackLinks)
+                {
+                    if (ignoredSet.Contains(link.AppListId))
+                        continue;
+                    foreach (var entry in link.AppList.Entries)
+                    {
+                        if (!include.Contains(entry.ProcessName, StringComparer.OrdinalIgnoreCase))
+                            include.Add(entry.ProcessName);
+                    }
+                }
+            }
+
+            var forceTrack = await db.MachineAppListOverrides.AsNoTracking()
+                .Include(o => o.AppList).ThenInclude(a => a.Entries)
+                .Where(o => o.MachineId == machine.Id && !o.IsExcluded)
+                .ToListAsync(ct);
+            foreach (var o in forceTrack)
+            {
+                foreach (var entry in o.AppList.Entries)
+                {
+                    if (!include.Contains(entry.ProcessName, StringComparer.OrdinalIgnoreCase))
+                        include.Add(entry.ProcessName);
+                }
+            }
+        }
+
         // Apply active pauses from all applicable tracking configs.
         var now = DateTimeOffset.UtcNow;
         var applicableIds = applicable.Select(c => c.Id).Where(id => id > 0).ToList();
@@ -1486,6 +1537,18 @@ public static class SeedData
             FROM AppLists
             WHERE TeamId IS NOT NULL
             """);
+
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS MachineAppListOverrides (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MachineId INTEGER NOT NULL,
+                AppListId INTEGER NOT NULL,
+                IsExcluded INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE,
+                FOREIGN KEY (AppListId) REFERENCES AppLists(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_MachineAppListOverrides_MachineId_AppListId ON MachineAppListOverrides(MachineId, AppListId)");
 
         // Phase 1 — Staff RDP pool + booking
         await TryExec(db, "ALTER TABLE Teams ADD COLUMN IsPublicFacing INTEGER NOT NULL DEFAULT 0");

@@ -1,0 +1,59 @@
+@page
+@model Heimdall.Api.Pages.Teams.EditPersonModel
+@{
+    ViewData["Title"] = Model.IsEdit ? "Edit person" : "Add person";
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <h1 class="hd-title mb-1">@(Model.IsEdit ? "Edit person" : "Add person")</h1>
+    @if (Model.PersonTeamId > 0)
+    {
+        <a class="btn btn-ghost btn-sm" asp-page="/Teams/Detail" asp-route-id="@Model.PersonTeamId" asp-route-tab="membership">Back to team</a>
+    }
+    else
+    {
+        <a class="btn btn-ghost btn-sm" asp-page="/Teams">Back to teams</a>
+    }
+</div>
+
+@if (Model.FormError is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<form method="post" class="hd-panel mb-4" style="max-width: 32rem;">
+    <input type="hidden" asp-for="EditingPersonId" />
+    <div class="mb-3">
+        <label class="form-label" asp-for="PersonUsername">Username</label>
+        <input class="form-control" asp-for="PersonUsername" placeholder="firstname.lastname or DOMAIN\user" required />
+    </div>
+    <div class="mb-3">
+        <label class="form-label" asp-for="PersonDisplayName">Display name (optional)</label>
+        <input class="form-control" asp-for="PersonDisplayName" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label" asp-for="PersonEmail">Email (optional)</label>
+        <input class="form-control" asp-for="PersonEmail" type="email" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label" asp-for="PersonTeamId">Team</label>
+        <select class="form-select" asp-for="PersonTeamId" required>
+            <option value="0">— select —</option>
+            @foreach (var t in Model.TeamOptions)
+            {
+                <option value="@t.Id">@t.Label</option>
+            }
+        </select>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+        <button type="submit" class="hd-btn hd-btn-gold">Save</button>
+        @if (Model.PersonTeamId > 0)
+        {
+            <a class="hd-btn hd-btn-silver" asp-page="/Teams/Detail" asp-route-id="@Model.PersonTeamId" asp-route-tab="membership">Cancel</a>
+        }
+        else
+        {
+            <a class="hd-btn hd-btn-silver" asp-page="/Teams">Cancel</a>
+        }
+    </div>
+</form>

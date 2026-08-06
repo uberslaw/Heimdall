@@ -258,11 +258,11 @@
     <h2 class="h5">Teams</h2>
     <p class="text-secondary small mb-2"><strong>Purpose:</strong> org teams for Ops machine sections, people, app lists, and Staff RDP visibility. Under <strong>Admin → Teams</strong>.</p>
     <ol class="small mb-0">
-        <li>Create, rename, or delete teams (canonical names are seeded: Flood, Acoustics, Visualisation, Buildings, Energy, TSS, General, Traffic, Civil).</li>
-        <li>Tick <strong>Public-facing</strong> so machines on that team appear in the Staff RDP pool (do not mark Flood/TUFLOW teams public).</li>
-        <li><strong>Edit Team</strong> — add people by username (<code>firstname.lastname</code>; CSV supported) and manage <strong>Team Members</strong>.</li>
-        <li><strong>Edit Fleet</strong> — pick a team, Edit, then move machines between Current Fleet and Current Team; Save to persist.</li>
-        <li>Link app lists with <em>Track List</em> (Actively Tracking) or tick <em>Do Not Track</em> (Ignoring). <a asp-page="/AppLists">Customize</a> opens the App lists page.</li>
+        <li>The list shows each team’s people, machines, and tracking / ignored app-list counts. Use <strong>Add team</strong> or <strong>Import CSV</strong>; open a row for detail.</li>
+        <li>On <strong>Edit team</strong>, set name, code, parent, and <strong>Public-facing</strong> (machines appear in the Staff RDP pool — do not mark Flood/TUFLOW teams public).</li>
+        <li><strong>Membership</strong> — add/edit/remove people (<code>firstname.lastname</code>); assign or unassign machines (never deletes a machine from the database).</li>
+        <li><strong>App lists</strong> — link lists as Tracking or Do not track for the whole team; use <strong>Machine overrides</strong> to force track or ignore a list on one host (override wins).</li>
+        <li>CSV import supports <code>Username,Team</code> or full columns including <code>ParentTeam</code> and optional <code>Code</code>. Catalog editing stays on <a asp-page="/AppLists">App lists</a>.</li>
     </ol>
 </section>
 

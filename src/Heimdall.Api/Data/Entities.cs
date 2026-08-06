@@ -441,6 +441,20 @@ public class AppListEntry
     public string? DisplayName { get; set; }
 }
 
+/// <summary>
+/// Per-machine override of a team's app-list track/ignore. Wins over <see cref="TeamAppListLink"/> for that host.
+/// IsExcluded = true → do not track this list on this machine; false → force track even if team ignores.
+/// </summary>
+public class MachineAppListOverride
+{
+    public int Id { get; set; }
+    public int MachineId { get; set; }
+    public Machine Machine { get; set; } = null!;
+    public int AppListId { get; set; }
+    public AppList AppList { get; set; } = null!;
+    public bool IsExcluded { get; set; }
+}
+
 /// <summary>Applies an AppList to Global / Region / Country / Office / Group / Machine scope(s).</summary>
 public class AppListAssignment
 {

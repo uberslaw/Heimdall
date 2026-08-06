@@ -1,0 +1,44 @@
+@page
+@model Heimdall.Api.Pages.Teams.ImportCsvModel
+@{
+    ViewData["Title"] = "Import teams CSV";
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <h1 class="hd-title mb-1">Import CSV</h1>
+    <a class="btn btn-ghost btn-sm" asp-page="/Teams">Back to teams</a>
+</div>
+
+@if (Model.FormError is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<div class="hd-panel mb-4" style="max-width: 40rem;">
+    <p class="text-secondary small mb-3">
+        Bulk-link usernames to teams. Header row required.
+        Simpler format also works: <code>Username,Team</code>.
+    </p>
+    <p class="mb-2"><strong>Expected columns</strong>:</p>
+    <pre class="p-3 rounded mb-3" style="background: var(--hd-panel-2); overflow-x: auto;">Username,Domain,DisplayName,Email,Team,ParentTeam
+jsmith,ARUP,Jane Smith,jane.smith@example.com,Digital,Buildings
+ajones,,Alex Jones,alex.jones@example.com,Structures,</pre>
+    <p class="mb-3 text-secondary small">
+        Optional column: <code>Code</code> (team code). Domain is optional.
+        Username is typically <code>firstname.lastname</code>.
+    </p>
+    <p class="mb-3">
+        <a class="hd-btn hd-btn-silver" asp-page-handler="Template">Download CSV template</a>
+    </p>
+
+    <form method="post" enctype="multipart/form-data">
+        <div class="mb-3">
+            <label class="form-label" for="csv-file">CSV file</label>
+            <input class="form-control" type="file" name="CsvFile" id="csv-file" accept=".csv,text/csv" required />
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <button type="submit" class="hd-btn hd-btn-gold">Import</button>
+            <a class="hd-btn hd-btn-silver" asp-page="/Teams">Cancel</a>
+        </div>
+    </form>
+</div>

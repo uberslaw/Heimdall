@@ -1,0 +1,225 @@
+@page
+@model Heimdall.Api.Pages.Teams.DetailModel
+@using Heimdall.Api.Pages.Teams
+@{
+    ViewData["Title"] = Model.Team.Name;
+    var isMembership = Model.Tab == "membership";
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+    <div>
+        <h1 class="hd-title mb-1">@Model.Team.Name</h1>
+        <p class="text-secondary small mb-0">
+            @(Model.Team.Code is string c ? $"Code {c} · " : "")
+            @(Model.Team.IsPublicFacing ? "Public-facing" : "Not public-facing")
+        </p>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+        <a class="hd-btn hd-btn-silver" asp-page="/Teams/EditTeam" asp-route-id="@Model.Team.Id">Edit team</a>
+        <a class="btn btn-ghost btn-sm" asp-page="/Teams">All teams</a>
+    </div>
+</div>
+
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<ul class="nav nav-tabs hd-ops-tabs mb-3" role="tablist">
+    <li class="nav-item" role="presentation">
+        <a class="nav-link @(isMembership ? "active" : null)"
+           asp-page="/Teams/Detail" asp-route-id="@Model.Team.Id" asp-route-tab="membership"
+           role="tab" aria-selected="@(isMembership ? "true" : "false")">Membership</a>
+    </li>
+    <li class="nav-item" role="presentation">
+        <a class="nav-link @(!isMembership ? "active" : null)"
+           asp-page="/Teams/Detail" asp-route-id="@Model.Team.Id" asp-route-tab="apps"
+           role="tab" aria-selected="@(!isMembership ? "true" : "false")">App lists</a>
+    </li>
+</ul>
+
+@if (isMembership)
+{
+    <div class="hd-panel mb-4">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+            <h2 class="h5 mb-0">People</h2>
+            <a class="hd-btn hd-btn-silver" asp-page="/Teams/EditPerson" asp-route-teamId="@Model.Team.Id">Add person</a>
+        </div>
+        @if (Model.People.Count == 0)
+        {
+            <p class="text-secondary mb-0">No people assigned.</p>
+        }
+        else
+        {
+            <table class="hd-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Display</th>
+                        <th>Email</th>
+                        <th>Seen</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var p in Model.People)
+                {
+                    <tr>
+                        <td><code>@TeamPageHelpers.FormatUser(p.Username, p.Domain)</code></td>
+                        <td>@(p.DisplayName ?? "—")</td>
+                        <td>@(p.Email ?? "—")</td>
+                        <td>@(p.SeenInSessions ? "Yes" : "—")</td>
+                        <td class="text-nowrap">
+                            <a class="btn btn-ghost btn-sm" asp-page="/Teams/EditPerson" asp-route-id="@p.Id">Edit</a>
+                            <form method="post" asp-page-handler="DeletePerson" class="d-inline"
+                                  onsubmit="return confirm('Remove this person assignment?');">
+                                <input type="hidden" name="id" value="@Model.Team.Id" />
+                                <input type="hidden" name="PersonId" value="@p.Id" />
+                                <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    <div class="hd-panel mb-4">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+            <h2 class="h5 mb-0">Machines</h2>
+            <a class="hd-btn hd-btn-silver" asp-page="/Teams/AssignMachines" asp-route-teamId="@Model.Team.Id">Assign machines</a>
+        </div>
+        @if (Model.Machines.Count == 0)
+        {
+            <p class="text-secondary mb-0">No machines on this team.</p>
+        }
+        else
+        {
+            <table class="hd-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Hostname</th>
+                        <th>Friendly name</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var m in Model.Machines)
+                {
+                    <tr>
+                        <td>
+                            <a asp-page="/Machine" asp-route-Hostname="@m.Hostname"><code>@m.Hostname</code></a>
+                        </td>
+                        <td>@(m.FriendlyName ?? "—")</td>
+                        <td class="text-nowrap">
+                            <form method="post" asp-page-handler="UnassignMachine" class="d-inline"
+                                  onsubmit="return confirm('Unassign @m.Hostname from this team?');">
+                                <input type="hidden" name="id" value="@Model.Team.Id" />
+                                <input type="hidden" name="machineId" value="@m.Id" />
+                                <button type="submit" class="btn btn-ghost btn-sm">Unassign</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
+}
+else
+{
+    <div class="d-flex flex-wrap gap-2 mb-3">
+        <a class="hd-btn hd-btn-gold" asp-page="/Teams/LinkAppList" asp-route-teamId="@Model.Team.Id">Link list</a>
+        <a class="hd-btn hd-btn-silver" asp-page="/Teams/MachineOverride" asp-route-teamId="@Model.Team.Id">
+            Machine overrides@(Model.OverrideCount > 0 ? $" ({Model.OverrideCount})" : "")
+        </a>
+        <a class="hd-btn hd-btn-black" asp-page="/AppLists">App lists catalog</a>
+    </div>
+
+    <div class="hd-panel mb-4">
+        <h2 class="h5 mb-3">Tracking</h2>
+        @if (Model.TrackingLists.Count == 0)
+        {
+            <p class="text-secondary mb-0">No tracking lists linked.</p>
+        }
+        else
+        {
+            <table class="hd-table mb-0">
+                <thead>
+                    <tr>
+                        <th>List</th>
+                        <th>Apps</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var a in Model.TrackingLists)
+                {
+                    <tr>
+                        <td><strong>@a.Name</strong> <span class="text-secondary small">(@a.EntryCount)</span></td>
+                        <td class="small text-secondary" title="@a.AppsSummary">@(a.AppsSummary.Length > 80 ? a.AppsSummary[..80] + "…" : a.AppsSummary)</td>
+                        <td class="text-nowrap">
+                            <form method="post" asp-page-handler="SetAppListExcluded" class="d-inline">
+                                <input type="hidden" name="id" value="@Model.Team.Id" />
+                                <input type="hidden" name="AppListId" value="@a.Id" />
+                                <input type="hidden" name="excluded" value="true" />
+                                <button type="submit" class="btn btn-ghost btn-sm">Do not track</button>
+                            </form>
+                            <form method="post" asp-page-handler="UnlinkAppList" class="d-inline"
+                                  onsubmit="return confirm('Unlink @a.Name?');">
+                                <input type="hidden" name="id" value="@Model.Team.Id" />
+                                <input type="hidden" name="AppListId" value="@a.Id" />
+                                <button type="submit" class="btn btn-ghost btn-sm">Unlink</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    <div class="hd-panel mb-4">
+        <h2 class="h5 mb-3">Do not track</h2>
+        @if (Model.IgnoredLists.Count == 0)
+        {
+            <p class="text-secondary mb-0">No ignored lists.</p>
+        }
+        else
+        {
+            <table class="hd-table mb-0">
+                <thead>
+                    <tr>
+                        <th>List</th>
+                        <th>Apps</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var a in Model.IgnoredLists)
+                {
+                    <tr>
+                        <td><strong>@a.Name</strong> <span class="text-secondary small">(@a.EntryCount)</span></td>
+                        <td class="small text-secondary" title="@a.AppsSummary">@(a.AppsSummary.Length > 80 ? a.AppsSummary[..80] + "…" : a.AppsSummary)</td>
+                        <td class="text-nowrap">
+                            <form method="post" asp-page-handler="SetAppListExcluded" class="d-inline">
+                                <input type="hidden" name="id" value="@Model.Team.Id" />
+                                <input type="hidden" name="AppListId" value="@a.Id" />
+                                <input type="hidden" name="excluded" value="false" />
+                                <button type="submit" class="btn btn-ghost btn-sm">Track</button>
+                            </form>
+                            <form method="post" asp-page-handler="UnlinkAppList" class="d-inline"
+                                  onsubmit="return confirm('Unlink @a.Name?');">
+                                <input type="hidden" name="id" value="@Model.Team.Id" />
+                                <input type="hidden" name="AppListId" value="@a.Id" />
+                                <button type="submit" class="btn btn-ghost btn-sm">Unlink</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
+}

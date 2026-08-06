@@ -1,0 +1,56 @@
+@page
+@model Heimdall.Api.Pages.Teams.EditTeamModel
+@{
+    ViewData["Title"] = Model.IsEdit ? "Edit team" : "Add team";
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <h1 class="hd-title mb-1">@(Model.IsEdit ? "Edit team" : "Add team")</h1>
+    <a class="btn btn-ghost btn-sm" asp-page="/Teams">Back to teams</a>
+</div>
+
+@if (!ViewData.ModelState.IsValid)
+{
+    <div class="alert alert-danger">
+        <div asp-validation-summary="All"></div>
+    </div>
+}
+
+<form method="post" class="hd-panel mb-4" style="max-width: 32rem;">
+    <input type="hidden" asp-for="EditingTeamId" />
+    <div class="mb-3">
+        <label class="form-label" asp-for="TeamName">Name</label>
+        <input class="form-control" asp-for="TeamName" placeholder="e.g. Digital" required />
+    </div>
+    <div class="mb-3">
+        <label class="form-label" asp-for="TeamCode">Code (optional)</label>
+        <input class="form-control" asp-for="TeamCode" placeholder="e.g. DIG" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label" asp-for="TeamParentId">Parent team</label>
+        <select class="form-select" asp-for="TeamParentId">
+            <option value="">— none —</option>
+            @foreach (var t in Model.TeamOptions.Where(o => o.Id != Model.EditingTeamId))
+            {
+                <option value="@t.Id">@t.Label</option>
+            }
+        </select>
+    </div>
+    <div class="mb-3 form-check">
+        <input class="form-check-input" type="checkbox" asp-for="TeamIsPublicFacing" id="teamPublicFacing" />
+        <label class="form-check-label" for="teamPublicFacing">
+            Public-facing (machines on this team appear in Staff RDP pool)
+        </label>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+        <button type="submit" class="hd-btn hd-btn-gold">@(Model.IsEdit ? "Save" : "Create")</button>
+        @if (Model.IsEdit)
+        {
+            <a class="hd-btn hd-btn-silver" asp-page="/Teams/Detail" asp-route-id="@Model.EditingTeamId">Cancel</a>
+        }
+        else
+        {
+            <a class="hd-btn hd-btn-silver" asp-page="/Teams">Cancel</a>
+        }
+    </div>
+</form>

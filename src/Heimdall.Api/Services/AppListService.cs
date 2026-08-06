@@ -584,14 +584,62 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
             .ThenByDescending(a => a.Priority)
             .ToList();
 
+        // Team links + machine overrides (override wins per AppListId)
+        var teamLinkedIds = new HashSet<int>();
+        var ignoredOverrideIds = new HashSet<int>();
+        var trackOverrideLists = new List<AppList>();
+        if (machine?.TeamId is int teamId)
+        {
+            var teamLinks = await db.TeamAppListLinks.AsNoTracking()
+                .Include(l => l.AppList).ThenInclude(a => a.Entries)
+                .Include(l => l.AppList).ThenInclude(a => a.Team)
+                .Where(l => l.TeamId == teamId)
+                .ToListAsync(ct);
+
+            var overrides = await db.MachineAppListOverrides.AsNoTracking()
+                .Include(o => o.AppList).ThenInclude(a => a.Entries)
+                .Include(o => o.AppList).ThenInclude(a => a.Team)
+                .Where(o => o.MachineId == machine.Id)
+                .ToListAsync(ct);
+
+            foreach (var o in overrides)
+            {
+                if (o.IsExcluded)
+                    ignoredOverrideIds.Add(o.AppListId);
+                else
+                    trackOverrideLists.Add(o.AppList);
+            }
+
+            foreach (var link in teamLinks)
+            {
+                if (ignoredOverrideIds.Contains(link.AppListId))
+                    continue;
+                // Team ignore unless machine forces track
+                if (link.IsExcluded && !trackOverrideLists.Any(a => a.Id == link.AppListId))
+                    continue;
+                teamLinkedIds.Add(link.AppListId);
+            }
+        }
+        else if (machine is not null)
+        {
+            var overrides = await db.MachineAppListOverrides.AsNoTracking()
+                .Include(o => o.AppList).ThenInclude(a => a.Entries)
+                .Include(o => o.AppList).ThenInclude(a => a.Team)
+                .Where(o => o.MachineId == machine.Id && !o.IsExcluded)
+                .ToListAsync(ct);
+            trackOverrideLists.AddRange(overrides.Select(o => o.AppList));
+        }
+
         var processes = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var infos = new List<ActiveAppListInfo>();
+
         foreach (var a in matching)
+        {
+            if (ignoredOverrideIds.Contains(a.AppListId))
+                continue;
             foreach (var e in a.AppList.Entries)
                 processes.Add(e.ProcessName);
-
-        return new MachineAppListsView(
-            hostname,
-            matching.Select(a => new ActiveAppListInfo(
+            infos.Add(new ActiveAppListInfo(
                 a.Id,
                 a.AppListId,
                 a.AppList.Name,
@@ -601,7 +649,60 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
                 a.AppList.IsAutoDiscovered,
                 a.AppList.Entries.Count,
                 a.Scope == ConfigScope.Machine &&
-                string.Equals(a.ScopeValue, hostname, StringComparison.OrdinalIgnoreCase))).ToList(),
+                string.Equals(a.ScopeValue, hostname, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        // Team-linked (tracked) lists not already present via assignment
+        if (machine?.TeamId is int tid)
+        {
+            var teamLinks = await db.TeamAppListLinks.AsNoTracking()
+                .Include(l => l.AppList).ThenInclude(a => a.Entries)
+                .Include(l => l.AppList).ThenInclude(a => a.Team)
+                .Where(l => l.TeamId == tid)
+                .ToListAsync(ct);
+
+            foreach (var link in teamLinks)
+            {
+                if (!teamLinkedIds.Contains(link.AppListId))
+                    continue;
+                if (infos.Any(i => i.AppListId == link.AppListId))
+                    continue;
+                foreach (var e in link.AppList.Entries)
+                    processes.Add(e.ProcessName);
+                infos.Add(new ActiveAppListInfo(
+                    0,
+                    link.AppListId,
+                    link.AppList.Name,
+                    link.AppList.Team?.Name,
+                    ConfigScope.Group,
+                    tid.ToString(),
+                    link.AppList.IsAutoDiscovered,
+                    link.AppList.Entries.Count,
+                    false));
+            }
+        }
+
+        foreach (var list in trackOverrideLists)
+        {
+            if (infos.Any(i => i.AppListId == list.Id))
+                continue;
+            foreach (var e in list.Entries)
+                processes.Add(e.ProcessName);
+            infos.Add(new ActiveAppListInfo(
+                0,
+                list.Id,
+                list.Name,
+                list.Team?.Name,
+                ConfigScope.Machine,
+                hostname,
+                list.IsAutoDiscovered,
+                list.Entries.Count,
+                true));
+        }
+
+        return new MachineAppListsView(
+            hostname,
+            infos,
             processes.ToList(),
             machine?.AppAnalysisStatus ?? AppAnalysisStatus.None,
             DeserializeProposals(machine?.AppAnalysisProposalJson));

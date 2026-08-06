@@ -1,4 +1,5 @@
 using Heimdall.Api.Data;
+using Heimdall.Api.Pages.Teams;
 using Heimdall.Api.Services;
 using Heimdall.Shared.Contracts;
 using Microsoft.AspNetCore.Mvc;
@@ -80,8 +81,8 @@ public class SessionsModel(StatsQueryService stats, HeimdallDbContext db) : Page
     {
         foreach (var p in people)
         {
-            var personKeys = TeamsModel.MatchKeys(p.Username, p.Domain).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var sessionKeys = TeamsModel.MatchKeys(username, domain);
+            var personKeys = TeamPageHelpers.MatchKeys(p.Username, p.Domain).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var sessionKeys = TeamPageHelpers.MatchKeys(username, domain);
             if (sessionKeys.Any(personKeys.Contains))
                 return p.Team.Name;
         }

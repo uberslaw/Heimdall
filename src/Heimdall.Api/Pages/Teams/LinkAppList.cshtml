@@ -1,0 +1,45 @@
+@page
+@model Heimdall.Api.Pages.Teams.LinkAppListModel
+@{
+    ViewData["Title"] = $"Link app list · {Model.TeamName}";
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <h1 class="hd-title mb-1">Link app list</h1>
+    <a class="btn btn-ghost btn-sm" asp-page="/Teams/Detail" asp-route-id="@Model.TeamId" asp-route-tab="apps">Back to @Model.TeamName</a>
+</div>
+
+@if (Model.FormError is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<form method="post" class="hd-panel mb-4" style="max-width: 32rem;">
+    <input type="hidden" asp-for="TeamId" />
+    <p class="text-secondary small mb-3">
+        Link a list to <strong>@Model.TeamName</strong> for tracking or do-not-track.
+        One list can be linked to many teams.
+    </p>
+    <div class="mb-3">
+        <label class="form-label" asp-for="LinkAppListId">App list</label>
+        <select class="form-select" asp-for="LinkAppListId" required>
+            <option value="0">— select —</option>
+            @foreach (var a in Model.LinkableAppLists)
+            {
+                var suffix = Model.AlreadyLinkedIds.Contains(a.Id) ? " (already linked)" : "";
+                <option value="@a.Id">@a.Name (@a.EntryCount)@suffix</option>
+            }
+        </select>
+    </div>
+    <div class="mb-3 form-check">
+        <input class="form-check-input" type="checkbox" asp-for="LinkAsIgnored" id="linkAsIgnored" />
+        <label class="form-check-label" for="linkAsIgnored">
+            Do not track (ignore) this list for the team
+        </label>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+        <button type="submit" class="hd-btn hd-btn-gold">Link</button>
+        <a class="hd-btn hd-btn-silver" asp-page="/Teams/Detail" asp-route-id="@Model.TeamId" asp-route-tab="apps">Cancel</a>
+        <a class="hd-btn hd-btn-black" asp-page="/AppLists">App lists catalog</a>
+    </div>
+</form>

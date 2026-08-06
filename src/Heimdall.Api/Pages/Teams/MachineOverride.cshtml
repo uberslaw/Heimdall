@@ -1,0 +1,122 @@
+@page
+@model Heimdall.Api.Pages.Teams.MachineOverrideModel
+@{
+    ViewData["Title"] = $"Machine app overrides · {Model.TeamName}";
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <h1 class="hd-title mb-1">Machine app overrides</h1>
+    <a class="btn btn-ghost btn-sm" asp-page="/Teams/Detail" asp-route-id="@Model.TeamId" asp-route-tab="apps">Back to @Model.TeamName</a>
+</div>
+
+@if (Model.FormError is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+@if (Model.TeamMachines.Count == 0)
+{
+    <div class="hd-panel mb-4">
+        <p class="text-secondary mb-0">No machines on this team. Assign machines first.</p>
+    </div>
+}
+else
+{
+    <form method="get" class="hd-panel mb-4" style="max-width: 28rem;">
+        <input type="hidden" name="teamId" value="@Model.TeamId" />
+        <label class="form-label" for="machineId">Machine</label>
+        <div class="d-flex gap-2">
+            <select class="form-select" name="machineId" id="machineId" onchange="this.form.submit()">
+                @foreach (var m in Model.TeamMachines)
+                {
+                    if (m.Id == Model.MachineId)
+                    {
+                        <option value="@m.Id" selected>@m.Hostname@(m.FriendlyName is string f ? $" ({f})" : "")</option>
+                    }
+                    else
+                    {
+                        <option value="@m.Id">@m.Hostname@(m.FriendlyName is string f ? $" ({f})" : "")</option>
+                    }
+                }
+            </select>
+        </div>
+    </form>
+
+    <div class="hd-panel mb-4">
+        <h2 class="h6 mb-2">Team defaults</h2>
+        @if (Model.TeamLinks.Count == 0)
+        {
+            <p class="text-secondary small mb-0">No app lists linked to this team yet.</p>
+        }
+        else
+        {
+            <ul class="small mb-0">
+                @foreach (var l in Model.TeamLinks)
+                {
+                    <li>@l.AppListName — @(l.IsExcluded ? "Do not track" : "Tracking")</li>
+                }
+            </ul>
+        }
+    </div>
+
+    <div class="hd-panel mb-4">
+        <h2 class="h6 mb-2">Overrides on this machine</h2>
+        <p class="text-secondary small mb-3">Override wins over the team link for this host only.</p>
+        @if (Model.ExistingOverrides.Count == 0)
+        {
+            <p class="text-secondary small mb-3">No overrides.</p>
+        }
+        else
+        {
+            <table class="hd-table mb-3">
+                <thead>
+                    <tr>
+                        <th>App list</th>
+                        <th>Mode</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var o in Model.ExistingOverrides)
+                {
+                    <tr>
+                        <td>@o.AppListName</td>
+                        <td>@(o.IsExcluded ? "Ignore" : "Track")</td>
+                        <td>
+                            <form method="post" asp-page-handler="Remove" class="d-inline">
+                                <input type="hidden" name="TeamId" value="@Model.TeamId" />
+                                <input type="hidden" name="MachineId" value="@Model.MachineId" />
+                                <input type="hidden" name="overrideId" value="@o.Id" />
+                                <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+
+        <form method="post" asp-page-handler="Save" style="max-width: 28rem;">
+            <input type="hidden" asp-for="TeamId" />
+            <input type="hidden" asp-for="MachineId" />
+            <div class="mb-3">
+                <label class="form-label" asp-for="AppListId">App list</label>
+                <select class="form-select" asp-for="AppListId" required>
+                    <option value="0">— select —</option>
+                    @foreach (var a in Model.AppLists)
+                    {
+                        <option value="@a.Id">@a.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" asp-for="IsExcluded">Override mode</label>
+                <select class="form-select" asp-for="IsExcluded">
+                    <option value="false">Track (force include)</option>
+                    <option value="true">Ignore (do not track)</option>
+                </select>
+            </div>
+            <button type="submit" class="hd-btn hd-btn-gold">Save override</button>
+        </form>
+    </div>
+}

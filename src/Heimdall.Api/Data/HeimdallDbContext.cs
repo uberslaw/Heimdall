@@ -23,6 +23,7 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<AppListEntry> AppListEntries => Set<AppListEntry>();
     public DbSet<AppListAssignment> AppListAssignments => Set<AppListAssignment>();
     public DbSet<TeamAppListLink> TeamAppListLinks => Set<TeamAppListLink>();
+    public DbSet<MachineAppListOverride> MachineAppListOverrides => Set<MachineAppListOverride>();
     public DbSet<AppListAuditLog> AppListAuditLogs => Set<AppListAuditLog>();
     public DbSet<MachineIdentityEvent> MachineIdentityEvents => Set<MachineIdentityEvent>();
     public DbSet<RemoteAccessGroup> RemoteAccessGroups => Set<RemoteAccessGroup>();
@@ -172,6 +173,19 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.AppList)
                 .WithMany(x => x.TeamLinks)
+                .HasForeignKey(x => x.AppListId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<MachineAppListOverride>(e =>
+        {
+            e.HasIndex(x => new { x.MachineId, x.AppListId }).IsUnique();
+            e.HasOne(x => x.Machine)
+                .WithMany()
+                .HasForeignKey(x => x.MachineId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.AppList)
+                .WithMany()
                 .HasForeignKey(x => x.AppListId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
