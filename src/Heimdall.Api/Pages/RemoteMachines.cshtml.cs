@@ -148,7 +148,7 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
         return RedirectToOpsOnline();
     }
 
-    private IActionResult RedirectToOpsOnline() => RedirectToPage("/Ops", new { tab = "online" });
+    private IActionResult RedirectToOpsOnline() => RedirectToPage("/Fleet", new { tab = "online" });
 
     private bool WantsAjax() =>
         string.Equals(Request.Headers.Accept.ToString(), "application/json", StringComparison.OrdinalIgnoreCase)

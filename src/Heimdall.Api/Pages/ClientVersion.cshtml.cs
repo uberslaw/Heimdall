@@ -81,7 +81,7 @@ public class ClientVersionModel(
     }
 
     private static IActionResult RedirectToOpsClients() =>
-        new RedirectResult("/Ops?tab=clients");
+        new RedirectResult("/Fleet?tab=clients");
 
     private async Task LoadAsync(CancellationToken ct)
     {

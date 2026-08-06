@@ -9,7 +9,7 @@
 
 <nav class="hd-panel mb-4" aria-label="Help sections">
     <div class="d-flex flex-wrap gap-2">
-        <a class="btn btn-ghost btn-sm" href="#ops">Ops</a>
+        <a class="btn btn-ghost btn-sm" href="#fleet">Fleet</a>
         <a class="btn btn-ghost btn-sm" href="#machines">Machines</a>
         <a class="btn btn-ghost btn-sm" href="#applications">Application Usage</a>
         <a class="btn btn-ghost btn-sm" href="#app-lists">App lists</a>
@@ -33,26 +33,27 @@
     </div>
 </nav>
 
-<section id="ops" class="hd-panel mb-4 hd-help-section">
-    <h2 class="h5">Ops</h2>
+<div id="ops" class="visually-hidden" aria-hidden="true"></div>
+<section id="fleet" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Fleet</h2>
     <p class="text-secondary small mb-2"><strong>Purpose:</strong> Digital Technology console — machines, sessions, online status, client version, cost, and stats in one place.</p>
     <ol class="small mb-0">
-        <li>Open <a asp-page="/Ops">Ops</a>. Tabs load on demand (only the active tab’s data runs on first paint).</li>
-        <li>Legacy URLs (<code>/</code>, Sessions, Online Status, Client Version, Cost, Stats) redirect into the matching Ops tab.</li>
+        <li>Open <a asp-page="/Fleet">Fleet</a>. Tabs load on demand (only the active tab’s data runs on first paint).</li>
+        <li>Legacy URLs (<code>/</code>, <code>/Ops</code>, Sessions, Online Status, Client Version, Cost, Stats) redirect into the matching Fleet tab.</li>
         <li>Online Status still uses on-demand Ping / Test RDP — probes are not run on every page load.</li>
     </ol>
 </section>
 
 <section id="machines" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Machines</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> fleet list by team — status and utilisation at a glance (Ops → All machines).</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> fleet list by team — status and utilisation at a glance (Fleet → All machines).</p>
     <ol class="small mb-0">
         <li>Machines are grouped under <strong>team section headings</strong>. Active app-list names for that team appear beside the heading.</li>
         <li><strong>Status</strong> (5‑minute check-in): green Active = online with a non-disconnected session; yellow Idle = online, no active session; red Off = no recent check-in.</li>
         <li><strong>Period</strong> (Today / 24h / 5d / 7d / 30d / All) sets Active / Passive / Free % and GPU·CPU·IO columns. Click an Active/Passive/Free cell to cycle that row’s period.</li>
         <li>Active % is non-disconnected session time over the calendar window. Passive and hardware totals need fleet samples (Historical Dashboard enrollment today); otherwise they show —.</li>
         <li>Name links to machine detail. Assign teams and app lists under <a asp-page="/Teams">Admin → Teams</a>.</li>
-        <li>Sessions live under <a asp-page="/Ops" asp-route-tab="sessions">Ops → Sessions</a>.</li>
+        <li>Sessions live under <a asp-page="/Fleet" asp-route-tab="sessions">Fleet → Sessions</a>.</li>
     </ol>
 </section>
 
@@ -185,7 +186,7 @@
 
 <section id="remote-machines" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Online Status</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> RDP/RDS health — also under <a asp-page="/Ops" asp-route-tab="online">Ops → Online status</a>.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> RDP/RDS health — also under <a asp-page="/Fleet" asp-route-tab="online">Fleet → Online status</a>.</p>
     <ol class="small mb-0">
         <li>Review per-machine RDP health, ping, and Terminal Services status (refreshed by the agent, plus on-demand from the API server).</li>
         <li>Use <em>Connect</em> to download a small <code>.rdp</code> file for that hostname (opens with Windows Remote Desktop / mstsc). Browsers cannot run <code>mstsc /v:</code> directly.</li>
@@ -266,7 +267,7 @@
 
 <section id="teams" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Teams</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> org teams for Ops machine sections, people, app lists, and Staff RDP visibility. Under <strong>Admin → Teams</strong>.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> org teams for Fleet machine sections, people, app lists, and Staff RDP visibility. Under <strong>Admin → Teams</strong>.</p>
     <ol class="small mb-0">
         <li>The list shows each team’s people, machines, and tracking / ignored app-list counts. Use <strong>Add team</strong> or <strong>Import CSV</strong>; open a row for detail.</li>
         <li>On <strong>Edit team</strong>, set name, code, parent, and <strong>Public-facing</strong> (machines appear in the Staff RDP pool — do not mark Flood/TUFLOW teams public).</li>
@@ -288,7 +289,7 @@
 
 <section id="cost" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Cost</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> hardware purchase cost, warranty, support hours, and inventory/reimage identity — under <a asp-page="/Ops" asp-route-tab="cost">Ops → Cost</a>.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> hardware purchase cost, warranty, support hours, and inventory/reimage identity — under <a asp-page="/Fleet" asp-route-tab="cost">Fleet → Cost</a>.</p>
     <ol class="small mb-0">
         <li>Edit a row to record purchase cost/currency, warranty dates, and hardware specs (or let the agent auto-fill what it can detect).</li>
         <li>Support hourly rate feeds into the <a asp-page="/Socratize" asp-fragment="socratize">Socratize</a> brief's cost-per-hour comparison.</li>
@@ -298,7 +299,7 @@
 
 <section id="stats" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Stats</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> usage analytics by machine scope — under <a asp-page="/Ops" asp-route-tab="stats">Ops → Stats</a>.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> usage analytics by machine scope — under <a asp-page="/Fleet" asp-route-tab="stats">Fleet → Stats</a>.</p>
     <ol class="small mb-0">
         <li>Pick a scope tab and date range; tables cover utilisation, app usage, and session counts for that scope.</li>
         <li>Click column headers to sort; use the filter box to narrow rows by name.</li>

@@ -147,7 +147,7 @@ public class CostModel(HeimdallDbContext db) : PageModel
         if (edit is int id) q.Add("edit=" + id);
         if (!string.IsNullOrWhiteSpace(Q)) q.Add("q=" + Uri.EscapeDataString(Q));
         if (!string.IsNullOrWhiteSpace(Warranty)) q.Add("warranty=" + Uri.EscapeDataString(Warranty));
-        return new RedirectResult("/Ops?" + string.Join("&", q));
+        return new RedirectResult("/Fleet?" + string.Join("&", q));
     }
 
     private async Task LoadEditAsync(int id)

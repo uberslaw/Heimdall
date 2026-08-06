@@ -359,7 +359,7 @@ html[data-theme="cosmic"] .hd-nav {
   text-decoration: none;
 }
 
-/* Ops tab row — override Bootstrap white active pill (unreadable on Cosmic). */
+/* Fleet tab row — override Bootstrap white active pill (unreadable on Cosmic). */
 .hd-ops-tabs {
   border-bottom-color: var(--hd-border);
   --bs-nav-tabs-border-color: var(--hd-border);
