@@ -1,25 +1,22 @@
-@*
-    NEW FILE — drop in as-is at: Heimdall.Api/Pages/FleetSimProgress.cshtml
-
-    Uses the same confirmed-real CSS classes as the Machine.cshtml TUFLOW panel patch (hd-panel,
-    hd-section-title, hd-table, table-responsive, badge-pill, text-secondary small) rather than the
-    guessed Bootstrap-ish classes the standalone TuflowRuns.cshtml skeleton used — see that file's own
-    header comment for the same caveat if you haven't restyled it yet.
-
-    One row per currently-active TUFLOW run across every Flood-enrolled machine — see
-    FleetSimProgressModel / TuflowRunService.GetFleetProgressAsync for exactly what "active" means and
-    how each figure is computed.
-*@
 @page
 @model Heimdall.Api.Pages.FleetSimProgressModel
 @{
     ViewData["Title"] = "Fleet Sim Progress";
+    var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
+    if (isPartial)
+        Layout = null;
 }
 
-<p class="text-secondary small"><a asp-page="/TuflowRuns">← TUFLOW Runs</a> (start/stop, licence usage)</p>
+@if (!isPartial)
+{
+    <p class="text-secondary small"><a asp-page="/TuflowRuns">← TUFLOW Runs</a> (start/stop, licence usage)</p>
+}
 
 <div class="hd-panel mb-3">
-    <h2 class="hd-section-title">Fleet Sim Progress</h2>
+    @if (!isPartial)
+    {
+        <h2 class="hd-section-title">Fleet Sim Progress</h2>
+    }
 
     @if (Model.Rows.Count == 0)
     {

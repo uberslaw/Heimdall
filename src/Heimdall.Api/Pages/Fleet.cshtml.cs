@@ -12,6 +12,7 @@ public class FleetModel : PageModel
     public static readonly (string Key, string Label, string PartialPath)[] Tabs =
     [
         ("machines", "All computers", "/Index"),
+        ("live", "Live", "/FleetLive"),
         ("sessions", "Sessions", "/Sessions"),
         ("online", "Online status", "/RemoteMachines"),
         ("clients", "Client version", "/ClientVersion"),

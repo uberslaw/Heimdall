@@ -9,6 +9,7 @@
   var tabs = document.querySelectorAll("[data-hd-ops-tab]");
   var cache = Object.create(null);
   var active = pane.getAttribute("data-hd-ops-active") || "machines";
+  var basePath = pane.getAttribute("data-hd-ops-base") || "/Fleet";
   var abort = null;
 
   function setLoading(on) {
@@ -43,8 +44,8 @@
   function loadTab(key, src, pushUrl) {
     activateTab(key);
     if (pushUrl) {
-      var url = "/Fleet?tab=" + encodeURIComponent(key);
-      history.pushState({ hdFleetTab: key }, "", url);
+      var url = basePath + "?tab=" + encodeURIComponent(key);
+      history.pushState({ hdOpsTab: key, hdOpsBase: basePath }, "", url);
     }
 
     if (cache[key]) {
@@ -83,7 +84,9 @@
         setLoading(false);
         body.hidden = false;
         body.innerHTML =
-          '<div class="alert alert-danger">Failed to load this tab. <a href="/Fleet?tab=' +
+          '<div class="alert alert-danger">Failed to load this tab. <a href="' +
+          basePath +
+          "?tab=" +
           encodeURIComponent(key) +
           '">Reload</a></div>';
       });
@@ -102,7 +105,7 @@
 
   window.addEventListener("popstate", function () {
     var params = new URLSearchParams(location.search);
-    var key = params.get("tab") || "machines";
+    var key = params.get("tab") || active;
     var link = document.querySelector('[data-hd-ops-tab="' + key + '"]');
     if (link) loadTab(key, link.getAttribute("data-hd-ops-src"), false);
   });

@@ -257,7 +257,10 @@
                                 <strong>@a.Name</strong>
                                 (@a.Scope@(string.IsNullOrEmpty(a.ScopeValue) ? "" : $":{a.ScopeValue}"))
                                 · @a.EntryCount apps
-                                @if (!string.IsNullOrEmpty(a.TeamName)) { <span>· team @a.TeamName</span> }
+                                @if (!string.IsNullOrEmpty(a.TeamName))
+                                {
+                                    <span>· team @a.TeamName</span>
+                                }
                             </li>
                         }
                     </ul>
@@ -277,9 +280,6 @@
                     <input type="search" class="form-control form-control-sm" id="team-apps-keyword" placeholder="Filter both tables…" autocomplete="off" />
                 </div>
 
-                @{
-                    var teamListOptions = Model.EditableAppLists;
-                }
                 <form method="post" id="team-apps-form" class="mb-4">
                     <input type="hidden" name="AnalyzeHostname" value="@Model.FocusHostname" />
                     <input type="hidden" name="LookupHostname" value="@Model.FocusHostname" />
@@ -288,7 +288,7 @@
                             <label class="form-label small">Target app list</label>
                             <select class="form-select form-select-sm" name="TargetAppListId" id="team-apps-target-list">
                                 <option value="">— select list —</option>
-                                @foreach (var l in teamListOptions)
+                                @foreach (var l in Model.EditableAppLists)
                                 {
                                     <option value="@l.Id">@l.Name (@l.EntryCount)</option>
                                 }

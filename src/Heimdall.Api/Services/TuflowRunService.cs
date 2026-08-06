@@ -4,15 +4,13 @@
 // Mirrors RemoteMachineService's PendingCommandsJson + *ProgressJson pattern (see that file) but for
 // TUFLOW start/stop. Register in DI the same way RemoteMachineService is registered.
 //
-// Machine scoping: per Chris's requirement — "I only want it run on Flood machines, and they need to
-// see how many TUFLOW runs / licences are in use on each machine" — this deliberately reuses the
-// *existing* FleetDashboardMachine enrollment (the same "Historical Dashboard (TUFLOW fleet POC)" list
-// FleetDashboardService already manages) rather than inventing a second, separate machine group. One
-// enrolled-machines list to maintain, not two. Manage which machines are "Flood" machines from whatever
-// page already enrolls/unenrolls Historical Dashboard machines (FleetDashboardService.EnrollAsync /
-// UnenrollAsync) — this file doesn't add a second enrollment UI.
+// Machine scoping: per Chris's requirement — "I only want it run on Flood machines…" — this reuses
+// FleetDashboardMachines as the Flood / TUFLOW allowlist (Enrollment under the Flood hub). Util and
+// 30s fleet snapshots are always-on for every known Machine; enrollment is NOT required for sampling.
+// One allowlist for TUFLOW startability / Flood sims — manage it via FleetDashboardService.EnrollAsync /
+// UnenrollAsync. This file doesn't add a second enrollment UI.
 //
-// License visibility: FleetDashboardService.GetLiveFleetAsync() already reports per-machine
+// License visibility: FleetDashboardService.GetLiveFleetAsync() (enrolled-only) reports per-machine
 // TuflowRunning (from 30s process-detection fleet snapshots, not just Heimdall-initiated runs — it
 // catches a manually-started TUFLOW too). This assumes one TUFLOW licence per running instance; if your
 // licence server can issue more than one licence to a single run (e.g. certain parallel/multi-domain
@@ -69,7 +67,7 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
             return (false, $"Machine '{hostname}' not found.", null);
 
         if (!await IsFloodEnrolledAsync(machine.Id, ct))
-            return (false, $"{hostname} is not enrolled as a Flood machine (Historical Dashboard enrollment). Enroll it there first.", null);
+            return (false, $"{hostname} is not enrolled as a Flood machine (Flood → Enrollment). Enroll it there first.", null);
 
         var currentStatus = DeserializeStatus(machine.TuflowRunStatusJson);
         if (IsActiveRunState(currentStatus?.State))
@@ -398,13 +396,8 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
             return [];
 
         var machineIds = activeRuns.Select(r => r.MachineId).Distinct().ToList();
-
-        // SQLite EF DateTimeOffset filters are unreliable — load by machine id, filter in memory. Same
-        // pattern as FleetDashboardService.LoadSnapshotsForMachinesAsync; not reused directly since that
-        // method is private to that class and this needs a per-run "since" cutoff, not one shared cutoff.
-        var allSnaps = await db.FleetMetricSnapshots.AsNoTracking()
-            .Where(s => machineIds.Contains(s.MachineId))
-            .ToListAsync(ct);
+        var earliest = activeRuns.Min(r => r.StartedUtc ?? r.RequestedUtc);
+        var allSnaps = await FleetSnapshotQuery.LoadForMachinesAsync(db, machineIds, earliest, toUtc: null, ct);
 
         var now = DateTimeOffset.UtcNow;
         var rows = new List<FleetSimProgressRow>();

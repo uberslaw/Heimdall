@@ -10,6 +10,7 @@
 <nav class="hd-panel mb-4" aria-label="Help sections">
     <div class="d-flex flex-wrap gap-2">
         <a class="btn btn-ghost btn-sm" href="#fleet">Fleet</a>
+        <a class="btn btn-ghost btn-sm" href="#fleet-live">Fleet Live</a>
         <a class="btn btn-ghost btn-sm" href="#machines">Computers</a>
         <a class="btn btn-ghost btn-sm" href="#applications">Application Usage</a>
         <a class="btn btn-ghost btn-sm" href="#app-lists">App lists</a>
@@ -20,7 +21,7 @@
         <a class="btn btn-ghost btn-sm" href="#sessions">Sessions</a>
         <a class="btn btn-ghost btn-sm" href="#remote-machines">Online Status</a>
         <a class="btn btn-ghost btn-sm" href="#tuflow-runs">TUFLOW Runs</a>
-        <a class="btn btn-ghost btn-sm" href="#historical-dashboard">Historical Dashboard</a>
+        <a class="btn btn-ghost btn-sm" href="#historical-dashboard">Flood hub</a>
         <a class="btn btn-ghost btn-sm" href="#staff-access">Staff RDP</a>
         <a class="btn btn-ghost btn-sm" href="#remote-access-groups">Remote Access Groups</a>
         <a class="btn btn-ghost btn-sm" href="#tracking-config">Tracking config</a>
@@ -36,11 +37,23 @@
 <div id="ops" class="visually-hidden" aria-hidden="true"></div>
 <section id="fleet" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Fleet</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> Digital Technology console — computers, sessions, online status, client version, cost, and stats in one place.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> Digital Technology console — computers, live util, sessions, online status, client version, cost, and stats in one place.</p>
     <ol class="small mb-0">
         <li>Open <a asp-page="/Fleet">Fleet</a>. Tabs load on demand (only the active tab’s data runs on first paint).</li>
         <li>Legacy URLs (<code>/</code>, <code>/Ops</code>, Sessions, Online Status, Client Version, Cost, Stats) redirect into the matching Fleet tab.</li>
+        <li><strong>Live</strong> shows estate-wide 30s util gauges for every known machine (not Flood-gated).</li>
         <li>Online Status still uses on-demand Ping / Test RDP — probes are not run on every page load.</li>
+    </ol>
+</section>
+
+<section id="fleet-live" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Fleet → Live</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> live CPU/GPU/RAM/disk/network for the whole estate — every machine with a Heimdall client.</p>
+    <ol class="small mb-0">
+        <li>Open <a asp-page="/Fleet" asp-route-tab="live">Fleet → Live</a>. Auto-refreshes every 30s.</li>
+        <li>Sampling is always-on after the agent’s first heartbeat — no Flood enrollment required.</li>
+        <li>Active / Idle badges apply while TUFLOW is detected on that host; most estate machines show gauges with Active/Idle as —.</li>
+        <li>Flood’s own Live tab (under <a asp-page="/Flood">Flood hub</a>) stays scoped to the Flood allowlist.</li>
     </ol>
 </section>
 
@@ -52,7 +65,7 @@
         <li>Summary counts (Computers / Active / Idle / Off) sit beside the Period control — gold labels with status dots, silver numbers underneath. Click any column header to sort asc/desc.</li>
         <li><strong>Status</strong> (5‑minute check-in): green Active = online with a non-disconnected session; yellow Idle = online, no active session; red Off = no recent check-in.</li>
         <li><strong>Period</strong> (Today / 24h / 5d / 7d / 30d / All) sets Active / Passive / Free % and GPU·CPU·IO columns. Click an Active/Passive/Free cell to cycle that row’s period.</li>
-        <li>Active % is non-disconnected session time over the calendar window. Passive, GPU/CPU hours, and disk/network columns need <strong>fleet metric samples</strong> (Historical Dashboard / Flood enrollment — 30s sampler). They are <em>not</em> driven by app tracking lists; without enrollment those cells show —.</li>
+        <li>Active % is non-disconnected session time over the calendar window. Passive, GPU/CPU hours, and disk/network columns use <strong>always-on 30s fleet samples</strong> from every Heimdall client (independent of Flood enrollment). Until samples arrive those cells show —.</li>
         <li>Name links to computer detail. Assign teams and app lists under <a asp-page="/Teams">Admin → Teams</a>.</li>
         <li>Sessions live under <a asp-page="/Fleet" asp-route-tab="sessions">Fleet → Sessions</a>.</li>
     </ol>
@@ -202,7 +215,7 @@
         Nav under <strong>Flood</strong> (visible only to <code>Heimdall:StaffAccess:AdminEmails</code> ∪ <code>Heimdall:FloodTeamEmails</code>).
     </p>
     <ol class="small">
-        <li>Enroll the modelling host on <strong>Historical Dashboard → Enrollment</strong> first.</li>
+        <li>Enroll the modelling host on <strong>Flood → Enrollment</strong> first (Flood allowlist — not required for util sampling).</li>
         <li>On <strong>TUFLOW Runs</strong>, enter exe path, <code>.tcf</code>, optional scenarios/events/run name, then Start. The agent picks up within ~20s.</li>
         <li><strong>Stop gracefully</strong> asks the launcher to send a process-group break so TUFLOW can finish the current checkpoint (resume-friendly if your <code>.tcf</code> writes restart files — see <code>tuflow-automation/tcf/</code>).</li>
         <li>Progress comes from TUFLOW’s own <code>.tsf</code>; crashes from <code>.tlf</code> ERROR lines. Machine detail also shows a TUFLOW panel + recent run history for flood-gated users.</li>
@@ -214,20 +227,23 @@
 </section>
 
 <section id="historical-dashboard" class="hd-panel mb-4 hd-help-section">
-    <h2 class="h5">Historical Dashboard</h2>
+    <h2 class="h5">Flood hub (Historical + Sims)</h2>
     <p class="text-secondary small mb-2">
-        <strong>Purpose:</strong> TUFLOW fleet POC — enroll a curated set of machines, collect always-on 30s resource snapshots, then review live gauges and historical totals/averages/rankings.
+        <strong>Purpose:</strong> Flood-gated workspace — Live / Historical analytics for the Flood allowlist, Fleet Sims progress, and Enrollment.
+        Open <a asp-page="/Flood">Flood</a> (visible only to <code>Heimdall:StaffAccess:AdminEmails</code> ∪ <code>Heimdall:FloodTeamEmails</code>).
+        Legacy <code>/HistoricalDashboard</code> and <code>/FleetSimProgress</code> URLs redirect into this hub.
     </p>
     <ol class="small">
-        <li><strong>Enrollment</strong> — search by hostname or last-known IP and add machines. Only enrolled hosts get the 30s fleet sampler (independent of Staff Access live metrics).</li>
-        <li><strong>Live Fleet</strong> — current CPU/GPU/RAM/disk/network from the latest snapshot, TUFLOW status (Active / Idle / Not Running), today’s runtime/active/GPU hours. Auto-refreshes every 30s.</li>
+        <li><strong>Enrollment</strong> — Flood allowlist for TUFLOW Runs / sims. Search by hostname or last-known IP. Util sampling does <em>not</em> require enrollment (always-on for all clients).</li>
+        <li><strong>Live</strong> — current CPU/GPU/RAM/disk/network from the latest snapshot on enrolled Flood machines, TUFLOW status (Active / Idle / Not Running), today’s runtime/active/GPU hours. Auto-refreshes every 30s. Estate-wide live util lives under <a asp-page="/Fleet" asp-route-tab="live">Fleet → Live</a>.</li>
         <li><strong>Active vs Idle</strong> — while TUFLOW is running: Active if <em>TUFLOW process</em> GPU &gt; 5%, CPU &gt; 10%, or disk read/write &gt; 5 MB/s; otherwise Idle. Not Running when TUFLOW is not detected. Live gauges still show system-wide util.</li>
-        <li><strong>Historical Analytics</strong> — fleet summary cards, Totals (today / week / month / 30d / 3m / 6m / year) or Averages (daily / 7-day / monthly / all-time), plus rankings (GPU, CPU, RAM, disk I/O, most active).</li>
+        <li><strong>Historical</strong> — fleet summary cards for enrolled machines, Totals (today / week / month / 30d / 3m / 6m / year) or Averages (daily / 7-day / monthly / all-time), plus rankings (GPU, CPU, RAM, disk I/O, most active).</li>
+        <li><strong>Fleet Sims</strong> — active TUFLOW runs across Flood-enrolled machines (progress, elapsed, process/machine averages).</li>
         <li><strong>Machine detail</strong> — click a hostname for period summary cards and Chart.js time series (24h / 7d / 30d / 90d / 365d).</li>
     </ol>
     <p class="text-secondary small mb-0">
-        <strong>Retention:</strong> raw 30s samples are intended to be kept ~90 days by default.
-        Rough disk estimate: about <em>N × 2,880</em> rows per day (N = enrolled machines), so 10 hosts ≈ 28.8k rows/day.
+        <strong>Retention:</strong> raw 30s samples are purged after ~90 days by default (<code>Heimdall:FleetSnapshotRetention</code>).
+        Rough disk estimate: about <em>N × 2,880</em> rows per day (N = sampling machines), so 10 hosts ≈ 28.8k rows/day.
         Derived metrics use Σ (util%/100)×Δt for GPU/CPU hours, Σ (RAM GB)×Δt for GB-hours, and Σ (MB/s × Δt)/1024 for transfer GB.
     </p>
 </section>

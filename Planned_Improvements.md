@@ -17,7 +17,7 @@ Parked work from the Machines level-1 redesign and related fleet UX. Not schedul
 
 ## Fleet-wide sampling
 
-- Always-on ~30s sampling for all Machines-list hosts (not only Historical Dashboard enrollment)
+- ~~Always-on ~30s sampling for all Machines-list hosts (not only Historical Dashboard enrollment)~~ **Done** — sampling is always-on for known Machines; `FleetDashboardMachines` is Flood/TUFLOW allowlist only. Fleet → Live shows the estate; Flood hub keeps enrolled-scoped Live/Historical + Sims + Enrollment.
 - So **Passive** use and **GPU/CPU hours + Dr/Dw/NTx/NRx** fill for every machine over selected windows
 
 ## Idle status (full rules)

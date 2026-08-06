@@ -52,6 +52,10 @@ public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGu
         if (flood.ForbidIfDenied(HttpContext) is { } denied)
             return denied;
 
+        Tab = NormalizeTab(Tab);
+        if (!OpsPartial.IsPartial(Request))
+            return OpsPartial.RedirectToFloodTab(Request, Tab);
+
         await LoadAsync(ct);
         return Page();
     }
@@ -63,7 +67,8 @@ public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGu
 
         var (ok, message) = await fleet.EnrollAsync(EnrollMachineId, EnrollNotes, ct);
         TempData[ok ? "Message" : "Error"] = message;
-        return RedirectToPage(new { tab = "enroll", q = Q });
+        var q = string.IsNullOrWhiteSpace(Q) ? "" : "&q=" + Uri.EscapeDataString(Q);
+        return Redirect("/Flood?tab=enroll" + q);
     }
 
     public async Task<IActionResult> OnPostUnenrollAsync(CancellationToken ct)
@@ -73,11 +78,12 @@ public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGu
 
         var (ok, message) = await fleet.UnenrollAsync(UnenrollId, ct);
         TempData[ok ? "Message" : "Error"] = message;
-        return RedirectToPage(new { tab = "enroll" });
+        return Redirect("/Flood?tab=enroll");
     }
 
     private async Task LoadAsync(CancellationToken ct)
     {
+        // Tab already normalized in OnGet when partial.
         Tab = NormalizeTab(Tab);
         Enrolled = await fleet.ListEnrolledAsync(ct);
 

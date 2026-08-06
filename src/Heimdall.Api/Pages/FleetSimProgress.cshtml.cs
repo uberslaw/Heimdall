@@ -26,6 +26,9 @@ public class FleetSimProgressModel(TuflowRunService runs, FloodAccessGuard flood
         if (flood.ForbidIfDenied(HttpContext) is { } denied)
             return denied;
 
+        if (!OpsPartial.IsPartial(Request))
+            return OpsPartial.RedirectToFloodTab(Request, "sims");
+
         Rows = await runs.GetFleetProgressAsync(ct);
         return Page();
     }

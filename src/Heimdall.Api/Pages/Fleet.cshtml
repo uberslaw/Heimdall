@@ -6,6 +6,7 @@
     var titleWord = active switch
     {
         "machines" => "Computers",
+        "live" => "Live",
         "sessions" => "Sessions",
         "online" => "Online status",
         "clients" => "Client version",
@@ -16,6 +17,7 @@
     var helpFragment = active switch
     {
         "machines" => "machines",
+        "live" => "fleet-live",
         "sessions" => "sessions",
         "online" => "remote-machines",
         "clients" => "client-version",
@@ -38,6 +40,7 @@
             var tabTitle = t.Key switch
             {
                 "machines" => "Computers",
+                "live" => "Live",
                 "sessions" => "Sessions",
                 "online" => "Online status",
                 "clients" => "Client version",
@@ -53,6 +56,7 @@
                    data-hd-fleet-title="@tabTitle"
                    data-hd-fleet-help="@((t.Key) switch {
                        "machines" => "machines",
+                       "live" => "fleet-live",
                        "sessions" => "sessions",
                        "online" => "remote-machines",
                        "clients" => "client-version",
@@ -78,7 +82,7 @@
     <div class="alert alert-danger">@err</div>
 }
 
-<div class="hd-ops-pane" id="hd-ops-pane" data-hd-ops-active="@active" aria-live="polite">
+<div class="hd-ops-pane" id="hd-ops-pane" data-hd-ops-active="@active" data-hd-ops-base="/Fleet" aria-live="polite">
     <div class="hd-ops-loading text-secondary py-4" data-hd-ops-loading>Loading…</div>
     <div class="hd-ops-body" data-hd-ops-body hidden></div>
 </div>

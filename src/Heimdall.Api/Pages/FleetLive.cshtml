@@ -1,0 +1,153 @@
+@page
+@model FleetLiveModel
+@using Heimdall.Api.Services
+@{
+    ViewData["Title"] = "Live";
+    var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
+    if (isPartial)
+        Layout = null;
+}
+
+@if (!isPartial)
+{
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+        <h1 class="hd-title mb-1">Live</h1>
+        <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="fleet-live">Help</a>
+    </div>
+}
+
+<div class="d-flex flex-wrap gap-2 align-items-end mb-3">
+    <form method="get" class="d-flex flex-wrap gap-2 align-items-end" id="fleet-live-filter-form" action="/FleetLive">
+        <input type="hidden" name="partial" value="1" />
+        <div>
+            <label class="form-label small mb-1" for="fleet-live-q">Search</label>
+            <input class="form-control form-control-sm" id="fleet-live-q" name="q" value="@Model.Q" placeholder="User or machine" />
+        </div>
+        <div>
+            <label class="form-label small mb-1" for="fleet-live-status">Status</label>
+            <select class="form-select form-select-sm" id="fleet-live-status" name="statusFilter" onchange="this.form.submit()">
+                @if (Model.StatusFilter == "all")
+                {
+                    <option value="all" selected>All</option>
+                }
+                else
+                {
+                    <option value="all">All</option>
+                }
+                @if (Model.StatusFilter == "active")
+                {
+                    <option value="active" selected>Active</option>
+                }
+                else
+                {
+                    <option value="active">Active</option>
+                }
+                @if (Model.StatusFilter == "idle")
+                {
+                    <option value="idle" selected>Idle</option>
+                }
+                else
+                {
+                    <option value="idle">Idle</option>
+                }
+                @if (Model.StatusFilter is "notrunning" or "not-running")
+                {
+                    <option value="notrunning" selected>Not Running</option>
+                }
+                else
+                {
+                    <option value="notrunning">Not Running</option>
+                }
+            </select>
+        </div>
+        <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Apply</button>
+    </form>
+    <span class="text-secondary small ms-auto">@Model.MachineCount machines · auto-refresh 30s</span>
+</div>
+
+<div class="hd-panel hd-live-fleet-panel">
+    @if (Model.MachineCount == 0)
+    {
+        <p class="text-secondary mb-0">No machines in the estate yet. Agents appear here after their first heartbeat.</p>
+    }
+    else
+    {
+        <table class="hd-table hd-live-fleet-table hd-sortable" id="fleet-live-table">
+            <thead>
+                <tr>
+                    <th class="hd-col-host" data-sort="text">Machine</th>
+                    <th class="hd-col-user" data-sort="text">User</th>
+                    <th data-sort="text">TUFLOW</th>
+                    <th data-sort="text">Active / Idle</th>
+                    <th data-sort="num">GPU %</th>
+                    <th data-sort="num">CPU %</th>
+                    <th data-sort="num">GPU mem</th>
+                    <th data-sort="num">RAM GB</th>
+                    <th data-sort="num">Disk R MB/s</th>
+                    <th data-sort="num">Disk W MB/s</th>
+                    <th data-sort="num">Net In MB/s</th>
+                    <th data-sort="num">Net Out MB/s</th>
+                    <th data-sort="num" data-default-desc>Today runtime</th>
+                    <th data-sort="num">Today active</th>
+                    <th data-sort="num">Today GPU h</th>
+                    <th class="hd-col-checkin" data-sort="date">Last check-in</th>
+                </tr>
+            </thead>
+            <tbody>
+            @if (Model.FilteredLiveRows.Count == 0)
+            {
+                <tr><td colspan="16">No rows match the current filter.</td></tr>
+            }
+            @foreach (var r in Model.FilteredLiveRows)
+            {
+                <tr>
+                    <td class="hd-col-host" data-sort-value="@r.Hostname">
+                        <a class="hd-live-host" asp-page="/Machine" asp-route-id="@r.MachineId">@r.Hostname</a>
+                        @if (!string.IsNullOrWhiteSpace(r.LastIp))
+                        {
+                            <div class="hd-live-ip text-secondary small">@r.LastIp</div>
+                        }
+                    </td>
+                    <td class="hd-col-user" data-sort-value="@(r.Username ?? "")">@(r.Username ?? "—")</td>
+                    <td data-sort-value="@(r.TuflowRunning ? "Y" : "N")">@(r.TuflowRunning ? "Y" : "N")</td>
+                    <td data-sort-value="@HistoricalDashboardModel.ActiveIdleLabel(r.Status)">
+                        @if (r.Status is FleetDashboardService.FleetStatus.Active or FleetDashboardService.FleetStatus.Idle)
+                        {
+                            <span class="badge-pill @HistoricalDashboardModel.StatusBadgeClass(r.Status)">
+                                @HistoricalDashboardModel.ActiveIdleLabel(r.Status)
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="text-secondary">—</span>
+                        }
+                    </td>
+                    <td data-sort-value="@(r.GpuPercent ?? -1)">@HistoricalDashboardModel.FormatGauge(r.GpuPercent)</td>
+                    <td data-sort-value="@(r.CpuPercent ?? -1)">@HistoricalDashboardModel.FormatGauge(r.CpuPercent)</td>
+                    <td data-sort-value="@(r.GpuMemoryUsedMb ?? -1)">@HistoricalDashboardModel.FormatMb(r.GpuMemoryUsedMb)</td>
+                    <td data-sort-value="@(r.RamUsedMb ?? -1)">@HistoricalDashboardModel.FormatRamGb(r.RamUsedMb)</td>
+                    <td data-sort-value="@(r.DiskReadMBps ?? -1)">@HistoricalDashboardModel.FormatMBps(r.DiskReadMBps)</td>
+                    <td data-sort-value="@(r.DiskWriteMBps ?? -1)">@HistoricalDashboardModel.FormatMBps(r.DiskWriteMBps)</td>
+                    <td data-sort-value="@(r.NetworkInMBps ?? -1)">@HistoricalDashboardModel.FormatMBps(r.NetworkInMBps)</td>
+                    <td data-sort-value="@(r.NetworkOutMBps ?? -1)">@HistoricalDashboardModel.FormatMBps(r.NetworkOutMBps)</td>
+                    <td data-sort-value="@r.TodayRuntimeHours">@HistoricalDashboardModel.FormatHours(r.TodayRuntimeHours) h</td>
+                    <td data-sort-value="@r.TodayActiveHours">@HistoricalDashboardModel.FormatHours(r.TodayActiveHours) h</td>
+                    <td data-sort-value="@r.TodayGpuHours">@HistoricalDashboardModel.FormatHours(r.TodayGpuHours)</td>
+                    <td data-sort-value="@(r.LastSampleUtc?.ToUnixTimeSeconds() ?? 0)">
+                        @HistoricalDashboardModel.FormatContact(r.LastSampleUtc ?? r.LastSeenUtc)
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    }
+</div>
+
+<script src="~/js/hd-table.js" asp-append-version="true"></script>
+<script>
+    if (window.HeimdallTable) {
+        HeimdallTable.initSort(document);
+        HeimdallTable.initTextFilter(document);
+    }
+    setTimeout(function () { location.reload(); }, 30000);
+</script>

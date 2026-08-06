@@ -5,15 +5,16 @@ using Microsoft.EntityFrameworkCore;
 namespace Heimdall.Api.Services;
 
 /// <summary>
-/// Historical Dashboard enrollment, fleet snapshot ingest, and derived analytics
-/// (runtime / GPU·CPU·RAM hours / disk·network GB) over FleetMetricSnapshot rows.
+/// Flood allowlist (FleetDashboardMachines) enrollment, estate-wide fleet snapshot ingest,
+/// and derived analytics (runtime / GPU·CPU·RAM hours / disk·network GB) over FleetMetricSnapshot rows.
+/// Sampling is always-on for every known Machine; FleetDashboardMachines gates TUFLOW / Flood sims only.
 /// </summary>
 public class FleetDashboardService(HeimdallDbContext db)
 {
     /// <summary>Default nominal sample interval used when bridging consecutive snapshots.</summary>
     public static readonly TimeSpan SampleInterval = TimeSpan.FromSeconds(30);
 
-    /// <summary>POC retention hint for Help / UI (raw 30s samples).</summary>
+    /// <summary>Default retention for raw 30s samples (Help / purge hosted service).</summary>
     public const int RetentionDaysDefault = 90;
 
     public async Task<IReadOnlyList<EnrolledMachineRow>> ListEnrolledAsync(CancellationToken ct)
@@ -135,7 +136,7 @@ public class FleetDashboardService(HeimdallDbContext db)
             Notes = string.IsNullOrWhiteSpace(notes) ? null : notes.Trim()
         });
         await db.SaveChangesAsync(ct);
-        return (true, $"Enrolled {machine.Hostname}. Fleet sampling starts after the agent next refreshes config.");
+        return (true, $"Enrolled {machine.Hostname} for Flood / TUFLOW. Util sampling is already on for all clients.");
     }
 
     public async Task<(bool Ok, string Message)> UnenrollAsync(int enrollmentId, CancellationToken ct)
@@ -149,7 +150,7 @@ public class FleetDashboardService(HeimdallDbContext db)
         var hostname = row.Machine.Hostname;
         db.FleetDashboardMachines.Remove(row);
         await db.SaveChangesAsync(ct);
-        return (true, $"Removed {hostname} from the Historical Dashboard. Existing snapshots are kept.");
+        return (true, $"Removed {hostname} from the Flood allowlist. Existing snapshots are kept; util sampling continues.");
     }
 
     public async Task<bool> IngestSnapshotAsync(FleetSnapshotDto dto, CancellationToken ct)
@@ -159,10 +160,6 @@ public class FleetDashboardService(HeimdallDbContext db)
 
         var machine = await db.Machines.FirstOrDefaultAsync(m => m.Hostname == dto.Hostname, ct);
         if (machine is null)
-            return false;
-
-        var enrolled = await db.FleetDashboardMachines.AnyAsync(e => e.MachineId == machine.Id, ct);
-        if (!enrolled)
             return false;
 
         // Prefer process-specific util for Active/Idle; fall back to system gauges for older agents.
@@ -197,28 +194,54 @@ public class FleetDashboardService(HeimdallDbContext db)
         return true;
     }
 
-    public async Task<IReadOnlyList<LiveFleetRow>> GetLiveFleetAsync(CancellationToken ct)
-    {
-        var enrolled = await db.FleetDashboardMachines.AsNoTracking()
-            .Include(e => e.Machine)
-            .ToListAsync(ct);
-        if (enrolled.Count == 0)
-            return [];
+    /// <summary>Live view for Flood-enrolled machines only (TUFLOW / Historical under Flood).</summary>
+    public Task<IReadOnlyList<LiveFleetRow>> GetLiveFleetAsync(CancellationToken ct) =>
+        GetLiveFleetAsync(enrolledOnly: true, ct);
 
-        var machineIds = enrolled.Select(e => e.MachineId).ToList();
+    /// <summary>
+    /// Live util view. When <paramref name="enrolledOnly"/> is true, Flood allowlist only;
+    /// otherwise every known Machine (Fleet → Live estate view).
+    /// </summary>
+    public async Task<IReadOnlyList<LiveFleetRow>> GetLiveFleetAsync(bool enrolledOnly, CancellationToken ct)
+    {
+        List<(int MachineId, string Hostname, string? LastIp, DateTimeOffset LastSeenUtc)> machines;
+        if (enrolledOnly)
+        {
+            var enrolled = await db.FleetDashboardMachines.AsNoTracking()
+                .Include(e => e.Machine)
+                .ToListAsync(ct);
+            if (enrolled.Count == 0)
+                return [];
+            machines = enrolled
+                .OrderBy(e => e.Machine.Hostname)
+                .Select(e => (e.MachineId, e.Machine.Hostname, e.Machine.LastIp, e.Machine.LastSeenUtc))
+                .ToList();
+        }
+        else
+        {
+            var all = await db.Machines.AsNoTracking()
+                .OrderBy(m => m.Hostname)
+                .ToListAsync(ct);
+            if (all.Count == 0)
+                return [];
+            machines = all
+                .Select(m => (m.Id, m.Hostname, m.LastIp, m.LastSeenUtc))
+                .ToList();
+        }
+
+        var machineIds = machines.Select(m => m.MachineId).ToList();
         var todayStart = DateTimeOffset.UtcNow.Date;
         var todayStartOffset = new DateTimeOffset(todayStart, TimeSpan.Zero);
         var recentFrom = todayStartOffset.AddDays(-1);
 
-        // SQLite cannot translate DateTimeOffset Where/OrderBy — load by machine id, filter in memory.
         var recent = await LoadSnapshotsForMachinesAsync(machineIds, recentFrom, toUtc: null, ct);
 
         var byMachine = recent.GroupBy(s => s.MachineId).ToDictionary(g => g.Key, g => g.ToList());
         var rows = new List<LiveFleetRow>();
 
-        foreach (var e in enrolled.OrderBy(x => x.Machine.Hostname))
+        foreach (var m in machines)
         {
-            byMachine.TryGetValue(e.MachineId, out var snaps);
+            byMachine.TryGetValue(m.MachineId, out var snaps);
             snaps ??= [];
             var latest = snaps.Count == 0 ? null : snaps[^1];
             var todaySnaps = snaps.Where(s => s.SampledAtUtc >= todayStartOffset).ToList();
@@ -233,9 +256,9 @@ public class FleetDashboardService(HeimdallDbContext db)
                         : FleetStatus.Idle;
 
             rows.Add(new LiveFleetRow(
-                e.MachineId,
-                e.Machine.Hostname,
-                e.Machine.LastIp,
+                m.MachineId,
+                m.Hostname,
+                m.LastIp,
                 latest?.Username,
                 latest?.TuflowRunning ?? false,
                 status,
@@ -251,10 +274,17 @@ public class FleetDashboardService(HeimdallDbContext db)
                 todayAgg.ActiveRuntimeHours,
                 todayAgg.GpuHours,
                 latest?.SampledAtUtc,
-                e.Machine.LastSeenUtc));
+                m.LastSeenUtc));
         }
 
         return rows;
+    }
+
+    public Task<int> PurgeSnapshotsOlderThanAsync(int retentionDays, CancellationToken ct)
+    {
+        var days = Math.Max(1, retentionDays);
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
+        return FleetSnapshotQuery.PurgeOlderThanAsync(db, cutoff, ct);
     }
 
     public FleetMetrics Aggregate(IReadOnlyList<FleetMetricSnapshot> snapshots) =>
@@ -336,30 +366,13 @@ public class FleetDashboardService(HeimdallDbContext db)
             .ToList();
     }
 
-    /// <summary>
-    /// Load fleet snapshots for the given machines. Date filters and ordering are applied in memory
-    /// because EF Core + SQLite cannot translate DateTimeOffset comparisons or ORDER BY.
-    /// </summary>
-    private async Task<List<FleetMetricSnapshot>> LoadSnapshotsForMachinesAsync(
+    /// <summary>Load fleet snapshots with date bounds applied in SQL (see <see cref="FleetSnapshotQuery"/>).</summary>
+    internal Task<List<FleetMetricSnapshot>> LoadSnapshotsForMachinesAsync(
         IReadOnlyCollection<int> machineIds,
         DateTimeOffset fromUtc,
         DateTimeOffset? toUtc,
-        CancellationToken ct)
-    {
-        if (machineIds.Count == 0)
-            return [];
-
-        var ids = machineIds as List<int> ?? machineIds.ToList();
-        var snaps = await db.FleetMetricSnapshots.AsNoTracking()
-            .Where(s => ids.Contains(s.MachineId))
-            .ToListAsync(ct);
-
-        IEnumerable<FleetMetricSnapshot> filtered = snaps.Where(s => s.SampledAtUtc >= fromUtc);
-        if (toUtc is not null)
-            filtered = filtered.Where(s => s.SampledAtUtc < toUtc.Value);
-
-        return filtered.OrderBy(s => s.SampledAtUtc).ToList();
-    }
+        CancellationToken ct) =>
+        FleetSnapshotQuery.LoadForMachinesAsync(db, machineIds, fromUtc, toUtc, ct);
 
     public static (DateTimeOffset From, DateTimeOffset? To) ResolvePeriod(string period)
     {

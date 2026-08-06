@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 namespace Heimdall.Api.Services;
 
 /// <summary>
-/// Gates TUFLOW / Historical Dashboard / Fleet Sim to AdminEmails ∪ FloodTeamEmails.
+/// Gates TUFLOW / Flood hub (Historical + Sims + Enrollment) to AdminEmails ∪ FloodTeamEmails.
 /// Checks staff cookie email and Windows candidate emails (Negotiate).
 /// </summary>
 public sealed class FloodAccessGuard(

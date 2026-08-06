@@ -408,8 +408,8 @@ public sealed class Worker(
     }
 
     /// <summary>
-    /// Always-on 30s fleet sampler for Historical Dashboard enrollment. Gated by FleetSamplingEnabled
-    /// from config refresh — separate from viewer-triggered Staff live sampling.
+    /// Always-on 30s fleet sampler for util / historical metrics. Gated by FleetSamplingEnabled
+    /// from config refresh (true for every known Machine) — separate from viewer-triggered Staff live sampling.
     /// </summary>
     [SupportedOSPlatform("windows")]
     private async Task RunFleetSamplingTickAsync(string hostname, DateTimeOffset now, CancellationToken ct)

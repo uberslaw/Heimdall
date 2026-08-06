@@ -79,7 +79,7 @@ else if (d is not null)
             <div class="label">Last check-in</div>
             <div class="value" style="font-size:1rem;margin-top:0.35rem">
                 @d.LastSeenUtc.ToLocalTime().ToString("g")
-                <br /><span class="text-secondary small">@IndexModel.FormatRelativeUtc(d.LastSeenUtc)</span>
+                <br/><span class="text-secondary small">@IndexModel.FormatRelativeUtc(d.LastSeenUtc)</span>
             </div>
         </div>
         <div class="hd-stat">
@@ -88,16 +88,15 @@ else if (d is not null)
                 @(d.LastUser ?? "—")
                 @if (d.LastUserDepartedUtc is DateTimeOffset departed)
                 {
-                    var eventLabel = d.LastSessionState == SessionState.Disconnected ? "Disconnected" : "Log off";
-                    <br /><span class="text-secondary small">@eventLabel · @MachineModel.FormatLocalTimestamp(departed)</span>
+                    <div class="text-secondary small">@((d.LastSessionState == SessionState.Disconnected ? "Disconnected" : "Log off")) · @MachineModel.FormatLocalTimestamp(departed)</div>
                 }
                 else if (d.LastUserStillLoggedIn)
                 {
-                    <br /><span class="text-secondary small">Still logged in</span>
+                    <div class="text-secondary small">Still logged in</div>
                 }
                 else if (!string.IsNullOrWhiteSpace(d.LastUser))
                 {
-                    <br /><span class="text-secondary small">Time unknown</span>
+                    <div class="text-secondary small">Time unknown</div>
                 }
             </div>
         </div>
@@ -167,11 +166,11 @@ else if (d is not null)
                     <span title="@cur.TcfPath">@System.IO.Path.GetFileName(cur.TcfPath)</span>
                     @if (!string.IsNullOrEmpty(cur.LastCheckpointFile))
                     {
-                        <br /><span>Last checkpoint: @cur.LastCheckpointFile</span>
+                        <div>Last checkpoint: @cur.LastCheckpointFile</div>
                     }
                     @if (!string.IsNullOrEmpty(cur.ErrorSummary))
                     {
-                        <br /><span style="color:#f0a0a0;">@cur.ErrorSummary</span>
+                        <div style="color:#f0a0a0;">@cur.ErrorSummary</div>
                     }
                 </p>
             }

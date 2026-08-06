@@ -58,6 +58,7 @@ builder.Services.AddScoped<ClientUpdateService>();
 builder.Services.AddScoped<FleetDashboardService>();
 builder.Services.AddScoped<MachineUtilisationService>();
 builder.Services.AddHostedService<CatalogBackfillHostedService>();
+builder.Services.AddHostedService<FleetSnapshotRetentionHostedService>();
 
 var app = builder.Build();
 
@@ -321,7 +322,7 @@ app.MapPost("/api/resource-sampling/report", async (ResourceSampleReportDto dto,
     return ok ? Results.Accepted() : Results.NotFound();
 });
 
-// --- Historical Dashboard fleet snapshots (always-on 30s for enrolled hosts) ---
+// --- Fleet util snapshots (always-on 30s for every known Machine) ---
 
 app.MapPost("/api/fleet/snapshot", async (FleetSnapshotDto dto, FleetDashboardService fleet, HttpRequest request, CancellationToken ct) =>
 {

@@ -6,7 +6,7 @@
 
 <div class="hd-panel mb-3">
     <h2 class="hd-section-title">TUFLOW Runs</h2>
-    <p class="text-secondary small mb-0"><a asp-page="/FleetSimProgress">View Fleet Sim Progress →</a> (who's running what, where, and how it's tracking)</p>
+    <p class="text-secondary small mb-0"><a asp-page="/Flood" asp-route-tab="sims">View Fleet Sim Progress →</a> (who's running what, where, and how it's tracking)</p>
 </div>
 
 @if (TempData["Message"] is string msg)
@@ -22,9 +22,8 @@
 {
     <div class="hd-panel mb-3">
         <p class="text-secondary mb-0">
-            No Flood machines are enrolled yet. Enroll machines from the Historical Dashboard enrollment
-            page (the same list that already powers TUFLOW fleet sampling) — this page only ever shows and
-            acts on that list.
+            No Flood machines are enrolled yet. Enroll machines from <a asp-page="/Flood" asp-route-tab="enroll">Flood → Enrollment</a>
+            (Flood allowlist for TUFLOW startability — util sampling is always-on for all clients).
         </p>
     </div>
 }

@@ -35,4 +35,24 @@ public static class OpsPartial
 
         return new RedirectResult("/Fleet?" + string.Join("&", parts));
     }
+
+    /// <summary>302 to /Flood?tab=… preserving other query params (except partial).</summary>
+    public static IActionResult RedirectToFloodTab(HttpRequest request, string tab)
+    {
+        var parts = new List<string> { "tab=" + Uri.EscapeDataString(tab) };
+        foreach (var kv in request.Query)
+        {
+            if (string.Equals(kv.Key, "tab", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (string.Equals(kv.Key, QueryKey, StringComparison.OrdinalIgnoreCase))
+                continue;
+            foreach (var v in kv.Value)
+            {
+                if (v is null) continue;
+                parts.Add($"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(v)}");
+            }
+        }
+
+        return new RedirectResult("/Flood?" + string.Join("&", parts));
+    }
 }

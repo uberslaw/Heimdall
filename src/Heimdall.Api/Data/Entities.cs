@@ -566,7 +566,7 @@ public class FleetDashboardMachine
     public string? Notes { get; set; }
 }
 
-/// <summary>Append-only 30s fleet metric sample for enrolled Historical Dashboard machines.</summary>
+/// <summary>Append-only 30s fleet metric sample (always-on for known Machines with Heimdall client).</summary>
 public class FleetMetricSnapshot
 {
     public long Id { get; set; }

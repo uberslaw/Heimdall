@@ -72,13 +72,7 @@ public class MachineUtilisationService(HeimdallDbContext db)
             .Where(s => s.StartedAtUtc < to && (s.EndedAtUtc is null || s.EndedAtUtc >= from))
             .ToList();
 
-        // SQLite cannot filter DateTimeOffset in SQL — load by machine, filter in memory.
-        var snaps = (await db.FleetMetricSnapshots.AsNoTracking()
-                .Where(s => ids.Contains(s.MachineId))
-                .ToListAsync(ct))
-            .Where(s => s.SampledAtUtc >= from && s.SampledAtUtc < to)
-            .OrderBy(s => s.SampledAtUtc)
-            .ToList();
+        var snaps = await FleetSnapshotQuery.LoadForMachinesAsync(db, ids, from, to, ct);
 
         var byMachineSessions = sessions.GroupBy(s => s.MachineId).ToDictionary(g => g.Key, g => g.ToList());
         var byMachineSnaps = snaps.GroupBy(s => s.MachineId).ToDictionary(g => g.Key, g => g.ToList());

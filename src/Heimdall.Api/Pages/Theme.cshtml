@@ -85,12 +85,14 @@
         <div class="hd-custom-theme-list">
             @foreach (var t in Model.SavedThemes)
             {
-                var isActive = Model.ActiveIsCustom && Model.ActiveCustomId == t.Id;
-                <div class="hd-custom-theme-row @(isActive ? "is-active" : "")">
+                <div class="hd-custom-theme-row @((Model.ActiveIsCustom && Model.ActiveCustomId == t.Id) ? "is-active" : "")">
                     <div class="hd-custom-theme-meta">
                         <span class="hd-custom-theme-swatch" style="background: @t.PrimaryHex;"></span>
                         <div class="min-width-0">
-                            <div><strong>@t.Name</strong> @if (isActive) { <span class="badge-pill badge-active">Active</span> }</div>
+                            <div><strong>@t.Name</strong> @if (Model.ActiveIsCustom && Model.ActiveCustomId == t.Id)
+                            {
+                                <span class="badge-pill badge-active">Active</span>
+                            }</div>
                             <div class="text-secondary small">Based on @UiTheme.Label(t.BasePreset) · updated @t.UpdatedUtc.ToLocalTime().ToString("d MMM yyyy")</div>
                         </div>
                     </div>

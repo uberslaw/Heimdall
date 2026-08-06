@@ -559,9 +559,9 @@ public class ConfigService(HeimdallDbContext db)
             .OrderBy(p => p.ProcessName, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var fleetSamplingEnabled = machine is not null
-            && await db.FleetDashboardMachines.AsNoTracking()
-                .AnyAsync(f => f.MachineId == machine.Id, ct);
+        // Always-on util/snapshots for every known (heartbeating) machine. Flood allowlist
+        // (FleetDashboardMachines) is separate and only gates TUFLOW / Flood sims.
+        var fleetSamplingEnabled = machine is not null;
 
         return new AgentConfigDto
         {
