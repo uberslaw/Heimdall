@@ -9,6 +9,107 @@ Parked work from the Machines level-1 redesign and related fleet UX. Not schedul
 - **Last check-in** display: 1–59m, then 24h `HH:MM`, or previous-day `DD/MM/YY`
 - **Type** (RDP / Local), open sessions
 - Move Analyze / Socratize / pending-approval actions off the list onto this page
+- **Manual full app discovery** — button on machine page (see section below)
+- **Free space / folder tree-size** — on-demand panel on machine page (see section below)
+
+## Manual full app discovery (machine page)
+
+**Goal:** From `/Machine?hostname=…`, one button to ask that host’s agent for a full process inventory (same pipeline as App lists → Request Inventory), without leaving the machine page. Supports new-machine app tracking and Team apps workflow.
+
+### What already exists
+
+- API: `AppListService.RequestAgentInventoryAsync` sets `Machine.PendingAppAnalysis`
+- Config DTO exposes `PendingAppAnalysis`; agent sets `_sendInventoryNextUpload` on config refresh (~5 min)
+- Agent: `ProcessCollector.DiscoverInventory()` — **currently running processes only** (WMI paths + file version), uploaded on next heartbeat (~1 min)
+- Stored as `DiscoveredInventoryJson`; catalog upsert; App lists Machine lookup / Team apps consume it
+- UI today: App lists → Machine lookup only (`Request Inventory` + link “Analyze apps” from Machine page)
+
+### Proposed UX (machine page)
+
+Place under existing **App lists** panel (or a new **Discovery** strip in the meta line):
+
+| Control | Behaviour |
+|--------|-----------|
+| **Request full inventory** (silver) | Calls same `RequestAgentInventoryAsync`; toast: pending until next config+upload cycle |
+| Status chip | “Inventory pending…” while `PendingAppAnalysis`; else last inventory time if known |
+| **Open in App lists** | Keep deep-link to `/AppLists?host=…#machine-focus` / `#team-apps` for classify / Team apps actions |
+| Optional later | **Analyze** on this page (proposals approve/dismiss) — already parked under “Move Analyze… onto this page” |
+
+### Scope phases
+
+1. **Wire existing inventory to Machine page** (small) — POST handler → `RequestAgentInventoryAsync`; show pending state; no agent change
+2. **Richer “full” discovery** (optional follow-up) — still on-demand, not always-on:
+   - Uninstall registry / Start Menu / Program Files exe scan (installed apps, not only running)
+   - Cap size / duration; filter with `DiscoveryCatalogFilter`
+   - Distinct flag or snapshot type so UI can show “running inventory” vs “installed scan”
+3. **New-machine workflow** — after inventory lands, highlight Spec/unlisted (reuse Team apps candidates API) on machine page or deep-link to Team apps
+
+### Out of scope for phase 1
+
+- Changing global catalog sync / system Spec list behaviour
+- Always-on filesystem crawling for apps
+- Fleet-wide “discover all machines now”
+
+### Redeploy notes
+
+- Phase 1: API-only (reuse flag)
+- Phase 2: agent + shared DTO + API ingest
+
+---
+
+## Free space / folder tree-size view
+
+Parked one-liner (expanded here). TreeSize-style ops need: free space at a glance + “what’s eating the disk” on demand.
+
+### Goal
+
+On-demand agent scan of **volume free space** and **large folder trees** — not always-on sampling. Surfaces on **machine detail** (primary) and optionally a compact chip on Fleet Computers later.
+
+### Why it fits machine page
+
+- Same on-demand pattern as app inventory / RDS restart / TUFLOW commands (`PendingCommands` or a dedicated pending flag)
+- Expensive walks must never run every heartbeat
+- Operators already open a host when investigating disk pressure
+
+### Proposed model
+
+**A. Cheap always-available (or with hardware refresh)**  
+- Logical volumes: letter, label, size, free, % used (`Win32_LogicalDisk` DriveType=3)  
+- Hardware inventory already collects total disk GB; extend to per-volume free/used  
+- Show as a small **Storage** strip on machine page (bars or table)
+
+**B. On-demand tree-size scan (TreeSize-like)**  
+- Button: **Scan folder sizes** → queues agent job (new `RemoteMachineCommands.DiskTreeScan` or `PendingDiskTreeScan` + options JSON: roots `C:\`, `D:\`, max depth, top-N, exclude junctions)
+- Agent: throttled walk (or MFT enumeration later); respect timeouts / CPU budget; cancel if host busy optional
+- Upload: tree summary JSON (path, bytes, file count, child rollups) stored on machine (`DiskTreeScanJson` + `DiskTreeScanUtc`) or side table
+- UI: expandable tree or top-N folders by size; “Scanned at …” + re-scan
+
+### Security / load
+
+- No free-form remote shell; allowlisted roots only (fixed drives + optional admin-configured paths)
+- Cap depth / total nodes / runtime; never block sampling loop (background task)
+- Audit: who requested scan, host, when, success/failure
+
+### Placement
+
+| Surface | What |
+|--------|------|
+| **Machine detail** | Primary: Storage strip (A) + Scan button + results panel (B) |
+| **Fleet Computers** | Optional later: free-% warning chip only (needs A cached) |
+| **Admin → Data and Retention** | Document that tree scans are on-demand and not retained forever (TTL / replace previous scan) |
+| **Planned “Capture settings”** | Unrelated — tree scan is not continuous capture |
+
+### Phasing
+
+1. **Volume free/used on machine page** from agent hardware/logical-disk payload (low risk)
+2. **On-demand top-level folder sizes** for `C:\` (and other fixed drives) — depth 1–2 first
+3. **Deeper TreeSize UX** + excludes + export CSV
+
+### Open questions
+
+- Service account vs interactive user view of network drives (`P:\`) — same issue as TUFLOW paths
+- Retain last scan only vs history
+- MFT vs recursive `Directory.Enumerate` for v1 (Enumerate is simpler; MFT later if too slow)
 
 ## Level 3 drill-down
 
@@ -164,5 +265,6 @@ Heimdall should treat the **batch path** (and optional stop script) as the allow
 
 ## Free space / folder tree-size view
 
+- Expanded under **Machine detail** sections above (volume free space + on-demand TreeSize-style scan). Keep this stub for backlog scanning:
 - On-demand agent scan of free disk space and large folder trees (MFT-style or throttled walk) — not always-on sampling
-- Surfaces in Ops / machine detail when requested; avoid continuous filesystem walking on every heartbeat
+- Surfaces in Fleet / machine detail when requested; avoid continuous filesystem walking on every heartbeat
