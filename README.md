@@ -113,7 +113,7 @@ Admin → **Remote Access Groups** maps staff email ↔ machines. Admin → **Cl
 
 ### Teams
 
-Dashboard → **Teams**: maintain business units / teams (optional parent hierarchy + code) and map people by Windows username (optional domain, display name, email). Primary POC path is **CSV upload**; create/edit/delete teams and assign users manually as well.
+Dashboard → **Applications → Teams**: maintain business units / teams (optional parent hierarchy + code) and map people by Windows username (optional domain, display name, email). Primary paths: **CSV / manual** (Admin → Auth, on by default), and optional **Entra Graph** group sync when enabled and consented.
 
 **CSV columns** (header required):
 
