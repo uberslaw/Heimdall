@@ -64,8 +64,10 @@
         <li>Computers are grouped under <strong>team section headings</strong>. Active app-list names for that team appear beside the heading.</li>
         <li>Summary counts (Computers / Active / Idle / Off) sit beside the Period control — Computers in gold; Active / Idle / Off labels in status colours (green / amber / red); silver numbers centered underneath. Click any column header to sort (first click descending, then toggle).</li>
         <li><strong>Status</strong> (5‑minute check-in): green Active = online with a non-disconnected session; amber Idle = online, no active session; red Off = no recent check-in. Status is colored text (same size as the computer name).</li>
-        <li><strong>Period</strong> (Today / 24h / 5d / 7d / 30d / All) sets Active / Passive / Free % and GPU·CPU·IO columns. Click an Active/Passive/Free cell to cycle that row’s period.</li>
+        <li><strong>Period</strong> (Today / 24h / 5d / 7d / 30d / All) sets Active / Passive / Free % and GPU·CPU·IO columns for the whole list.</li>
+        <li>Click any metric cell (Active, Passive, Free, GPU h, CPU h, Dr, Dw, NTx, NRx) to open a <strong>breakdown</strong> of processes, people, and days that built that total. Period cycling on cells was removed — change Period only via the dropdown.</li>
         <li>Active % is non-disconnected session time over the calendar window. Passive, GPU/CPU hours, and disk/network columns use <strong>always-on 30s fleet samples</strong> from every Heimdall client (independent of Flood enrollment). Until samples arrive those cells show —.</li>
+        <li>Process names on hardware/Passive breakdowns require an <strong>updated agent</strong> that uploads top processes with each fleet sample. Older clients still contribute machine totals; the drill-down notes when process history is missing.</li>
         <li>Name links to computer detail. Assign teams and app lists under <a asp-page="/Teams">Admin → Teams</a>.</li>
         <li>Sessions live under <a asp-page="/Fleet" asp-route-tab="sessions">Fleet → Sessions</a>.</li>
     </ol>

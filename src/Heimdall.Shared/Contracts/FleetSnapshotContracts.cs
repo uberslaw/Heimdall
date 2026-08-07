@@ -1,6 +1,6 @@
 namespace Heimdall.Shared.Contracts;
 
-/// <summary>One always-on fleet sample from an enrolled agent (POST /api/fleet/snapshot).</summary>
+/// <summary>One always-on fleet sample from an agent (POST /api/fleet/snapshot).</summary>
 public sealed class FleetSnapshotDto
 {
     public required string Hostname { get; init; }
@@ -25,6 +25,15 @@ public sealed class FleetSnapshotDto
     public double? ProcessDiskReadMBps { get; init; }
     /// <summary>TUFLOW-process disk write MB/s. Used for Active/Idle only.</summary>
     public double? ProcessDiskWriteMBps { get; init; }
+
+    /// <summary>Top CPU processes at this sample (for util drill-down). Empty on older agents.</summary>
+    public List<TopProcessSampleDto> TopCpuProcesses { get; init; } = [];
+    /// <summary>Top GPU processes at this sample.</summary>
+    public List<TopProcessSampleDto> TopGpuProcesses { get; init; } = [];
+    /// <summary>Top disk-read processes at this sample (Value = bytes/sec).</summary>
+    public List<TopProcessSampleDto> TopDiskReadProcesses { get; init; } = [];
+    /// <summary>Top disk-write processes at this sample (Value = bytes/sec).</summary>
+    public List<TopProcessSampleDto> TopDiskWriteProcesses { get; init; } = [];
 }
 
 /// <summary>Active / Idle thresholds applied when TUFLOW is running (POC defaults).</summary>
