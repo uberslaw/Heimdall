@@ -18,6 +18,7 @@ builder.Services.AddSingleton<IPostConfigureOptions<EntraOptions>, EntraOptionsP
 builder.Services.AddSingleton<ActiveDirectoryStaffEmailResolver>();
 builder.Services.AddSingleton<WindowsStaffIdentityService>();
 builder.Services.AddSingleton<EntraGraphService>();
+builder.Services.AddScoped<DirectoryAuthSettingsService>();
 builder.Services.AddScoped<EntraTeamMembershipSyncService>();
 builder.Services.AddScoped<StaffAccessGuard>();
 

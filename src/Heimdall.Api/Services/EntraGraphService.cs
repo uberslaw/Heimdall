@@ -30,6 +30,54 @@ public sealed class EntraGraphService(IOptions<EntraOptions> options, ILogger<En
             ["https://graph.microsoft.com/.default"]);
     }
 
+    /// <summary>
+    /// Validates credentials and (if possible) Group.Read permission.
+    /// Distinguishes “secret works but admin consent missing” from full readiness.
+    /// </summary>
+    public async Task<EntraProbeResult> ProbeAsync(CancellationToken ct)
+    {
+        if (!_opts.IsConfigured)
+            return new EntraProbeResult(false, false, false, SetupHint);
+
+        try
+        {
+            var credential = new ClientSecretCredential(_opts.TenantId!, _opts.ClientId!, _opts.ClientSecret!);
+            var token = await credential.GetTokenAsync(
+                new Azure.Core.TokenRequestContext(["https://graph.microsoft.com/.default"]), ct);
+            if (string.IsNullOrWhiteSpace(token.Token))
+                return new EntraProbeResult(true, false, false, "Token response was empty.");
+
+            try
+            {
+                var page = await GetClient().Groups.GetAsync(r =>
+                {
+                    r.QueryParameters.Select = ["id", "displayName"];
+                    r.QueryParameters.Top = 1;
+                }, ct);
+                _ = page?.Value;
+                return new EntraProbeResult(true, true, true,
+                    "Credentials and Group.Read permission look good.");
+            }
+            catch (ODataError ex) when (ex.ResponseStatusCode is 401 or 403)
+            {
+                return new EntraProbeResult(true, true, false,
+                    "App can sign in, but Graph group read failed (likely missing admin consent for Group.Read.All / GroupMember.Read.All). "
+                    + "Keep Manual/CSV membership on until consent is granted. "
+                    + FormatGraphError("list groups", ex));
+            }
+            catch (ODataError ex)
+            {
+                return new EntraProbeResult(true, true, false, FormatGraphError("list groups", ex));
+            }
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Entra probe failed");
+            return new EntraProbeResult(true, false, false,
+                "Could not obtain a Graph token — check TenantId, ClientId, and the DPAPI client secret. " + ex.Message);
+        }
+    }
+
     public async Task<EntraGroupInfo?> GetGroupAsync(string groupId, CancellationToken ct)
     {
         var id = NormalizeGuid(groupId)
@@ -157,3 +205,9 @@ public sealed class EntraGraphService(IOptions<EntraOptions> options, ILogger<En
 public sealed record EntraGroupInfo(string Id, string? DisplayName, string? Mail, bool SecurityEnabled);
 
 public sealed record EntraUserMember(string Username, string? Domain, string? DisplayName, string? Email);
+
+public sealed record EntraProbeResult(
+    bool SecretsPresent,
+    bool TokenOk,
+    bool GroupReadOk,
+    string Message);

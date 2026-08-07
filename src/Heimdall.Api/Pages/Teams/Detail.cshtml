@@ -52,7 +52,14 @@
         <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
             <div>
                 <h2 class="h5 mb-1">Entra membership</h2>
-                @if (!Model.EntraConfigured)
+                @if (!Model.EntraGraphMembershipEnabled)
+                {
+                    <p class="small text-secondary mb-0">
+                        Entra Graph sync is <strong>off</strong>.
+                        Use Manual/CSV for now, or enable it under <a asp-page="/Auth">Admin → Auth</a> after Graph permissions are granted.
+                    </p>
+                }
+                else if (!Model.EntraConfigured)
                 {
                     <p class="small text-secondary mb-0">
                         Graph is not configured yet. On the API host run
@@ -88,7 +95,7 @@
                     }
                 }
             </div>
-            @if (Model.EntraConfigured && Model.HasEntraGroup)
+            @if (Model.CanSyncEntra)
             {
                 <form method="post" asp-page-handler="SyncEntra"
                       onsubmit="return confirm('Replace this team’s People list with transitive members of the linked Entra group?');">
@@ -102,7 +109,14 @@
     <div class="hd-panel mb-4">
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
             <h2 class="h5 mb-0">People</h2>
-            <a class="hd-btn hd-btn-silver" asp-page="/Teams/EditPerson" asp-route-teamId="@Model.Team.Id">Add person</a>
+            @if (Model.ManualCsvMembershipEnabled)
+            {
+                <a class="hd-btn hd-btn-silver" asp-page="/Teams/EditPerson" asp-route-teamId="@Model.Team.Id">Add person</a>
+            }
+            else
+            {
+                <span class="small text-secondary">Manual add disabled — <a asp-page="/Auth">Admin → Auth</a></span>
+            }
         </div>
         @if (Model.People.Count == 0)
         {

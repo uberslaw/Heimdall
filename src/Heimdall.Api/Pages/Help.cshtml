@@ -24,6 +24,7 @@
         <a class="btn btn-ghost btn-sm" href="#historical-dashboard">Flood hub</a>
         <a class="btn btn-ghost btn-sm" href="#staff-access">Staff RDP</a>
         <a class="btn btn-ghost btn-sm" href="#remote-access-groups">Remote Access Groups</a>
+        <a class="btn btn-ghost btn-sm" href="#auth">Auth</a>
         <a class="btn btn-ghost btn-sm" href="#tracking-config">Tracking config</a>
         <a class="btn btn-ghost btn-sm" href="#teams">Teams</a>
         <a class="btn btn-ghost btn-sm" href="#utilization">Utilization criteria</a>
@@ -282,6 +283,16 @@
     </ol>
 </section>
 
+<section id="auth" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Auth</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> turn team-membership sources on/off under <strong>Admin → Auth</strong>. Not site-wide SSO.</p>
+    <ol class="small mb-0">
+        <li><strong>Manual / CSV</strong> (default on) — backup while Entra permissions are pending. Add people on team detail or <a asp-page="/Teams/ImportCsv">Import CSV</a>.</li>
+        <li><strong>Entra Graph sync</strong> (default off) — enable after DPAPI secrets are installed and Graph admin consent is granted. Use <em>Test Entra connection</em> on Auth: token OK + group-read fail usually means consent is still missing.</li>
+        <li>At least one source stays enabled. Sync from Entra is blocked while the Entra toggle is off.</li>
+    </ol>
+</section>
+
 <section id="teams" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Teams</h2>
     <p class="text-secondary small mb-2"><strong>Purpose:</strong> org teams for Fleet machine sections, people, app lists, and Staff RDP visibility. Under <strong>Applications → Teams</strong>.</p>
@@ -289,11 +300,12 @@
         <li>The list shows each team’s people, machines, and tracking / ignored app-list counts. Use <strong>Add team</strong> or <strong>Import CSV</strong>; open a row for detail.</li>
         <li>On <strong>Edit team</strong>, set name, code, parent, and <strong>Public-facing</strong> (machines appear in the Staff RDP pool — do not mark Flood/TUFLOW teams public).</li>
         <li>
-            <strong>Entra membership</strong> — on the API host run <code>scripts\Protect-HeimdallEntraSecret.ps1</code>
-            (writes DPAPI LocalMachine–encrypted secret to <code>%ProgramData%\Heimdall\secrets\entra.json</code>; ACL SYSTEM + Administrators).
+            <strong>Entra membership</strong> — enable under <a asp-page="/Auth">Admin → Auth</a> when ready.
+            On the API host run <code>scripts\Protect-HeimdallEntraSecret.ps1</code>
+            (DPAPI file at <code>%ProgramData%\Heimdall\secrets\entra.json</code>).
             Never put <code>ClientSecret</code> in git or <code>appsettings.json</code>.
             App registration needs Application permissions <code>Group.Read.All</code> and <code>User.Read.All</code> (or <code>GroupMember.Read.All</code>) with admin consent; no redirect URI.
-            On Edit team, paste the Entra group <strong>Object ID</strong>; on team detail use <em>Sync from Entra</em> to replace People with transitive group members
+            On Edit team, paste the Entra group <strong>Object ID</strong>; on team detail use <em>Sync from Entra</em>
             (username from on-prem SAM when present, else UPN/mail local-part; optional <code>DefaultNetBiosDomain</code>).
         </li>
         <li><strong>Membership</strong> — add/edit/remove people (<code>firstname.lastname</code>); assign or unassign machines (never deletes a machine from the database). Manual people on an Entra-linked team are replaced on the next sync.</li>

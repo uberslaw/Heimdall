@@ -6,7 +6,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Pages.Teams;
 
-public class DetailModel(HeimdallDbContext db, EntraGraphService graph, EntraTeamMembershipSyncService entraSync) : PageModel
+public class DetailModel(
+    HeimdallDbContext db,
+    EntraGraphService graph,
+    EntraTeamMembershipSyncService entraSync,
+    DirectoryAuthSettingsService authSettings) : PageModel
 {
     public Team Team { get; private set; } = null!;
     public string Tab { get; private set; } = "membership";
@@ -17,6 +21,9 @@ public class DetailModel(HeimdallDbContext db, EntraGraphService graph, EntraTea
     public int OverrideCount { get; private set; }
     public bool EntraConfigured => graph.IsConfigured;
     public bool HasEntraGroup => !string.IsNullOrWhiteSpace(Team.EntraGroupId);
+    public bool EntraGraphMembershipEnabled { get; private set; }
+    public bool ManualCsvMembershipEnabled { get; private set; }
+    public bool CanSyncEntra => EntraConfigured && HasEntraGroup && EntraGraphMembershipEnabled;
 
     [BindProperty]
     public int PersonId { get; set; }
@@ -112,6 +119,10 @@ public class DetailModel(HeimdallDbContext db, EntraGraphService graph, EntraTea
         var team = await db.Teams.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id);
         if (team is null) return false;
         Team = team;
+
+        var auth = await authSettings.GetAsync(HttpContext.RequestAborted);
+        EntraGraphMembershipEnabled = auth.EntraGraphMembershipEnabled;
+        ManualCsvMembershipEnabled = auth.ManualCsvMembershipEnabled;
 
         var people = await db.PersonTeams.AsNoTracking()
             .Where(p => p.TeamId == id)

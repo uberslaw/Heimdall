@@ -7,10 +7,18 @@ namespace Heimdall.Api.Services;
 public sealed class EntraTeamMembershipSyncService(
     HeimdallDbContext db,
     EntraGraphService graph,
+    DirectoryAuthSettingsService authSettings,
     ILogger<EntraTeamMembershipSyncService> log)
 {
     public async Task<EntraSyncResult> SyncTeamAsync(int teamId, CancellationToken ct)
     {
+        if (!await authSettings.IsEntraGraphMembershipEnabledAsync(ct))
+        {
+            return EntraSyncResult.Fail(
+                "Entra Graph membership is turned off under Admin → Auth. "
+                + "Use Manual/CSV membership until Graph permissions are granted, then enable Entra there.");
+        }
+
         if (!graph.IsConfigured)
             return EntraSyncResult.Fail(graph.SetupHint);
 
