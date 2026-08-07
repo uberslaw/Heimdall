@@ -15,8 +15,10 @@ public sealed class EntraGraphService(IOptions<EntraOptions> options, ILogger<En
     public bool IsConfigured => _opts.IsConfigured;
 
     public string SetupHint =>
-        "Set Heimdall:Entra TenantId, ClientId, and ClientSecret (prefer env Heimdall__Entra__ClientSecret). "
-        + "App registration needs Application permissions Group.Read.All + User.Read.All (or GroupMember.Read.All) with admin consent.";
+        "Configure Entra via scripts/Protect-HeimdallEntraSecret.ps1 (writes DPAPI-encrypted "
+        + $"%ProgramData%\\Heimdall\\secrets\\entra.json). App registration needs Application permissions "
+        + "Group.Read.All + User.Read.All (or GroupMember.Read.All) with admin consent. "
+        + "Do not put ClientSecret in git or appsettings.";
 
     private GraphServiceClient GetClient()
     {

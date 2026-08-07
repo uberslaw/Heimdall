@@ -231,6 +231,26 @@ Ensure `%ProgramData%\Heimdall\` exists and the service account (LocalSystem by 
 
 **Backup API DB:** Heimdall Setup → **Backup API database** copies `\\HOST\C$\ProgramData\Heimdall\heimdall.db` locally to `%LOCALAPPDATA%\Heimdall\backups\` (and tries `...\backups\` on the API PC). Same SMB/admin-share access as **Open remote logs**.
 
+### Entra ID (Graph) membership — secrets
+
+Team membership sync uses an Entra **app registration** (client credentials). **Do not** put the client secret in git or in `appsettings.json`.
+
+On the API host (elevated):
+
+```powershell
+cd C:\Heimdall   # or your repo / scripts folder
+.\scripts\Protect-HeimdallEntraSecret.ps1 -TenantId '<tenant-guid>' -ClientId '<app-guid>'
+# prompts securely for the client secret
+```
+
+That writes `%ProgramData%\Heimdall\secrets\entra.json` with a **DPAPI LocalMachine**–encrypted secret (readable by LocalSystem / this machine only) and ACL limited to SYSTEM + Administrators. Then:
+
+```powershell
+Restart-Service HeimdallApi
+```
+
+No redirect URI is required for this flow. App permissions: Application `Group.Read.All` + `User.Read.All` (or `GroupMember.Read.All`) with admin consent.
+
 ### API key mismatch
 
 POC default: `heimdall-poc-key`. Set the same value in:

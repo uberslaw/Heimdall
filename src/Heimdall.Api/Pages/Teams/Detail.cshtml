@@ -55,8 +55,10 @@
                 @if (!Model.EntraConfigured)
                 {
                     <p class="small text-secondary mb-0">
-                        Graph is not configured yet. Set <code>Heimdall:Entra</code> TenantId / ClientId / ClientSecret
-                        (secret via env <code>Heimdall__Entra__ClientSecret</code>), then link a group on Edit team.
+                        Graph is not configured yet. On the API host run
+                        <code>scripts\Protect-HeimdallEntraSecret.ps1</code> (DPAPI file under
+                        <code>%ProgramData%\Heimdall\secrets\</code>), then link a group on Edit team.
+                        Do not put the client secret in git or appsettings.
                     </p>
                 }
                 else if (!Model.HasEntraGroup)

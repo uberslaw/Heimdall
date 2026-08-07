@@ -289,8 +289,10 @@
         <li>The list shows each team’s people, machines, and tracking / ignored app-list counts. Use <strong>Add team</strong> or <strong>Import CSV</strong>; open a row for detail.</li>
         <li>On <strong>Edit team</strong>, set name, code, parent, and <strong>Public-facing</strong> (machines appear in the Staff RDP pool — do not mark Flood/TUFLOW teams public).</li>
         <li>
-            <strong>Entra membership</strong> — configure <code>Heimdall:Entra</code> (<code>TenantId</code>, <code>ClientId</code>, <code>ClientSecret</code>; prefer env <code>Heimdall__Entra__ClientSecret</code>).
-            App registration needs Application permissions <code>Group.Read.All</code> and <code>User.Read.All</code> (or <code>GroupMember.Read.All</code>) with admin consent.
+            <strong>Entra membership</strong> — on the API host run <code>scripts\Protect-HeimdallEntraSecret.ps1</code>
+            (writes DPAPI LocalMachine–encrypted secret to <code>%ProgramData%\Heimdall\secrets\entra.json</code>; ACL SYSTEM + Administrators).
+            Never put <code>ClientSecret</code> in git or <code>appsettings.json</code>.
+            App registration needs Application permissions <code>Group.Read.All</code> and <code>User.Read.All</code> (or <code>GroupMember.Read.All</code>) with admin consent; no redirect URI.
             On Edit team, paste the Entra group <strong>Object ID</strong>; on team detail use <em>Sync from Entra</em> to replace People with transitive group members
             (username from on-prem SAM when present, else UPN/mail local-part; optional <code>DefaultNetBiosDomain</code>).
         </li>
