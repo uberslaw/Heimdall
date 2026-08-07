@@ -1,20 +1,25 @@
 using System.Text;
 using Heimdall.Api.Data;
+using Heimdall.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Pages.Teams;
 
-public class ImportCsvModel(HeimdallDbContext db) : PageModel
+public class ImportCsvModel(HeimdallDbContext db, DirectoryAuthSettingsService authSettings) : PageModel
 {
     [BindProperty]
     public IFormFile? CsvFile { get; set; }
 
     public string? FormError { get; private set; }
+    public bool ManualCsvEnabled { get; private set; } = true;
 
-    public void OnGet()
+    public async Task OnGetAsync()
     {
+        ManualCsvEnabled = await authSettings.IsManualCsvMembershipEnabledAsync(HttpContext.RequestAborted);
+        if (!ManualCsvEnabled)
+            FormError = "Manual/CSV membership is turned off under Admin → Auth.";
     }
 
     public IActionResult OnGetTemplate()
@@ -33,6 +38,13 @@ public class ImportCsvModel(HeimdallDbContext db) : PageModel
 
     public async Task<IActionResult> OnPostAsync()
     {
+        ManualCsvEnabled = await authSettings.IsManualCsvMembershipEnabledAsync(HttpContext.RequestAborted);
+        if (!ManualCsvEnabled)
+        {
+            FormError = "Manual/CSV membership is turned off under Admin → Auth.";
+            return Page();
+        }
+
         if (CsvFile is null || CsvFile.Length == 0)
         {
             FormError = "Choose a CSV file to upload.";

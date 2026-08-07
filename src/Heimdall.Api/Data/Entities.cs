@@ -314,6 +314,13 @@ public class Team
     public Team? ParentTeam { get; set; }
     /// <summary>When true, machines on this team appear in the Staff RDP pool.</summary>
     public bool IsPublicFacing { get; set; }
+    /// <summary>Entra ID (Azure AD) group object id for membership sync via Microsoft Graph.</summary>
+    public string? EntraGroupId { get; set; }
+    /// <summary>Cached Entra group display name from last successful resolve/sync.</summary>
+    public string? EntraGroupName { get; set; }
+    public DateTimeOffset? EntraMembersSyncedUtc { get; set; }
+    /// <summary>Last sync error message (null when last sync succeeded or never run).</summary>
+    public string? EntraLastSyncError { get; set; }
     public List<Team> Children { get; set; } = [];
     public List<PersonTeam> Members { get; set; } = [];
     public List<TeamAppListLink> AppListLinks { get; set; } = [];
