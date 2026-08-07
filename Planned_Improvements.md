@@ -269,3 +269,41 @@ Heimdall should treat the **batch path** (and optional stop script) as the allow
 - Expanded under **Machine detail** sections above (volume free space + on-demand TreeSize-style scan). Keep this stub for backlog scanning:
 - On-demand agent scan of free disk space and large folder trees (MFT-style or throttled walk) — not always-on sampling
 - Surfaces in Fleet / machine detail when requested; avoid continuous filesystem walking on every heartbeat
+
+---
+
+## Specialization → team software review
+
+**Canonical requirements:** [`docs/spec-team-review-requirements.md`](docs/spec-team-review-requirements.md)
+
+Parked summary: auto-add newly discovered/classified Spec apps (path + exe) to the machine’s team **primary** AppList; Applications review page for Continue vs Ignore; per-team/per-machine ignore lists; idle weekly agent inventory (CPU+GPU &lt; 50%); presence cleanup with UNC/non-`C:\` sticky paths; 12‑month inactive flag.
+
+**Also park:** Applications back channel to find ignored path+exe and re-track (after review Ignore).
+
+---
+
+## Fleet Apps (Applications nav)
+
+**Goal:** Fleet-wide software catalogue under **Applications → Fleet Apps**, app-primary (not per-machine).
+
+### List page
+
+- Same **name** and **location** (path) presentation as Discovery.
+- Column: **number of machines** that have the software.
+- That count is **clickable**.
+
+### Drill-down page (one app / path+exe)
+
+- Software name (and path) as header.
+- Table of **all machines** that have it, with:
+  - First detected
+  - Last run
+  - How often it is run (frequency)
+  - Average run time
+  - Average hardware resource usage (CPU / GPU / memory as available from samples)
+
+### Dependencies / notes
+
+- Benefits from path+exe identity and app↔machine presence work in `docs/spec-team-review-requirements.md`.
+- Usage stats come from existing `ProcessRuns` (and related metrics); may need path-aware aggregation if multiple paths share an exe name.
+- 12‑month inactive flag can surface here as a badge/filter.
