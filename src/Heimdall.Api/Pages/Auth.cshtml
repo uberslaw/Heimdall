@@ -1,0 +1,99 @@
+@page
+@model AuthModel
+@{
+    ViewData["Title"] = "Auth";
+}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+        <h1 class="hd-title mb-1">Auth</h1>
+        <p class="hd-sub mb-0">Team membership sources — toggle Entra Graph when permissions are ready; Manual/CSV is the backup.</p>
+    </div>
+    <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="auth">Help</a>
+</div>
+
+@if (TempData["Message"] is string ok)
+{
+    <div class="alert alert-success">@ok</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-warning">@err</div>
+}
+
+<form method="post" asp-page-handler="Save" class="hd-panel mb-4">
+    <h2 class="h5 mb-3">Team membership sources</h2>
+    <p class="small text-secondary mb-3">
+        At least one source stays enabled. Until Entra admin consent is granted, leave <strong>Manual / CSV</strong> on
+        and keep <strong>Entra Graph</strong> off (or on only after Probe succeeds).
+    </p>
+
+    <div class="form-check mb-3">
+        <input class="form-check-input" type="checkbox" asp-for="ManualCsvMembershipEnabled" id="auth-manual" />
+        <label class="form-check-label" for="auth-manual">
+            <strong>Manual / CSV</strong> — add people on team detail, or
+            <a asp-page="/Teams/ImportCsv">Import CSV</a>. Use this while Graph permissions are pending.
+        </label>
+    </div>
+
+    <div class="form-check mb-4">
+        <input class="form-check-input" type="checkbox" asp-for="EntraGraphMembershipEnabled" id="auth-entra" />
+        <label class="form-check-label" for="auth-entra">
+            <strong>Entra Graph sync</strong> — “Sync from Entra” on team detail (transitive group members).
+            Requires DPAPI secrets + Application permissions with admin consent.
+        </label>
+    </div>
+
+    <button type="submit" class="hd-btn hd-btn-gold">Save</button>
+</form>
+
+<div class="hd-panel mb-4">
+    <h2 class="h5 mb-3">Entra Graph status</h2>
+    <dl class="row small mb-3">
+        <dt class="col-sm-4">Secrets file</dt>
+        <dd class="col-sm-8">
+            @if (Model.EntraSecretsFilePresent)
+            {
+                <span>Present — <code>@Model.SecretsPath</code></span>
+            }
+            else
+            {
+                <span class="text-secondary">Missing — run <code>scripts\Protect-HeimdallEntraSecret.ps1</code> on the API host</span>
+            }
+        </dd>
+        <dt class="col-sm-4">Credentials loaded</dt>
+        <dd class="col-sm-8">@(Model.EntraSecretsConfigured ? "Yes" : "No")</dd>
+        <dt class="col-sm-4">Membership toggle</dt>
+        <dd class="col-sm-8">@(Model.Settings.EntraGraphMembershipEnabled ? "On" : "Off")</dd>
+    </dl>
+
+    @if (Model.LastProbe is { } probe)
+    {
+        <div class="alert @(probe.GroupReadOk ? "alert-success" : "alert-secondary") small mb-3">
+            Token: @(probe.TokenOk ? "OK" : "Fail") ·
+            Group read: @(probe.GroupReadOk ? "OK" : "Fail") ·
+            @probe.Message
+        </div>
+    }
+
+    <form method="post" asp-page-handler="ProbeEntra" class="d-inline">
+        <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm" disabled="@(!Model.EntraSecretsConfigured)">
+            Test Entra connection
+        </button>
+    </form>
+    <p class="small text-secondary mt-3 mb-0">
+        Probe obtains a token, then lists one group. A token OK + group fail usually means admin consent is still missing —
+        keep Manual/CSV on. No redirect URI is required for this app-only flow.
+    </p>
+</div>
+
+<div class="hd-panel mb-4">
+    <h2 class="h5 mb-2">Backup path (no Graph permissions yet)</h2>
+    <ol class="small mb-0">
+        <li>Leave <strong>Manual / CSV</strong> enabled (default).</li>
+        <li>Optionally store DPAPI secrets now with <code>Protect-HeimdallEntraSecret.ps1</code> so you’re ready later.</li>
+        <li>Keep <strong>Entra Graph sync</strong> off until Probe shows group read OK.</li>
+        <li>Export members from Entra admin / ADUC if useful, then <a asp-page="/Teams/ImportCsv">Import CSV</a> (<code>Username,Team</code>).</li>
+        <li>When consent lands: Probe → enable Entra → link group Object ID on Edit team → Sync.</li>
+    </ol>
+</div>

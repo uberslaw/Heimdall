@@ -4,6 +4,7 @@ using Heimdall.Api.Services;
 using Heimdall.Shared.Contracts;
 using Microsoft.AspNetCore.Authentication.Negotiate;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,8 +12,14 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService(options => options.ServiceName = "HeimdallApi");
 
 builder.Services.Configure<StaffAccessOptions>(builder.Configuration.GetSection("Heimdall:StaffAccess"));
+builder.Services.Configure<EntraOptions>(builder.Configuration.GetSection(EntraOptions.SectionName));
+builder.Services.AddSingleton<EntraSecretStore>();
+builder.Services.AddSingleton<IPostConfigureOptions<EntraOptions>, EntraOptionsPostConfigure>();
 builder.Services.AddSingleton<ActiveDirectoryStaffEmailResolver>();
 builder.Services.AddSingleton<WindowsStaffIdentityService>();
+builder.Services.AddSingleton<EntraGraphService>();
+builder.Services.AddScoped<DirectoryAuthSettingsService>();
+builder.Services.AddScoped<EntraTeamMembershipSyncService>();
 builder.Services.AddScoped<StaffAccessGuard>();
 
 var staffAccessOpts = builder.Configuration.GetSection("Heimdall:StaffAccess").Get<StaffAccessOptions>() ?? new();
