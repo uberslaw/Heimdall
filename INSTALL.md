@@ -2,7 +2,7 @@
 
 This guide installs the **Heimdall API + dashboard** (server) and the **Heimdall Agent** (workstation collector) as Windows services.
 
-**Auth (POC):** API key only (`X-Heimdall-Key`). There is **no Entra / AD website login** yet — treat the dashboard as trusted-LAN / POC only.
+**Auth (POC):** Agent ingest uses API key only (`X-Heimdall-Key`). There is **no Entra / AD website login** for the general dashboard yet — treat it as trusted-LAN / POC only. **Teams membership** can optionally use Entra Graph (see **Admin → Auth** and [Entra ID (Graph) membership](#entra-id-graph-membership--secrets) below); that is directory sync, not SSO.
 
 **RepoSync users:** a typical local clone path is `C:\Users\christopher.owen\Cursor\Heimdall`. You can clone anywhere; installers resolve the repo root from the `scripts` folder.
 
@@ -231,9 +231,18 @@ Ensure `%ProgramData%\Heimdall\` exists and the service account (LocalSystem by 
 
 **Backup API DB:** Heimdall Setup → **Backup API database** copies `\\HOST\C$\ProgramData\Heimdall\heimdall.db` locally to `%LOCALAPPDATA%\Heimdall\backups\` (and tries `...\backups\` on the API PC). Same SMB/admin-share access as **Open remote logs**.
 
-### Entra ID (Graph) membership — secrets
+### Entra ID (Graph) membership — secrets and toggles
 
-Team membership sync uses an Entra **app registration** (client credentials). **Do not** put the client secret in git or in `appsettings.json`.
+Team membership sync uses an Entra **app registration** (client credentials). **Do not** put the client secret in git or in `appsettings.json`. This is **not** site-wide SSO.
+
+**Admin → Auth** toggles (stored in SQLite `SystemFlags`):
+
+| Source | Default | Role |
+|--------|---------|------|
+| **Manual / CSV** | On | Backup — add people on team detail or Import CSV |
+| **Entra Graph sync** | Off | Enable after Graph admin consent; unlocks Sync from Entra |
+
+Use **Test Entra connection** on Auth: token OK + group-read fail usually means Application permissions still lack admin consent.
 
 On the API host (elevated):
 
@@ -249,7 +258,7 @@ That writes `%ProgramData%\Heimdall\secrets\entra.json` with a **DPAPI LocalMach
 Restart-Service HeimdallApi
 ```
 
-No redirect URI is required for this flow. App permissions: Application `Group.Read.All` + `User.Read.All` (or `GroupMember.Read.All`) with admin consent.
+No redirect URI is required for this flow. App permissions: Application `Group.Read.All` + `User.Read.All` (or `GroupMember.Read.All`) with admin consent. Then Admin → Auth → Probe → enable Entra Graph → Edit team (group Object ID) → Sync from Entra.
 
 ### API key mismatch
 

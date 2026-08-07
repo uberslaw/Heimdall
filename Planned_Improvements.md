@@ -181,7 +181,7 @@ On-demand agent scan of **volume free space** and **large folder trees** — not
 
 ### What shipped (POC)
 
-- **TUFLOW Runs** (`/TuflowRuns`) and **Fleet Sim Progress** (`/FleetSimProgress`) — nav under Remote Machines
+- **TUFLOW Runs** (`/TuflowRuns`) and **Fleet Sim Progress** (`/FleetSimProgress`) — under gated **Flood** nav (with Flood hub / Historical Dashboard)
 - Queue start via free-form exe + `.tcf` (+ optional scenarios/events/run name); stop via `TuflowStopGraceful` pending command
 - Agent ~20s poll `GET /api/tuflow/{hostname}/pending`; launcher under `%ProgramFiles%\Heimdall\Agent\TuflowLauncher\`
 - Machine page TUFLOW panel + `TuflowRunRecord` history; fleet process CPU/GPU/disk metrics persisted

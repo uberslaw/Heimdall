@@ -35,7 +35,7 @@ Same UI: `scripts\Heimdall-LaunchControl.lnk`. After pull, run `scripts\New-Heim
 
 Options: Install API → Create client pack → Push to PC → Install agent. Right-side Steps: Client (default) / Server.
 
-**POC auth is API key only** — no Entra yet.
+**POC auth:** agent API key (`X-Heimdall-Key`). No site-wide Entra SSO for the admin dashboard yet (trusted LAN). Optional **Entra Graph** sync for Teams membership — see **Admin → Auth** and [INSTALL.md](INSTALL.md).
 
 ```text
 # Build PC: create one folder, then copy it to clients
@@ -113,7 +113,7 @@ Admin → **Remote Access Groups** maps staff email ↔ machines. Admin → **Cl
 
 ### Teams
 
-Dashboard → **Teams**: maintain business units / teams (optional parent hierarchy + code) and map people by Windows username (optional domain, display name, email). Primary POC path is **CSV upload**; create/edit/delete teams and assign users manually as well.
+Dashboard → **Applications → Teams**: maintain business units / teams (optional parent hierarchy + code) and map people by Windows username (optional domain, display name, email). Primary paths: **CSV / manual** (Admin → Auth, on by default), and optional **Entra Graph** group sync when enabled and consented.
 
 **CSV columns** (header required):
 
@@ -140,7 +140,8 @@ scripts/             Local-admin installers
 
 ## POC limits
 
-- No Entra/AD auth on the **admin** dashboard yet (trusted LAN). Staff Access can use Windows Negotiate separately.
+- No Entra/AD **login** on the admin dashboard yet (trusted LAN). Staff Access can use Windows Negotiate separately.
+- **Teams membership** can optionally sync from Entra Graph (app-only; DPAPI secret on API host; toggles under Admin → Auth). Manual/CSV remains the backup until Graph admin consent is granted. Site-wide SSO is still later.
 - Process→user via session id (best-effort)
-- Per-process `ProcessRun` GPU/disk peaks are often still empty (Stats ranking columns). **Live** RAM/GPU/disk sampling runs for Staff Access viewers and for **Historical Dashboard** enrollment (30s fleet snapshots) — thresholds in Config still apply via `/api/config/{hostname}`.
+- Per-process `ProcessRun` GPU/disk peaks are often still empty (Stats ranking columns). **Live** RAM/GPU/disk sampling runs for Staff Access viewers and for **Flood / Historical** enrollment (30s fleet snapshots) — thresholds in Config still apply via `/api/config/{hostname}`.
 - SQLite for POC; SQL Server later if needed

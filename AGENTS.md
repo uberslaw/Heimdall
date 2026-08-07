@@ -20,6 +20,7 @@ Heimdall is a **.NET 10** solution (`Heimdall.slnx`). Standard build/run/config 
 ### Auth
 - Agent-facing `/api/*` endpoints require header `X-Heimdall-Key: heimdall-poc-key` (POC default). Missing/wrong key returns 401.
 - Staff Access uses Windows Negotiate; `appsettings.Development.json` sets `AllowDevBypass: true` so those pages work without a Windows identity here.
+- **Entra Graph team membership** (optional): needs Windows DPAPI secrets under `%ProgramData%\Heimdall\secrets\` — on Linux cloud VMs Graph sync will not decrypt LocalMachine secrets; use Manual/CSV (Admin → Auth defaults). Site-wide Entra SSO is not implemented.
 
 ### Lint / test / build
 - There is **no automated test suite** and no dedicated linter. "Lint" is effectively the build with nullable + analyzers: `dotnet build Heimdall.slnx -c Debug`.
