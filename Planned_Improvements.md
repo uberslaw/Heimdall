@@ -113,8 +113,8 @@ On-demand agent scan of **volume free space** and **large folder trees** — not
 
 ## Level 3 drill-down
 
-- Machine → Resource usage → dated raw samples / per-app share of hardware
-- Same hierarchy for sessions and app usage over any range with stored data
+- ~~Machine → Resource usage → dated raw samples / per-app share of hardware~~ **Done (v1)** — Fleet Computers metric cells → `/MachineUtilDrilldown` (by process / person / day) from always-on samples + sessions; top-process JSON needs a current agent pack
+- Same hierarchy for sessions and app usage over any range with stored data (Sessions / Application pages already cover much of this)
 
 ## Fleet-wide sampling
 
@@ -181,11 +181,11 @@ On-demand agent scan of **volume free space** and **large folder trees** — not
 
 ### What shipped (POC)
 
-- **TUFLOW Runs** (`/TuflowRuns`) and **Fleet Sim Progress** (`/FleetSimProgress`) — nav under Remote Machines
+- **TUFLOW Runs** (`/TuflowRuns`) and Flood hub **Fleet Sims** — nav under **Flood** (gated)
 - Queue start via free-form exe + `.tcf` (+ optional scenarios/events/run name); stop via `TuflowStopGraceful` pending command
 - Agent ~20s poll `GET /api/tuflow/{hostname}/pending`; launcher under `%ProgramFiles%\Heimdall\Agent\TuflowLauncher\`
 - Machine page TUFLOW panel + `TuflowRunRecord` history; fleet process CPU/GPU/disk metrics persisted
-- Machines must be enrolled on Historical Dashboard (TUFLOW fleet); start blocked if TUFLOW already detected running
+- Machines must be on the **Flood allowlist** (`FleetDashboardMachines` / Flood → Enrollment); start blocked if TUFLOW already detected running. Util sampling is estate-wide and does **not** require this list.
 - Client pack (`Pack-WorkstationCollector.cmd`) and `install-agent.ps1` publish the launcher beside the agent
 
 ### Still follow-ups (not in POC)

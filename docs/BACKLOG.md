@@ -6,7 +6,7 @@ Parked product ideas so names and intent are not lost.
 
 **Socratize** = retrospective interrogation of *already collected* Heimdall data for **one machine**: a Socratic cost-justification brief (users/teams, local vs RDP, util %, RDP disconnected waste, dominant apps, MetricPolicy in scope, heuristic POC verdict).
 
-Entry: Machines row action / select → `/Socratize?host=HOSTNAME` (default last 30 days).
+Entry: Fleet → All computers row action / select → `/Socratize?host=HOSTNAME` (default last 30 days).
 
 Keep the product name **Socratize** for this machine deep-dive.
 
@@ -21,7 +21,9 @@ Keep the product name **Socratize** for this machine deep-dive.
 
 ## Related (shipped — do not confuse with Flight Recorder)
 
-**Historical Dashboard** (nav → Remote) is **already built**: enroll machines for always-on **30s** fleet resource snapshots, Live Fleet gauges, and historical totals/averages/rankings (TUFLOW-oriented). That is continuous fleet telemetry, not incident ring-buffer capture.
+**Always-on fleet sampling** (~30s for every known Machine) feeds **Fleet → All computers** util columns, **Fleet → Live**, and Flood analytics. Top processes on each sample power metric drill-down. **Flood hub** (`/Flood`) keeps Flood-allowlist Live / Historical / Enrollment + Fleet Sims for TUFLOW; enrollment does **not** gate util sampling.
+
+That is continuous fleet telemetry, not incident ring-buffer capture.
 
 Keep Flight Recorder as the *separate* future “what happened when tuflow choked?” arm below.
 
@@ -29,7 +31,7 @@ Keep Flight Recorder as the *separate* future “what happened when tuflow choke
 
 ## Socratize → Flight Recorder / Deep Observe (named, not built)
 
-**Not the same as retrospective Socratize**, and **not the same as Historical Dashboard**. Optional high-cardinality capture *while a watched process runs* (or on demand), later fed to AI / Socratize for incident questions.
+**Not the same as retrospective Socratize**, and **not the same as always-on fleet sampling / Flood hub**. Optional high-cardinality capture *while a watched process runs* (or on demand), later fed to AI / Socratize for incident questions.
 
 ### Motivating example
 

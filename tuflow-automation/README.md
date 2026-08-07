@@ -85,16 +85,15 @@ tcf/                      Control-file snippets, unrelated to Heimdall.
 
 ## Which machines can this run on
 
-Only machines enrolled in the Historical Dashboard's existing "TUFLOW fleet"
-list (`FleetDashboardMachine` — the same enrollment that already powers your
-Historical Dashboard / fleet sampling) show up on the TUFLOW Runs page at
-all. There's no separate "Flood group" concept to manage — enroll/unenroll
-machines from wherever you already do that for the Historical Dashboard, and
-the Runs page follows automatically. The page has no machine dropdown by
-design: every row *is* a specific enrolled machine, so there's no way to
-target a machine that isn't on that list, even by hand-editing a form post
-(`TuflowRunService.QueueStartAsync`/`QueueStopGracefulAsync` both re-check
-enrollment server-side too).
+Only machines on the **Flood allowlist** (`FleetDashboardMachine` — Flood hub → Enrollment)
+show up on the TUFLOW Runs page at all. That list gates TUFLOW Runs / Sims only;
+estate-wide util sampling does **not** require enrollment. There's no separate
+"Flood group" concept beyond this allowlist — enroll/unenroll machines from
+Flood → Enrollment, and the Runs page follows automatically. The page has no
+machine dropdown by design: every row *is* a specific enrolled machine, so
+there's no way to target a machine that isn't on that list, even by hand-editing
+a form post (`TuflowRunService.QueueStartAsync`/`QueueStopGracefulAsync` both
+re-check enrollment server-side too).
 
 Each row also shows a live "licence / process" status — reusing the fleet
 sampler's existing 30-second TUFLOW-process detection

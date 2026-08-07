@@ -15,7 +15,7 @@ Heimdall is a **.NET 10** solution (`Heimdall.slnx`). Standard build/run/config 
 
 ### Live vs sandbox database (important gotcha)
 - In `Development` the **dashboard browses the sandbox DB by default** (`DatabaseMode: sandbox` in `appsettings.Development.json`), but **agent ingest via `/api/ingest` always writes to the live DB** (`heimdall.db`).
-- So after posting a heartbeat you will **not** see the machine until you switch the dashboard to Live: visit `http://localhost:5080/database-mode?mode=live&returnUrl=/Ops?tab=machines`, or use **Admin -> Database mode**. In the UI, Live is labelled "Local DB".
+- So after posting a heartbeat you will **not** see the machine until you switch the dashboard to Live: visit `http://localhost:5080/database-mode?mode=live&returnUrl=/Fleet?tab=machines`, or use **Admin -> Database mode**. In the UI, Live is labelled "Local DB".
 
 ### Auth
 - Agent-facing `/api/*` endpoints require header `X-Heimdall-Key: heimdall-poc-key` (POC default). Missing/wrong key returns 401.
