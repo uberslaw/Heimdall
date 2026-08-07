@@ -1563,6 +1563,12 @@ public static class SeedData
 
         // Phase 1 — Staff RDP pool + booking
         await TryExec(db, "ALTER TABLE Teams ADD COLUMN IsPublicFacing INTEGER NOT NULL DEFAULT 0");
+        // Entra ID group membership sync (Microsoft Graph)
+        await TryExec(db, "ALTER TABLE Teams ADD COLUMN EntraGroupId TEXT NULL");
+        await TryExec(db, "ALTER TABLE Teams ADD COLUMN EntraGroupName TEXT NULL");
+        await TryExec(db, "ALTER TABLE Teams ADD COLUMN EntraMembersSyncedUtc TEXT NULL");
+        await TryExec(db, "ALTER TABLE Teams ADD COLUMN EntraLastSyncError TEXT NULL");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_Teams_EntraGroupId ON Teams(EntraGroupId)");
         await TryExec(db, """
             CREATE TABLE IF NOT EXISTS MachineBookings (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,

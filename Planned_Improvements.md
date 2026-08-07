@@ -194,6 +194,7 @@ On-demand agent scan of **volume free space** and **large folder trees** — not
 - **Allowlisted jobs:** replace free-form paths with curated batch/job definitions (closer to original parked design)
 - Supervised verify: CTRL_BREAK vs Ctrl+C on your TUFLOW build; `.tsf`/`.tlf` folder discovery; `-s1`/`-e1` syntax
 - Per-process network metrics; optional rolling 5-minute fleet averages
+- **Local TUFLOW log folder** (`C:\ProgramData\TUFLOW\Log`): monitor for **stop times** and **error output**; build a start / stop / failures list matched to **run names, machines, people**; look for patterns. More analytics later.
 
 ### Original parked design notes (reference)
 

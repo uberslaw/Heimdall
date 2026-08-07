@@ -16,7 +16,7 @@
     </div>
 }
 
-<form method="post" class="hd-panel mb-4" style="max-width: 32rem;">
+<form method="post" class="hd-panel mb-4" style="max-width: 36rem;">
     <input type="hidden" asp-for="EditingTeamId" />
     <div class="mb-3">
         <label class="form-label" asp-for="TeamName">Name</label>
@@ -42,6 +42,38 @@
             Public-facing (machines on this team appear in Staff RDP pool)
         </label>
     </div>
+
+    <hr class="my-4" />
+    <h2 class="h6 mb-2">Entra ID membership</h2>
+    @if (!Model.EntraConfigured)
+    {
+        <p class="small text-secondary mb-3">@Model.EntraSetupHint</p>
+    }
+    else
+    {
+        <p class="small text-secondary mb-3">
+            Paste the group <strong>Object ID</strong> from Entra admin center (or Azure portal → Groups).
+            Sync on the team detail page replaces People with transitive group members.
+            App credentials come from the DPAPI secrets file on the API host — not from this form.
+        </p>
+    }
+    <div class="mb-3">
+        <label class="form-label" asp-for="EntraGroupId">Entra group Object ID</label>
+        <input class="form-control font-monospace" asp-for="EntraGroupId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" />
+        @if (!string.IsNullOrWhiteSpace(Model.EntraGroupName))
+        {
+            <div class="form-text">Linked group: <strong>@Model.EntraGroupName</strong></div>
+        }
+        @if (Model.EntraMembersSyncedUtc is DateTimeOffset synced)
+        {
+            <div class="form-text">Last sync: @synced.ToString("u") UTC</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(Model.EntraLastSyncError))
+        {
+            <div class="form-text text-danger">Last sync error: @Model.EntraLastSyncError</div>
+        }
+    </div>
+
     <div class="d-flex gap-2 flex-wrap">
         <button type="submit" class="hd-btn hd-btn-gold">@(Model.IsEdit ? "Save" : "Create")</button>
         @if (Model.IsEdit)

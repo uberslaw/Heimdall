@@ -33,6 +33,8 @@ dist/
 # Secrets / local overrides (keep committed appsettings.json as POC placeholders only)
 **/appsettings.*.local.json
 **/secrets.json
+**/secrets/entra.json
+**/Heimdall/secrets/
 **/appsettings.Production.json
 .env
 .env.*
