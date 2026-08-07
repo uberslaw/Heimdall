@@ -86,11 +86,11 @@ Dashboard → **Stats**: pick machine scope (All / Region / Country / Office / G
 
 ### Machines utilisation period
 
-Dashboard → **Machines**: choose **Utilisation period** (1 day, 7 day default, 2 week, 4 week, quarter ~90 days, 6 month, year). Selection is kept in the query string (`?range=7d`, `?range=2w`, `?range=quarter`, etc.) so refresh preserves it. Avg util and per-machine utilisation % recalculate for that window.
+Dashboard → **Fleet → All computers**: choose **Period** (Today / 24h / 5d / **7 day** default / 30d / All). Selection is kept in the query string (`?period=7d`, etc.). Active / Passive / Free % and GPU·CPU·IO columns recalculate for that window. Click a metric cell for a **process / person / day** breakdown (`/MachineUtilDrilldown`).
 
 ### Socratize
 
-Dashboard → **Machines** → **Socratize** (per row, or select host at top) opens `/Socratize?host=HOSTNAME` — a one-machine **cost-justification Q&A** built from already-collected Heimdall data (default last 30 days): who uses it (and Teams if mapped), local vs RDP, occupancy %, RDP disconnected waste, dominant apps, MetricPolicy thresholds in scope, and a short heuristic POC verdict (underused / healthy / RDP-idle-heavy / app-concentrated). Apt vs CADFX: one-click “is this box earning its keep?”
+Dashboard → **Fleet → All computers** → **Socratize** (per row, or select host at top) opens `/Socratize?host=HOSTNAME` — a one-machine **cost-justification Q&A** built from already-collected Heimdall data (default last 30 days): who uses it (and Teams if mapped), local vs RDP, occupancy %, RDP disconnected waste, dominant apps, MetricPolicy thresholds in scope, and a short heuristic POC verdict (underused / healthy / RDP-idle-heavy / app-concentrated). Apt vs CADFX: one-click “is this box earning its keep?”
 
 **Keep the name Socratize** for this retrospective machine deep-dive. A related future arm — **Flight Recorder / Deep Observe** (high-cardinality capture while a watched process like `tuflow.exe` runs, for AI incident analysis) — is parked in [`docs/BACKLOG.md`](docs/BACKLOG.md) and teased on the Socratize page; it is not the same as today’s brief.
 
@@ -101,19 +101,38 @@ Dashboard → **Discovery**: full central process catalog (ProcessName + Executa
 
 In-app **Admin → Help** is the page-by-page operator guide (preferred for UI detail).
 
-### Remote
+### Fleet
 
-| Page | Purpose |
-|------|---------|
-| **Remote Machines** | RDP/RDS health, ping from API host, Connect `.rdp`, Restart RDS via agent command queue |
-| **Historical Dashboard** | Enroll machines → always-on **30s** resource snapshots; Live Fleet + historical analytics (TUFLOW-oriented POC). Distinct from backlog **Flight Recorder**. |
-| **Staff Access** | Restricted live metrics for staff in a Remote Access Group (optional Windows Negotiate — see [INSTALL.md](INSTALL.md)) |
+Dashboard → **Fleet** (`/Fleet`; legacy `/Ops` redirects here): tabbed estate console.
 
-Admin → **Remote Access Groups** maps staff email ↔ machines. Admin → **Clients** compares agent heartbeat version vs published pack version. Admin → **Theme** / **Database mode** (Live vs Sandbox).
+| Tab | Purpose |
+|-----|---------|
+| **All computers** | Team-grouped machine list; status; util period; click metrics for process/person/day drill-down |
+| **Live** | Estate-wide live gauges from always-on ~30s fleet samples |
+| **Sessions** | Local vs RDP sessions |
+| **Online status** | RDP/RDS health, ping, Connect `.rdp`, Restart RDS |
+| **Client version** | Agent version vs published pack |
+| **Cost** / **Stats** | Hardware cost and scoped analytics |
+
+### Flood
+
+Dashboard → **Flood** (gated: AdminEmails ∪ FloodTeamEmails): hub for TUFLOW tooling (`/Flood`; old Historical Dashboard / Fleet Sim URLs redirect in).
+
+| Tab / link | Purpose |
+|------------|---------|
+| **Live / Historical / Enrollment** | Flood-allowlist machines; historical analytics; enroll hosts for TUFLOW Runs / Sims |
+| **Fleet Sims** | Sim progress |
+| **TUFLOW Runs** | Queue start / graceful stop (separate Flood nav link) |
+
+`FleetDashboardMachines` is the **Flood/TUFLOW allowlist only**. Always-on **30s** fleet sampling runs for **every known Machine** (not enrollment-gated). Distinct from backlog **Flight Recorder**.
+
+### Staff Access
+
+Restricted live metrics for staff in a Remote Access Group (optional Windows Negotiate — see [INSTALL.md](INSTALL.md)). Admin → **Remote Access Groups** maps staff email ↔ machines. Admin → **Theme** / **Database mode** (Live vs Sandbox).
 
 ### Teams
 
-Dashboard → **Teams**: maintain business units / teams (optional parent hierarchy + code) and map people by Windows username (optional domain, display name, email). Primary POC path is **CSV upload**; create/edit/delete teams and assign users manually as well.
+Dashboard → **Applications → Teams** (also under Admin → Configuration): list-first teams hub — people, machines, track/ignore app lists, machine overrides. CSV import and purposeful Add/Edit forms (no dense inline create card).
 
 **CSV columns** (header required):
 
@@ -127,7 +146,7 @@ Dashboard → **Teams**: maintain business units / teams (optional parent hierar
 | `ParentTeam` | no | Parent team name (created if missing) |
 | `Code` | no | Optional team code |
 
-Simpler format: `Username,Team`. Session usernames match case-insensitively with or without `DOMAIN\`. Full org-chart file upload can come later — CSV is the supported import for POC. Template: `/templates/heimdall-teams-template.csv` or **Download CSV template** on the Teams page. Sessions table shows a Team column when a match exists.
+Simpler format: `Username,Team`. Session usernames match case-insensitively with or without `DOMAIN\`; the UI strips `DOMAIN\` (e.g. `Global\`) for display. Full org-chart file upload can come later — CSV is the supported import for POC. Template: `/templates/heimdall-teams-template.csv` or **Download CSV template** on the Teams Import form. Sessions table shows a Team column when a match exists.
 
 ## Solution layout
 
@@ -142,5 +161,5 @@ scripts/             Local-admin installers
 
 - No Entra/AD auth on the **admin** dashboard yet (trusted LAN). Staff Access can use Windows Negotiate separately.
 - Process→user via session id (best-effort)
-- Per-process `ProcessRun` GPU/disk peaks are often still empty (Stats ranking columns). **Live** RAM/GPU/disk sampling runs for Staff Access viewers and for **Historical Dashboard** enrollment (30s fleet snapshots) — thresholds in Config still apply via `/api/config/{hostname}`.
+- Per-process `ProcessRun` GPU/disk peaks are often still empty (Stats ranking columns). **Always-on ~30s fleet samples** (every known Machine) feed Fleet Computers util columns, Fleet → Live, and Flood analytics; samples also store **top processes** for metric drill-down (needs a current agent pack). Staff Access has separate viewer-triggered live sampling. Thresholds in Config still apply via `/api/config/{hostname}`.
 - SQLite for POC; SQL Server later if needed

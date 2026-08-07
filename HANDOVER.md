@@ -12,7 +12,7 @@
 |------|--------|
 | **Branch** | `main` (canonical). Prefer `origin/main` for cross-machine continuity. |
 | **PR #4** | **Merged** 2026-07-31 — unified Heimdall Setup UX is on `main`. |
-| **Docs audit** | In-app **Help** is the most complete product guide. Repo markdown (README / this file) was lagging Remote + Historical features — keep them aligned when shipping UI. |
+| **Docs audit** | In-app **Help** is the most complete product guide. Keep README / this file aligned when shipping UI (Fleet, Flood, Teams, util drill-down). |
 
 ### Setup UX (shipped on main)
 
@@ -75,7 +75,7 @@ POC **workstation usage tracker** to justify modelling / remote machine cost ver
 
 Three pieces:
 
-1. **Agent** — Windows Service that collects sessions, processes, heartbeats, hardware inventory, OS install signals, MachineGuid / SMBIOS UUID; optional live resource sampling (Staff Access viewers) and 30s fleet snapshots (Historical Dashboard enrollment)
+1. **Agent** — Windows Service that collects sessions, processes, heartbeats, hardware inventory, OS install signals, MachineGuid / SMBIOS UUID; optional viewer-triggered live resource sampling (Staff Access); **always-on ~30s fleet snapshots** for every known Machine (top processes included for util drill-down)
 2. **ASP.NET Core Razor Pages API + dashboard** — ingest, config, analytics UI
 3. **SQLite** — POC database (zero SQL Server install)
 
@@ -176,33 +176,35 @@ Full install detail: [INSTALL.md](INSTALL.md).
 
 | Menu | Pages |
 |------|--------|
-| **Machines** | All machines, Sessions |
-| **Applications** | Applications, App lists, Discovery, Socratize, Track Software |
-| **Remote** | Remote Machines, Historical Dashboard, Staff Access |
-| **Admin** | Tracking config, Teams, Utilization criteria, Cost, Stats, Clients, Remote Access Groups, Help, Database mode (Live/Sandbox), Theme |
+| **Fleet** | All computers, Live, Sessions, Online status, Client version, Cost, Stats (`/Fleet`; `/Ops` redirects) |
+| **Applications** | Applications, App lists, Discovery, Socratize, Track Software, **Teams** |
+| **Staff** | Staff Access (RDP pool / booking) |
+| **Flood** (gated) | Flood hub (Live / Historical / Sims / Enrollment), TUFLOW Runs |
+| **Admin** | Tracking config, Teams (also under Applications), Utilization criteria, Remote Access Groups, Help, Database mode (Live/Sandbox), Theme |
 
 In-app **Admin → Help** has page-by-page operator docs (preferred over README for UI detail).
 
 | Area | What it does |
 |------|----------------|
-| **Machines** | Fleet view; utilisation period; **Reimaged** badge when MachineGuid changed |
+| **Fleet → All computers** | Team-grouped estate; util period; click metric cells → process/person/day drill-down; **Reimaged** badge when MachineGuid changed |
+| **Fleet → Live** | Estate-wide live gauges from always-on 30s samples |
 | **Sessions** | Local vs RDP logons; start/end; active vs disconnected; Team column when mapped; session drilldown |
 | **Apps / Track Software** | Allowlisted / known / discovered / custom titles; scoped tracking |
 | **App lists + Analyze** | Approval-gated Analyze — **no silent auto-track**; inventory request; classification CSV AI workflow |
 | **Discovery** | Full process catalog (name+path); edit friendly name/version/category; installs + frequency |
 | **Config** | Sampling, known apps, SOE autogenerate, metric thresholds, pause |
-| **Teams** | CSV upload + CRUD; username → team |
+| **Teams** | List-first hub: membership (people + machines), app track/ignore links, machine overrides; CSV import; username → team |
 | **Stats** | Scoped analytics (logons, apps, RDP disconnected, patterns) |
 | **Socratize** | Per-machine cost-justification Q&A from collected data |
 | **Utilization** | Utilisation weights; **app license $/yr** (secondary to hardware cost) |
 | **Cost** | **Hardware purchase cost** focus; user vs **`ops.` support hours** (30d); optional SupportHourlyRate; WMI hardware autodetection + manual; **PSU watts manual only**; BIOS vs hostname asset serial; OS install + Windows folder created dates; reimage identity history |
-| **Remote Machines** | RDP/RDS health, ping from API host, Connect `.rdp`, Restart RDS via agent queue |
-| **Historical Dashboard** | Enroll hosts → always-on **30s** fleet snapshots; Live Fleet + historical analytics (TUFLOW-oriented POC) |
+| **Online status** | RDP/RDS health, ping from API host, Connect `.rdp`, Restart RDS via agent queue |
+| **Flood hub** | Flood-allowlist Live/Historical/Enrollment + Fleet Sims; TUFLOW Runs separate |
 | **Staff Access** | Restricted live metrics for staff in Remote Access Groups; optional Windows Negotiate |
 | **Remote Access Groups** | Admin: staff email ↔ machine membership (+ favourite processes) |
-| **Clients** | Agent version per host vs published pack version |
+| **Client version** | Agent version per host vs published pack version |
 | **Theme / DB mode** | Custom themes; Live vs Sandbox (`heimdall-dev.db`) browse toggle — ingest always Live |
-| **Metric thresholds** | Config → agents; per-process ProcessRun GPU/disk columns still often empty; **live/fleet sampling** populates Historical + Staff views |
+| **Metric thresholds** | Config → agents; per-process ProcessRun GPU/disk columns still often empty; **fleet samples** (estate-wide) + Staff live sampling populate util / Live / Flood views |
 
 ### Hardware / identity
 
@@ -231,7 +233,7 @@ In-app **Admin → Help** has page-by-page operator docs (preferred over README 
 | **RDP vs local** | Classify by **protocol** first (then RDP-/ICA- WinStation, then ClientName/Address). Console alone must not force Local. |
 | **PSU / power draw** | Rated wattage = manual. Live draw = **not** collected. |
 | **OS InstallDate** | Feature updates often rewrite WMI/registry InstallDate — show both signals on Cost. |
-| **ProcessRun GPU/disk** | Stats ranking columns for ProcessRun peaks may stay empty; use Historical Dashboard / Staff live sampling for GPU/disk util. |
+| **ProcessRun GPU/disk** | Stats ranking columns for ProcessRun peaks may stay empty; use Fleet Computers drill-down / Fleet → Live / Flood analytics / Staff live sampling for GPU/disk util. |
 | **Dell / HP warranty API** | Not wired — official APIs later; **no scraping**. |
 | **SQLite + DateTimeOffset** | Prefer filter/order in memory where EF translation is unreliable. |
 | **Wrong folder** | Prefer **`C:\Users\christopher.owen\Cursor\Heimdall`**, not Arup. |
@@ -243,7 +245,7 @@ In-app **Admin → Help** has page-by-page operator docs (preferred over README 
 ## Product decisions / naming to keep
 
 1. **Socratize** = retrospective interrogation of *already collected* data for **one machine**.
-2. **Flight Recorder / Deep Observe** = future high-cardinality *incident* capture — **backlog / not built**. Distinct from shipped **Historical Dashboard** (30s fleet snapshots). See [docs/BACKLOG.md](docs/BACKLOG.md).
+2. **Flight Recorder / Deep Observe** = future high-cardinality *incident* capture — **backlog / not built**. Distinct from shipped **always-on fleet sampling** + Flood hub analytics (30s snapshots). See [docs/BACKLOG.md](docs/BACKLOG.md).
 3. **App analysis requires approval** — never silently auto-track.
 4. **No scraping HP/Dell** for warranty.
 5. **Hardware cost** is the primary Cost-page story; app license $/yr lives on Utilization.
@@ -252,8 +254,8 @@ In-app **Admin → Help** has page-by-page operator docs (preferred over README 
 
 ## Suggested next steps
 
-1. Deploy/refresh portable pack on SOE boxes; confirm Machines + Clients versions.
-2. Enroll modelling hosts on **Historical Dashboard** if TUFLOW fleet visibility is needed.
+1. Deploy/refresh portable pack on SOE boxes; confirm Fleet → All computers + Client version.
+2. Enroll modelling hosts on **Flood → Enrollment** (`FleetDashboardMachines`) if TUFLOW Runs / Sims visibility is needed (does not gate util sampling).
 3. Configure **Remote Access Groups** + Staff Access Windows auth for non-admin viewers (INSTALL.md).
 4. Run `Inspect-SoeInstalledPrograms` on a golden image for program-list excludes.
 5. Later backlog: Dell warranty API (if keys); Flight Recorder spike; CADFX demo with purchase cost + support hours + Socratize.
