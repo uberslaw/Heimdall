@@ -70,15 +70,15 @@ else
                 <th class="hd-col-name" data-sort="text" scope="col" title="Friendly name (or hostname) with last known IP underneath. Hover the name for hostname and serial.">Name</th>
                 <th class="hd-col-status" data-sort="text" scope="col" title="From the latest agent check-in (5‑minute window): Active = online with a non-disconnected session; Idle = online, no active session; Off = no recent check-in.">Status</th>
                 <th class="hd-col-user" data-sort="text" scope="col" title="Username from the preferred session: Active first, then most recently observed, then highest ActiveSeconds.">Last user</th>
-                <th class="hd-col-pct" data-sort="num" scope="col" title="Share of the selected period spent in non-disconnected sessions (session overlap with the window). Click a cell to cycle that row’s period. Example: 40% over 7d ≈ ~67h of active session time.">Active</th>
-                <th class="hd-col-pct" data-sort="num" scope="col" title="Best-effort: ~30s fleet sample intervals where a disconnected session overlaps and CPU or GPU &gt; 5%. Shows — until samples exist. Example: RDP disconnected but the machine is still busy.">Passive</th>
-                <th class="hd-col-pct" data-sort="num" scope="col" title="Remainder of the calendar window after Active and Passive (Passive counted as 0% if unknown). Free% ≈ 100 − Active% − Passive%.">Free</th>
-                <th class="hd-col-hw" data-sort="num" scope="col" title="GPU-hours from always-on ~30s fleet samples: Σ (GPU% ÷ 100 × Δt hours). Shows — until samples arrive.">GPU h</th>
-                <th class="hd-col-hw" data-sort="num" scope="col" title="CPU-hours from always-on ~30s fleet samples: Σ (CPU% ÷ 100 × Δt hours). Shows — until samples arrive.">CPU h</th>
-                <th class="hd-col-io" data-sort="num" scope="col" title="Disk read volume integrated from sample rates (MBps × Δt), shown compact (K/M/G). Shows — until samples arrive.">Dr</th>
-                <th class="hd-col-io" data-sort="num" scope="col" title="Disk write volume integrated from sample rates (MBps × Δt), shown compact (K/M/G). Shows — until samples arrive.">Dw</th>
-                <th class="hd-col-io" data-sort="num" scope="col" title="Network transmit (outbound) volume from sample rates (MBps × Δt), compact K/M/G. Shows — until samples arrive.">NTx</th>
-                <th class="hd-col-io" data-sort="num" scope="col" title="Network receive (inbound) volume from sample rates (MBps × Δt), compact K/M/G. Shows — until samples arrive.">NRx</th>
+                <th class="hd-col-pct" data-sort="num" scope="col" title="Share of the selected period spent in non-disconnected sessions (session overlap with the window). Click a value for people, dates, and overlapping tracked processes. Example: 40% over 7d ≈ ~67h of active session time.">Active</th>
+                <th class="hd-col-pct" data-sort="num" scope="col" title="Best-effort: ~30s fleet sample intervals where a disconnected session overlaps and CPU or GPU &gt; 5%. Click for people, dates, and top processes on those ticks. Shows — until samples exist.">Passive</th>
+                <th class="hd-col-pct" data-sort="num" scope="col" title="Remainder of the calendar window after Active and Passive (Passive counted as 0% if unknown). Free% ≈ 100 − Active% − Passive%. Click for context (not process-attributed).">Free</th>
+                <th class="hd-col-hw" data-sort="num" scope="col" title="GPU-hours from always-on ~30s fleet samples: Σ (GPU% ÷ 100 × Δt hours). Click for processes, people, and days. Shows — until samples arrive.">GPU h</th>
+                <th class="hd-col-hw" data-sort="num" scope="col" title="CPU-hours from always-on ~30s fleet samples: Σ (CPU% ÷ 100 × Δt hours). Click for processes, people, and days. Shows — until samples arrive.">CPU h</th>
+                <th class="hd-col-io" data-sort="num" scope="col" title="Disk read volume integrated from sample rates (MBps × Δt). Click for top read processes, people, and days. Shows — until samples arrive.">Dr</th>
+                <th class="hd-col-io" data-sort="num" scope="col" title="Disk write volume integrated from sample rates (MBps × Δt). Click for top write processes, people, and days. Shows — until samples arrive.">Dw</th>
+                <th class="hd-col-io" data-sort="num" scope="col" title="Network transmit (outbound) volume from sample rates. Click for people and days (no per-process network counters). Shows — until samples arrive.">NTx</th>
+                <th class="hd-col-io" data-sort="num" scope="col" title="Network receive (inbound) volume from sample rates. Click for people and days (no per-process network counters). Shows — until samples arrive.">NRx</th>
             </tr>
         </thead>
         <tbody>
@@ -113,15 +113,83 @@ else
                         <span class="hd-status-text hd-status-@m.Status.ToString().ToLowerInvariant()" title="@m.Status">@m.Status</span>
                     </td>
                     <td class="hd-col-user" data-sort-value="@UsernameDisplay.Format(m.LastUser)" title="@UsernameDisplay.Format(m.LastUser)">@UsernameDisplay.FormatOrDash(m.LastUser)</td>
-                    <td class="hd-col-pct hd-util-cycle" data-sort-value="@u.ActivePct" title="Period @MachineUtilisationService.PeriodOptions.First(p => p.Key == u.PeriodKey).Label — click to cycle">@MachineUtilisationService.FormatPct(u.ActivePct)</td>
-                    <td class="hd-col-pct hd-util-cycle" data-sort-value="@(u.PassivePct ?? -1)" title="Click to cycle period">@MachineUtilisationService.FormatPct(u.PassivePct)</td>
-                    <td class="hd-col-pct hd-util-cycle" data-sort-value="@u.FreePct" title="Click to cycle period">@MachineUtilisationService.FormatPct(u.FreePct)</td>
-                    <td class="hd-col-hw" data-sort-value="@(u.GpuHours ?? -1)">@MachineUtilisationService.FormatHoursCompact(u.GpuHours)</td>
-                    <td class="hd-col-hw" data-sort-value="@(u.CpuHours ?? -1)">@MachineUtilisationService.FormatHoursCompact(u.CpuHours)</td>
-                    <td class="hd-col-io" data-sort-value="@(u.DiskReadBytes ?? -1)">@MachineUtilisationService.FormatBytesCompact(u.DiskReadBytes)</td>
-                    <td class="hd-col-io" data-sort-value="@(u.DiskWriteBytes ?? -1)">@MachineUtilisationService.FormatBytesCompact(u.DiskWriteBytes)</td>
-                    <td class="hd-col-io" data-sort-value="@(u.NetTxBytes ?? -1)">@MachineUtilisationService.FormatBytesCompact(u.NetTxBytes)</td>
-                    <td class="hd-col-io" data-sort-value="@(u.NetRxBytes ?? -1)">@MachineUtilisationService.FormatBytesCompact(u.NetRxBytes)</td>
+                    <td class="hd-col-pct" data-sort-value="@u.ActivePct">
+                        <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="active" title="Open Active breakdown">@MachineUtilisationService.FormatPct(u.ActivePct)</a>
+                    </td>
+                    <td class="hd-col-pct" data-sort-value="@(u.PassivePct ?? -1)">
+                        @if (u.PassivePct is null)
+                        {
+                            <span>—</span>
+                        }
+                        else
+                        {
+                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="passive" title="Open Passive breakdown">@MachineUtilisationService.FormatPct(u.PassivePct)</a>
+                        }
+                    </td>
+                    <td class="hd-col-pct" data-sort-value="@u.FreePct">
+                        <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="free" title="Open Free context">@MachineUtilisationService.FormatPct(u.FreePct)</a>
+                    </td>
+                    <td class="hd-col-hw" data-sort-value="@(u.GpuHours ?? -1)">
+                        @if (u.GpuHours is null)
+                        {
+                            <span>—</span>
+                        }
+                        else
+                        {
+                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="gpu" title="Open GPU h breakdown">@MachineUtilisationService.FormatHoursCompact(u.GpuHours)</a>
+                        }
+                    </td>
+                    <td class="hd-col-hw" data-sort-value="@(u.CpuHours ?? -1)">
+                        @if (u.CpuHours is null)
+                        {
+                            <span>—</span>
+                        }
+                        else
+                        {
+                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="cpu" title="Open CPU h breakdown">@MachineUtilisationService.FormatHoursCompact(u.CpuHours)</a>
+                        }
+                    </td>
+                    <td class="hd-col-io" data-sort-value="@(u.DiskReadBytes ?? -1)">
+                        @if (u.DiskReadBytes is null)
+                        {
+                            <span>—</span>
+                        }
+                        else
+                        {
+                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="dr" title="Open disk read breakdown">@MachineUtilisationService.FormatBytesCompact(u.DiskReadBytes)</a>
+                        }
+                    </td>
+                    <td class="hd-col-io" data-sort-value="@(u.DiskWriteBytes ?? -1)">
+                        @if (u.DiskWriteBytes is null)
+                        {
+                            <span>—</span>
+                        }
+                        else
+                        {
+                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="dw" title="Open disk write breakdown">@MachineUtilisationService.FormatBytesCompact(u.DiskWriteBytes)</a>
+                        }
+                    </td>
+                    <td class="hd-col-io" data-sort-value="@(u.NetTxBytes ?? -1)">
+                        @if (u.NetTxBytes is null)
+                        {
+                            <span>—</span>
+                        }
+                        else
+                        {
+                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="ntx" title="Open network transmit breakdown">@MachineUtilisationService.FormatBytesCompact(u.NetTxBytes)</a>
+                        }
+                    </td>
+                    <td class="hd-col-io" data-sort-value="@(u.NetRxBytes ?? -1)">
+                        @if (u.NetRxBytes is null)
+                        {
+                            <span>—</span>
+                        }
+                        else
+                        {
+                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="nrx" title="Open network receive breakdown">@MachineUtilisationService.FormatBytesCompact(u.NetRxBytes)</a>
+                        }
+                    </td>
+
                 </tr>
             }
         }
@@ -130,113 +198,64 @@ else
 }
 </div>
 
-@* Inline (not @section) so Fleet partial fetch still runs these scripts. *@
+@* Inline (not @section) so Fleet partial fetch still runs team-section-aware sort. *@
 <script>
 (() => {
   const table = document.getElementById('machines-table');
-  if (table) {
-    const headers = [...table.querySelectorAll('thead th[data-sort]')];
-    headers.forEach((th, colIdx) => {
-      if (th.dataset.sortBound === 'true') return;
-      th.dataset.sortBound = 'true';
-      th.style.cursor = 'pointer';
-      th.addEventListener('click', () => {
-        const type = th.dataset.sort;
-        const tbody = table.tBodies[0];
-        if (!tbody) return;
-        const sectionHeaders = new Map();
-        tbody.querySelectorAll('tr.hd-team-section').forEach((tr) => {
-          sectionHeaders.set(tr.dataset.teamSection || '', tr);
-        });
-        const machineRows = [...tbody.querySelectorAll('tr.hd-machine-row')];
-        // First click / empty dir → descending; then toggle asc ↔ desc.
-        const asc = th.dataset.dir === 'desc';
-        headers.forEach((h) => {
-          h.dataset.dir = '';
-          h.classList.remove('sorted-asc', 'sorted-desc');
-        });
-        th.dataset.dir = asc ? 'asc' : 'desc';
-        th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
-
-        const cellVal = (row) => {
-          const cell = row.children[colIdx];
-          let v = cell?.dataset.sortValue ?? cell?.textContent ?? '';
-          if (type === 'num' || type === 'date') {
-            v = parseFloat(v);
-            return Number.isNaN(v) ? -Infinity : v;
-          }
-          return String(v).toLowerCase();
-        };
-        machineRows.sort((a, b) => {
-          const va = cellVal(a);
-          const vb = cellVal(b);
-          if (typeof va === 'number' && typeof vb === 'number')
-            return asc ? va - vb : vb - va;
-          return asc
-            ? String(va).localeCompare(String(vb))
-            : String(vb).localeCompare(String(va));
-        });
-
-        tbody.replaceChildren();
-        const written = new Set();
-        machineRows.forEach((row) => {
-          const section = row.dataset.sortSection || '';
-          if (!written.has(section)) {
-            written.add(section);
-            const header = sectionHeaders.get(section);
-            if (header) tbody.appendChild(header);
-          }
-          tbody.appendChild(row);
-        });
+  if (!table) return;
+  const headers = [...table.querySelectorAll('thead th[data-sort]')];
+  headers.forEach((th, colIdx) => {
+    if (th.dataset.sortBound === 'true') return;
+    th.dataset.sortBound = 'true';
+    th.style.cursor = 'pointer';
+    th.addEventListener('click', () => {
+      const type = th.dataset.sort;
+      const tbody = table.tBodies[0];
+      if (!tbody) return;
+      const sectionHeaders = new Map();
+      tbody.querySelectorAll('tr.hd-team-section').forEach((tr) => {
+        sectionHeaders.set(tr.dataset.teamSection || '', tr);
       });
-    });
-  }
+      const machineRows = [...tbody.querySelectorAll('tr.hd-machine-row')];
+      // First click / empty dir → descending; then toggle asc ↔ desc.
+      const asc = th.dataset.dir === 'desc';
+      headers.forEach((h) => {
+        h.dataset.dir = '';
+        h.classList.remove('sorted-asc', 'sorted-desc');
+      });
+      th.dataset.dir = asc ? 'asc' : 'desc';
+      th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
 
-  const periods = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(
-      MachineUtilisationService.PeriodOptions.Select(p => p.Key).ToList()));
-  function nextPeriod(cur) {
-    const i = periods.indexOf(cur);
-    return periods[(i < 0 ? 0 : i + 1) % periods.length];
-  }
-  async function refreshRow(row, period) {
-    const id = row.dataset.machineId;
-    if (!id) return;
-    const url = new URL('/Index', window.location.origin);
-    url.searchParams.set('handler', 'Util');
-    url.searchParams.set('machineId', id);
-    url.searchParams.set('period', period);
-    url.searchParams.set('partial', '1');
-    const res = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
-    if (!res.ok) return;
-    const u = await res.json();
-    row.dataset.period = u.period;
-    const cells = row.querySelectorAll('td');
-    const map = [
-      [3, u.active, u.activeSort, u.periodLabel],
-      [4, u.passive, u.passiveSort, u.periodLabel],
-      [5, u.free, u.freeSort, u.periodLabel],
-      [6, u.gpu, u.gpuSort, null],
-      [7, u.cpu, u.cpuSort, null],
-      [8, u.dr, u.drSort, null],
-      [9, u.dw, u.dwSort, null],
-      [10, u.ntx, u.ntxSort, null],
-      [11, u.nrx, u.nrxSort, null]
-    ];
-    map.forEach(([i, text, sort, tip]) => {
-      const td = cells[i];
-      if (!td) return;
-      td.textContent = text;
-      td.dataset.sortValue = sort;
-      if (tip) td.title = 'Period ' + tip + ' — click to cycle';
-    });
-  }
-  document.querySelectorAll('#machines-table .hd-util-cycle').forEach((cell) => {
-    cell.style.cursor = 'pointer';
-    cell.addEventListener('click', () => {
-      const row = cell.closest('tr');
-      if (!row) return;
-      const cur = row.dataset.period || '7d';
-      refreshRow(row, nextPeriod(cur));
+      const cellVal = (row) => {
+        const cell = row.children[colIdx];
+        let v = cell?.dataset.sortValue ?? cell?.textContent ?? '';
+        if (type === 'num' || type === 'date') {
+          v = parseFloat(v);
+          return Number.isNaN(v) ? -Infinity : v;
+        }
+        return String(v).toLowerCase();
+      };
+      machineRows.sort((a, b) => {
+        const va = cellVal(a);
+        const vb = cellVal(b);
+        if (typeof va === 'number' && typeof vb === 'number')
+          return asc ? va - vb : vb - va;
+        return asc
+          ? String(va).localeCompare(String(vb))
+          : String(vb).localeCompare(String(va));
+      });
+
+      tbody.replaceChildren();
+      const written = new Set();
+      machineRows.forEach((row) => {
+        const section = row.dataset.sortSection || '';
+        if (!written.has(section)) {
+          written.add(section);
+          const header = sectionHeaders.get(section);
+          if (header) tbody.appendChild(header);
+        }
+        tbody.appendChild(row);
+      });
     });
   });
 })();

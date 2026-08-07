@@ -1516,6 +1516,10 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ProcessGpuPercent REAL NULL");
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ProcessDiskReadMBps REAL NULL");
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ProcessDiskWriteMBps REAL NULL");
+        await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN TopCpuProcessesJson TEXT NOT NULL DEFAULT '[]'");
+        await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN TopGpuProcessesJson TEXT NOT NULL DEFAULT '[]'");
+        await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN TopDiskReadProcessesJson TEXT NOT NULL DEFAULT '[]'");
+        await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN TopDiskWriteProcessesJson TEXT NOT NULL DEFAULT '[]'");
 
         // Machines list redesign — friendly names + team sections
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN FriendlyName TEXT NULL");

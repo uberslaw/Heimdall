@@ -473,7 +473,11 @@ public sealed class Worker(
             ProcessCpuPercent = tuflowRunning ? Math.Round(processUtil.CpuPercent, 1) : null,
             ProcessGpuPercent = tuflowRunning ? Math.Round(processUtil.GpuPercent, 1) : null,
             ProcessDiskReadMBps = tuflowRunning ? Math.Round(processUtil.DiskReadMBps, 3) : null,
-            ProcessDiskWriteMBps = tuflowRunning ? Math.Round(processUtil.DiskWriteMBps, 3) : null
+            ProcessDiskWriteMBps = tuflowRunning ? Math.Round(processUtil.DiskWriteMBps, 3) : null,
+            TopCpuProcesses = ResourceMetricsCollector.TopByCpu(sample, 5),
+            TopGpuProcesses = ResourceMetricsCollector.TopByGpu(sample, 5),
+            TopDiskReadProcesses = ResourceMetricsCollector.TopByDiskRead(sample, 5),
+            TopDiskWriteProcesses = ResourceMetricsCollector.TopByDiskWrite(sample, 5)
         };
 
         var ok = await api.ReportFleetSnapshotAsync(dto, ct);

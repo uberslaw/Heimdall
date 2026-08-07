@@ -607,6 +607,15 @@ public class FleetMetricSnapshot
     public double? ProcessDiskWriteMBps { get; set; }
     /// <summary>True when TuflowRunning and any active threshold is met (stored at ingest for stable history).</summary>
     public bool IsActive { get; set; }
+
+    /// <summary>JSON array of TopProcessSampleDto — top CPU contributors at this sample.</summary>
+    public string TopCpuProcessesJson { get; set; } = "[]";
+    /// <summary>JSON array of TopProcessSampleDto — top GPU contributors at this sample.</summary>
+    public string TopGpuProcessesJson { get; set; } = "[]";
+    /// <summary>JSON array of TopProcessSampleDto — top disk-read contributors (Value = bytes/sec).</summary>
+    public string TopDiskReadProcessesJson { get; set; } = "[]";
+    /// <summary>JSON array of TopProcessSampleDto — top disk-write contributors (Value = bytes/sec).</summary>
+    public string TopDiskWriteProcessesJson { get; set; } = "[]";
 }
 
 /// <summary>

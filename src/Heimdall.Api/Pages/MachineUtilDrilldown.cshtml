@@ -1,0 +1,198 @@
+@page
+@model MachineUtilDrilldownModel
+@using Heimdall.Api.Services
+@{
+    var d = Model.Drilldown!;
+    ViewData["Title"] = $"{d.MetricLabel} · {d.DisplayName}";
+}
+
+<div class="mb-3">
+    <a class="btn btn-ghost btn-sm" asp-page="/Fleet" asp-route-tab="machines" asp-route-period="@d.PeriodKey">← Computers</a>
+</div>
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+        <h1 class="hd-title mb-1">@d.MetricLabel</h1>
+        <p class="text-secondary mb-0">
+            <a class="hd-machine-name" asp-page="/Machine" asp-route-hostname="@d.Hostname">@d.DisplayName</a>
+            <span class="text-secondary"> · @d.Hostname</span>
+            <span class="text-secondary"> · @d.PeriodLabel</span>
+            <span class="hd-util-total"> · @d.TotalDisplay</span>
+        </p>
+    </div>
+    <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="machines">Help</a>
+</div>
+
+<p class="small text-secondary mb-3">@d.Explanation</p>
+@if (!string.IsNullOrWhiteSpace(d.ProcessGapNote))
+{
+    <p class="small hd-util-gap-note mb-3">@d.ProcessGapNote</p>
+}
+
+<form method="get" class="hd-panel mb-3 hd-machines-period-card">
+    <input type="hidden" name="hostname" value="@d.Hostname" />
+    <div class="hd-machines-period-row">
+        <div class="hd-machines-period-controls d-flex flex-wrap gap-3 align-items-end">
+            <div>
+                <label class="form-label" for="util-period">Period</label>
+                <select class="form-select form-select-sm" name="period" id="util-period" onchange="this.form.requestSubmit()">
+                    @foreach (var opt in MachineUtilisationService.PeriodOptions)
+                    {
+                        if (d.PeriodKey == opt.Key)
+                        {
+                            <option value="@opt.Key" selected>@opt.Label</option>
+                        }
+                        else
+                        {
+                            <option value="@opt.Key">@opt.Label</option>
+                        }
+                    }
+                </select>
+            </div>
+            <div>
+                <label class="form-label" for="util-metric">Metric</label>
+                <select class="form-select form-select-sm" name="metric" id="util-metric" onchange="this.form.requestSubmit()">
+                    @foreach (var opt in MachineUtilisationService.MetricOptions)
+                    {
+                        if (d.MetricKey == opt.Key)
+                        {
+                            <option value="@opt.Key" selected>@opt.Label</option>
+                        }
+                        else
+                        {
+                            <option value="@opt.Key">@opt.Label</option>
+                        }
+                    }
+                </select>
+            </div>
+        </div>
+    </div>
+</form>
+
+<div class="row g-3 mb-3">
+    <div class="col-lg-4">
+        <div class="hd-panel h-100">
+            <h2 class="h6 mb-2">By process</h2>
+            @if (d.ByProcess.Count == 0)
+            {
+                <p class="small text-secondary mb-0">No process breakdown for this metric/window.</p>
+            }
+            else
+            {
+                <table class="hd-table hd-sortable mb-0">
+                    <thead>
+                        <tr>
+                            <th data-sort="text" scope="col">Process</th>
+                            <th data-sort="num" scope="col">Share</th>
+                            <th data-sort="text" scope="col">Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var row in d.ByProcess)
+                    {
+                        <tr>
+                            <td data-sort-value="@row.Label">@row.Label</td>
+                            <td data-sort-value="@row.SharePct">@row.SharePct.ToString("0.#")%</td>
+                            <td data-sort-value="@(row.Detail ?? "")">@(row.Detail ?? "—")</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="hd-panel h-100">
+            <h2 class="h6 mb-2">By person</h2>
+            @if (d.ByPerson.Count == 0)
+            {
+                <p class="small text-secondary mb-0">No person attribution in this window.</p>
+            }
+            else
+            {
+                <table class="hd-table hd-sortable mb-0">
+                    <thead>
+                        <tr>
+                            <th data-sort="text" scope="col">Person</th>
+                            <th data-sort="num" scope="col">Share</th>
+                            <th data-sort="text" scope="col">Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var row in d.ByPerson)
+                    {
+                        <tr>
+                            <td data-sort-value="@row.Label">@row.Label</td>
+                            <td data-sort-value="@row.SharePct">@(row.SharePct > 0 ? row.SharePct.ToString("0.#") + "%" : "—")</td>
+                            <td data-sort-value="@(row.Detail ?? "")">@(row.Detail ?? "—")</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="hd-panel h-100">
+            <h2 class="h6 mb-2">By day</h2>
+            @if (d.ByDay.Count == 0)
+            {
+                <p class="small text-secondary mb-0">No daily breakdown in this window.</p>
+            }
+            else
+            {
+                <table class="hd-table hd-sortable mb-0">
+                    <thead>
+                        <tr>
+                            <th data-sort="text" scope="col">Day (UTC)</th>
+                            <th data-sort="num" scope="col">Share</th>
+                            <th data-sort="text" scope="col">Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var row in d.ByDay)
+                    {
+                        <tr>
+                            <td data-sort-value="@row.Label">@row.Label</td>
+                            <td data-sort-value="@row.SharePct">@row.SharePct.ToString("0.#")%</td>
+                            <td data-sort-value="@(row.Detail ?? "")">@(row.Detail ?? "—")</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+</div>
+
+@if (d.Sessions.Count > 0)
+{
+    <div class="hd-panel">
+        <h2 class="h6 mb-2">Sessions in window</h2>
+        <table class="hd-table hd-sortable mb-0">
+            <thead>
+                <tr>
+                    <th data-sort="text" scope="col">Person</th>
+                    <th data-sort="text" scope="col">State</th>
+                    <th data-sort="text" scope="col">Started (UTC)</th>
+                    <th data-sort="text" scope="col">Ended (UTC)</th>
+                    <th data-sort="num" scope="col">In window</th>
+                    <th data-sort="text" scope="col">Tracked processes</th>
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var s in d.Sessions)
+            {
+                <tr>
+                    <td data-sort-value="@s.Username">@s.Username</td>
+                    <td data-sort-value="@s.State">@s.State</td>
+                    <td data-sort-value="@s.StartedUtc.UtcDateTime.ToString("o")">@s.StartedUtc.UtcDateTime.ToString("yyyy-MM-dd HH:mm")</td>
+                    <td data-sort-value="@(s.EndedUtc?.UtcDateTime.ToString("o") ?? "")">@(s.EndedUtc?.UtcDateTime.ToString("yyyy-MM-dd HH:mm") ?? "—")</td>
+                    <td data-sort-value="@s.SecondsInWindow">@((s.SecondsInWindow / 3600.0).ToString("0.##"))h</td>
+                    <td data-sort-value="@string.Join(" ", s.Processes)">@(s.Processes.Count == 0 ? "—" : string.Join(", ", s.Processes))</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

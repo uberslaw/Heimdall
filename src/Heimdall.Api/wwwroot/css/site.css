@@ -3024,6 +3024,28 @@ details.hd-panel[data-key="existing-lists"] {
   text-overflow: ellipsis;
 }
 
+.hd-machines-table .hd-util-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  text-underline-offset: 0.15em;
+}
+
+.hd-machines-table .hd-util-link:hover,
+.hd-machines-table .hd-util-link:focus {
+  color: var(--hd-silver-bright, var(--hd-silver, var(--hd-link-hover)));
+  text-decoration-color: currentColor;
+}
+
+.hd-util-total {
+  color: var(--hd-gold, #c9a227);
+  font-weight: 600;
+}
+
+.hd-util-gap-note {
+  color: var(--hd-amber, #d4a017);
+}
+
 .hd-machines-table tr.hd-team-section td {
   text-align: left;
   white-space: normal;

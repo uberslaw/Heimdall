@@ -49,7 +49,9 @@ public static class FleetSnapshotQuery
                        CpuPercent, GpuPercent, GpuMemoryUsedMb, RamUsedMb,
                        DiskReadMBps, DiskWriteMBps, NetworkInMBps, NetworkOutMBps,
                        ProcessCpuPercent, ProcessGpuPercent, ProcessDiskReadMBps, ProcessDiskWriteMBps,
-                       IsActive
+                       IsActive,
+                       TopCpuProcessesJson, TopGpuProcessesJson,
+                       TopDiskReadProcessesJson, TopDiskWriteProcessesJson
                 FROM FleetMetricSnapshots
                 WHERE MachineId IN (
                 """);
@@ -107,6 +109,12 @@ public static class FleetSnapshotQuery
 
     private static FleetMetricSnapshot ReadSnapshot(System.Data.Common.DbDataReader reader)
     {
+        // Older DBs may lack top-process columns until schema patch; ordinals 18–21 optional.
+        string ReadJson(int ordinal) =>
+            reader.FieldCount > ordinal && !reader.IsDBNull(ordinal)
+                ? reader.GetString(ordinal)
+                : "[]";
+
         return new FleetMetricSnapshot
         {
             Id = reader.GetInt64(0),
@@ -126,7 +134,11 @@ public static class FleetSnapshotQuery
             ProcessGpuPercent = reader.IsDBNull(14) ? null : reader.GetDouble(14),
             ProcessDiskReadMBps = reader.IsDBNull(15) ? null : reader.GetDouble(15),
             ProcessDiskWriteMBps = reader.IsDBNull(16) ? null : reader.GetDouble(16),
-            IsActive = reader.GetBoolean(17)
+            IsActive = reader.GetBoolean(17),
+            TopCpuProcessesJson = ReadJson(18),
+            TopGpuProcessesJson = ReadJson(19),
+            TopDiskReadProcessesJson = ReadJson(20),
+            TopDiskWriteProcessesJson = ReadJson(21)
         };
     }
 

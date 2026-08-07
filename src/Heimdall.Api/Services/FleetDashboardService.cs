@@ -188,10 +188,28 @@ public class FleetDashboardService(HeimdallDbContext db)
             ProcessGpuPercent = dto.ProcessGpuPercent,
             ProcessDiskReadMBps = dto.ProcessDiskReadMBps,
             ProcessDiskWriteMBps = dto.ProcessDiskWriteMBps,
-            IsActive = isActive
+            IsActive = isActive,
+            TopCpuProcessesJson = SerializeTopProcesses(dto.TopCpuProcesses),
+            TopGpuProcessesJson = SerializeTopProcesses(dto.TopGpuProcesses),
+            TopDiskReadProcessesJson = SerializeTopProcesses(dto.TopDiskReadProcesses),
+            TopDiskWriteProcessesJson = SerializeTopProcesses(dto.TopDiskWriteProcesses)
         });
         await db.SaveChangesAsync(ct);
         return true;
+    }
+
+    private static readonly System.Text.Json.JsonSerializerOptions TopProcessJsonOptions = new()
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+    };
+
+    private static string SerializeTopProcesses(IReadOnlyList<TopProcessSampleDto>? list)
+    {
+        if (list is null || list.Count == 0)
+            return "[]";
+        // Cap at 5 to bound SQLite row size.
+        var capped = list.Count <= 5 ? list : list.Take(5).ToList();
+        return System.Text.Json.JsonSerializer.Serialize(capped, TopProcessJsonOptions);
     }
 
     /// <summary>Live view for Flood-enrolled machines only (TUFLOW / Historical under Flood).</summary>
