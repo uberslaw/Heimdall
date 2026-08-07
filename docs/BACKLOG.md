@@ -21,7 +21,7 @@ Keep the product name **Socratize** for this machine deep-dive.
 
 ## Related (shipped — do not confuse with Flight Recorder)
 
-**Historical Dashboard** (nav → Remote) is **already built**: enroll machines for always-on **30s** fleet resource snapshots, Live Fleet gauges, and historical totals/averages/rankings (TUFLOW-oriented). That is continuous fleet telemetry, not incident ring-buffer capture.
+**Historical Dashboard** (nav → **Flood**, gated) is **already built**: enroll machines for always-on **30s** fleet resource snapshots, Live Fleet gauges, and historical totals/averages/rankings (TUFLOW-oriented). That is continuous fleet telemetry, not incident ring-buffer capture.
 
 Keep Flight Recorder as the *separate* future “what happened when tuflow choked?” arm below.
 
