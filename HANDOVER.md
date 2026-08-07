@@ -91,9 +91,9 @@ Goal: clearer session + app utilisation than CADFX, with **hardware purchase cos
 | Agent | .NET 10 **Windows Service** |
 | API + dashboard | ASP.NET Core **Razor Pages** |
 | DB (POC) | **SQLite** |
-| Auth (POC) | API key header `X-Heimdall-Key` for agent ingest; Staff Access can use Windows Negotiate (see INSTALL.md) |
+| Auth (POC) | API key `X-Heimdall-Key` for agent ingest; Staff Access can use Windows Negotiate; **Teams membership** can sync from Entra Graph (optional — see Admin → Auth). No site-wide Entra SSO for the dashboard yet. |
 
-**Default POC API key:** `heimdall-poc-key` — change for anything beyond trusted-LAN POC. No Entra / AD website login for the full admin dashboard yet.
+**Default POC API key:** `heimdall-poc-key` — change for anything beyond trusted-LAN POC. Dashboard remains trusted-LAN for general pages; Entra is used for **group membership reads**, not login.
 
 Live repo: https://github.com/uberslaw/Heimdall
 
@@ -176,31 +176,33 @@ Full install detail: [INSTALL.md](INSTALL.md).
 
 | Menu | Pages |
 |------|--------|
-| **Machines** | All machines, Sessions |
-| **Applications** | Applications, App lists, Discovery, Socratize, Track Software |
-| **Remote** | Remote Machines, Historical Dashboard, Staff Access |
-| **Admin** | Tracking config, Teams, Utilization criteria, Cost, Stats, Clients, Remote Access Groups, Help, Database mode (Live/Sandbox), Theme |
+| **Fleet** | Shell with tabs: Computers (ex-Index), Sessions, Online status, Client version, Cost, Stats |
+| **Applications** | App lists, Application Usage, Discovery, Socratize, **Teams**, Track Software |
+| **Staff** | Staff Access (RDP pool) |
+| **Flood** (gated) | Flood hub / Historical Dashboard, TUFLOW Runs, Fleet Sim Progress (allowlist emails) |
+| **Admin** | Tracking config, Utilization, **Auth** (membership source toggles), Remote Access Groups, Help, Database mode (Live/Sandbox), Theme |
 
 In-app **Admin → Help** has page-by-page operator docs (preferred over README for UI detail).
 
 | Area | What it does |
 |------|----------------|
-| **Machines** | Fleet view; utilisation period; **Reimaged** badge when MachineGuid changed |
+| **Fleet / Computers** | Estate view; utilisation period; **Reimaged** badge when MachineGuid changed; team section headers |
 | **Sessions** | Local vs RDP logons; start/end; active vs disconnected; Team column when mapped; session drilldown |
 | **Apps / Track Software** | Allowlisted / known / discovered / custom titles; scoped tracking |
-| **App lists + Analyze** | Approval-gated Analyze — **no silent auto-track**; inventory request; classification CSV AI workflow |
+| **App lists + Analyze** | Approval-gated Analyze — **no silent auto-track**; inventory request; Team apps (Spec overlay + Spec/unlisted); classification CSV AI workflow |
 | **Discovery** | Full process catalog (name+path); edit friendly name/version/category; installs + frequency |
 | **Config** | Sampling, known apps, SOE autogenerate, metric thresholds, pause |
-| **Teams** | CSV upload + CRUD; username → team |
-| **Stats** | Scoped analytics (logons, apps, RDP disconnected, patterns) |
+| **Teams** | Hierarchy + people/machines; app-list track/ignore links; CSV import; optional **Entra Graph** group sync (Admin → Auth) |
+| **Auth** | Toggle Manual/CSV vs Entra Graph membership; Probe Graph credentials/permissions; DPAPI secrets on API host |
+| **Stats** | Scoped analytics (logons, apps, RDP disconnected, patterns) — under Fleet tabs |
 | **Socratize** | Per-machine cost-justification Q&A from collected data |
 | **Utilization** | Utilisation weights; **app license $/yr** (secondary to hardware cost) |
-| **Cost** | **Hardware purchase cost** focus; user vs **`ops.` support hours** (30d); optional SupportHourlyRate; WMI hardware autodetection + manual; **PSU watts manual only**; BIOS vs hostname asset serial; OS install + Windows folder created dates; reimage identity history |
-| **Remote Machines** | RDP/RDS health, ping from API host, Connect `.rdp`, Restart RDS via agent queue |
-| **Historical Dashboard** | Enroll hosts → always-on **30s** fleet snapshots; Live Fleet + historical analytics (TUFLOW-oriented POC) |
-| **Staff Access** | Restricted live metrics for staff in Remote Access Groups; optional Windows Negotiate |
+| **Cost** | **Hardware purchase cost** focus; user vs **`ops.` support hours** (30d); optional SupportHourlyRate; WMI hardware autodetection + manual; **PSU watts manual only**; BIOS vs hostname asset serial; OS install + Windows folder created dates; reimage identity history — under Fleet tabs |
+| **Online status** | RDP/RDS health, ping from API host, Connect `.rdp`, Restart RDS via agent queue — under Fleet tabs |
+| **Historical / Flood** | Enroll hosts → always-on **30s** fleet snapshots; Live + historical analytics (TUFLOW-oriented); gated Flood nav |
+| **Staff Access** | Public-facing team machines; bookings; optional Windows Negotiate |
 | **Remote Access Groups** | Admin: staff email ↔ machine membership (+ favourite processes) |
-| **Clients** | Agent version per host vs published pack version |
+| **Clients** | Agent version per host vs published pack version — under Fleet tabs |
 | **Theme / DB mode** | Custom themes; Live vs Sandbox (`heimdall-dev.db`) browse toggle — ingest always Live |
 | **Metric thresholds** | Config → agents; per-process ProcessRun GPU/disk columns still often empty; **live/fleet sampling** populates Historical + Staff views |
 
