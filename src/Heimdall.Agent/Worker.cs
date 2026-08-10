@@ -24,6 +24,10 @@ public sealed class Worker(
     private readonly Dictionary<string, ProcessRunDto> _processBuffer = new(StringComparer.OrdinalIgnoreCase);
     private OfflineQueue? _queue;
     private bool _sendInventoryNextUpload;
+    private bool _weeklyInventoryThrottle;
+    private WeeklyInventoryState? _weeklyInventory;
+    private string? _weeklyInventoryPath;
+    private DateTimeOffset _nextWeeklyInventoryCheck = DateTimeOffset.MinValue;
     private readonly HashSet<string> _executedPendingCommands = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _commandsToAck = [];
     private readonly List<CommandExecutionReportDto> _commandReports = [];
@@ -62,6 +66,10 @@ public sealed class Worker(
                 "queue.db")
             : configuredQueue;
         _queue = new OfflineQueue(queuePath);
+        _weeklyInventoryPath = Path.Combine(
+            Path.GetDirectoryName(queuePath) ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Heimdall"),
+            "weekly-inventory.json");
+        _weeklyInventory = WeeklyInventoryState.LoadOrCreate(_weeklyInventoryPath);
 
         logger.LogInformation("Heimdall agent starting on {Hostname}", hostname);
         RefreshHardware(hostname, force: true);
@@ -129,9 +137,58 @@ public sealed class Worker(
             await RunResourceSamplingTickAsync(hostname, now, stoppingToken);
             await RunFleetSamplingTickAsync(hostname, now, stoppingToken);
             await RunTuflowPollTickAsync(hostname, now, stoppingToken);
+            TryScheduleWeeklyInventory(now);
 
             await Task.Delay(1000, stoppingToken);
         }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private void TryScheduleWeeklyInventory(DateTimeOffset now)
+    {
+        if (_weeklyInventory is null || _weeklyInventoryPath is null)
+            return;
+        if (now < _nextWeeklyInventoryCheck)
+            return;
+        _nextWeeklyInventoryCheck = now.AddMinutes(5);
+
+        if (!_weeklyInventory.ShouldAttempt(now, out _))
+        {
+            _weeklyInventory.Save(_weeklyInventoryPath);
+            return;
+        }
+
+        // Idle gate: CPU and GPU both under 50% (missing GPU treated as 0).
+        double? cpu = null;
+        double? gpu = null;
+        try
+        {
+            var sample = ResourceMetricsCollector.Collect();
+            cpu = sample.CpuPercent;
+            gpu = sample.GpuPercent;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Weekly inventory idle sample failed");
+        }
+
+        var cpuOk = cpu is null or < 50;
+        var gpuOk = gpu is null or < 50;
+        if (!cpuOk || !gpuOk)
+        {
+            _weeklyInventory.RecordIdleFailure(now);
+            _weeklyInventory.Save(_weeklyInventoryPath);
+            logger.LogInformation(
+                "Weekly inventory deferred (CPU={Cpu} GPU={Gpu} attempts={Attempts}/6); retry after {Retry}",
+                cpu, gpu, _weeklyInventory.FailedIdleAttempts, _weeklyInventory.NextRetryUtc);
+            return;
+        }
+
+        _sendInventoryNextUpload = true;
+        _weeklyInventoryThrottle = true;
+        // Success is recorded in FlushAsync after inventory is actually collected.
+        _weeklyInventory.Save(_weeklyInventoryPath);
+        logger.LogInformation("Weekly opportunistic inventory queued (CPU={Cpu} GPU={Gpu})", cpu, gpu);
     }
 
     [SupportedOSPlatform("windows")]
@@ -184,14 +241,27 @@ public sealed class Worker(
         {
             try
             {
-                discovered = ProcessCollector.DiscoverInventory().ToList();
-                logger.LogInformation("Sending process inventory ({Count} processes) for app analysis", discovered.Count);
+                var throttle = _weeklyInventoryThrottle;
+                discovered = ProcessCollector.DiscoverInventory(throttle).ToList();
+                logger.LogInformation("Sending process inventory ({Count} processes) for app analysis{Throttle}",
+                    discovered.Count, throttle ? " (throttled)" : "");
+                if (_weeklyInventoryThrottle && _weeklyInventory is not null && _weeklyInventoryPath is not null)
+                {
+                    _weeklyInventory.RecordSuccess(DateTimeOffset.UtcNow);
+                    _weeklyInventory.Save(_weeklyInventoryPath);
+                }
             }
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "Process inventory failed");
+                if (_weeklyInventoryThrottle && _weeklyInventory is not null && _weeklyInventoryPath is not null)
+                {
+                    _weeklyInventory.RecordIdleFailure(DateTimeOffset.UtcNow);
+                    _weeklyInventory.Save(_weeklyInventoryPath);
+                }
             }
             _sendInventoryNextUpload = false;
+            _weeklyInventoryThrottle = false;
         }
 
         var hw = _hardware;

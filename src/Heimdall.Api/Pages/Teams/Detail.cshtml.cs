@@ -10,7 +10,8 @@ public class DetailModel(
     HeimdallDbContext db,
     EntraGraphService graph,
     EntraTeamMembershipSyncService entraSync,
-    DirectoryAuthSettingsService authSettings) : PageModel
+    DirectoryAuthSettingsService authSettings,
+    SpecReviewService specReview) : PageModel
 {
     public Team Team { get; private set; } = null!;
     public string Tab { get; private set; } = "membership";
@@ -86,6 +87,21 @@ public class DetailModel(
 
         link.IsExcluded = excluded;
         await db.SaveChangesAsync();
+        return RedirectToPage(new { id, tab = "apps" });
+    }
+
+    public async Task<IActionResult> OnPostSetPrimaryAppListAsync(int id)
+    {
+        try
+        {
+            await specReview.SetPrimaryAppListAsync(id, AppListId, HttpContext.RequestAborted);
+            TempData["Message"] = "Primary app list updated.";
+        }
+        catch (Exception ex)
+        {
+            TempData["Error"] = ex.Message;
+        }
+
         return RedirectToPage(new { id, tab = "apps" });
     }
 
@@ -181,7 +197,7 @@ public class DetailModel(
             .OrderBy(e => e.DisplayName ?? e.ProcessName)
             .Select(e => string.IsNullOrWhiteSpace(e.DisplayName) ? e.ProcessName : e.DisplayName!)
             .ToList();
-        return new AppListRow(l.AppListId, l.AppList.Name, entries.Count, string.Join(", ", entries));
+        return new AppListRow(l.AppListId, l.AppList.Name, entries.Count, string.Join(", ", entries), l.IsPrimary);
     }
 
     private static string NormalizeTab(string? tab) =>
@@ -197,5 +213,5 @@ public class DetailModel(
 
     public sealed record MachineRow(int Id, string Hostname, string? FriendlyName);
 
-    public sealed record AppListRow(int Id, string Name, int EntryCount, string AppsSummary);
+    public sealed record AppListRow(int Id, string Name, int EntryCount, string AppsSummary, bool IsPrimary);
 }

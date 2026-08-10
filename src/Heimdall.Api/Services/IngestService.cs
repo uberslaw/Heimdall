@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Services;
 
-public class IngestService(HeimdallDbContext db, AppListService appLists, ProcessCatalogService catalog, IConfiguration configuration, RemoteMachineService remoteMachines, TuflowRunService tuflowRuns, ClientUpdateService clientUpdates)
+public class IngestService(HeimdallDbContext db, AppListService appLists, ProcessCatalogService catalog, SpecReviewService specReview, IConfiguration configuration, RemoteMachineService remoteMachines, TuflowRunService tuflowRuns, ClientUpdateService clientUpdates)
 {
     public async Task IngestAsync(IngestBatchDto batch, CancellationToken ct)
     {
@@ -56,6 +56,11 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
                 machine.InventoryCollectedUtc = DateTimeOffset.UtcNow;
                 await db.SaveChangesAsync(ct);
                 await appLists.AnalyzeMachineAsync(machine.Hostname, eligibleInventory, requestAgentInventoryIfEmpty: false, ct);
+                await specReview.ProcessSightingsAsync(
+                    machine.Hostname,
+                    eligibleInventory.Select(p => new ProcessCatalogService.CatalogItem(
+                        p.ProcessName, p.ExecutablePath, p.DisplayName)),
+                    ct);
                 return;
             }
         }
@@ -1545,6 +1550,7 @@ public static class SeedData
             )
             """);
         await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_TeamAppListLinks_TeamId_AppListId ON TeamAppListLinks(TeamId, AppListId)");
+        await TryExec(db, "ALTER TABLE TeamAppListLinks ADD COLUMN IsPrimary INTEGER NOT NULL DEFAULT 0");
         // Idempotent backfill from legacy AppLists.TeamId / IsTeamExcluded
         await TryExec(db, """
             INSERT OR IGNORE INTO TeamAppListLinks (TeamId, AppListId, IsExcluded)
@@ -1552,6 +1558,40 @@ public static class SeedData
             FROM AppLists
             WHERE TeamId IS NOT NULL
             """);
+
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS SpecReviewItems (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                CatalogEntryId INTEGER NULL,
+                ProcessName TEXT NOT NULL,
+                ExecutablePath TEXT NOT NULL DEFAULT '',
+                DisplayName TEXT NULL,
+                TeamId INTEGER NOT NULL,
+                Status TEXT NOT NULL DEFAULT 'Pending',
+                CreatedUtc TEXT NOT NULL,
+                DecidedUtc TEXT NULL,
+                AutoAddedToPrimaryList INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (TeamId) REFERENCES Teams(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_SpecReviewItems_Team_Path ON SpecReviewItems(TeamId, ProcessName, ExecutablePath)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SpecReviewItems_Status ON SpecReviewItems(Status)");
+
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS SpecStaleAlerts (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                CatalogEntryId INTEGER NULL,
+                ProcessName TEXT NOT NULL,
+                ExecutablePath TEXT NOT NULL DEFAULT '',
+                DisplayName TEXT NULL,
+                FirstFlaggedUtc TEXT NOT NULL,
+                LastSeenUtc TEXT NOT NULL,
+                ResolvedUtc TEXT NULL,
+                KeepSticky INTEGER NULL
+            )
+            """);
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SpecStaleAlerts_Path ON SpecStaleAlerts(ProcessName, ExecutablePath)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SpecStaleAlerts_ResolvedUtc ON SpecStaleAlerts(ResolvedUtc)");
 
         await TryExec(db, """
             CREATE TABLE IF NOT EXISTS MachineAppListOverrides (

@@ -12,7 +12,7 @@ namespace Heimdall.Api.Pages;
 /// Discovery &amp; Classification: processes awaiting group approval (Core Windows / SOE / Specialization),
 /// including pending import/AI suggestions. Friendly name is editable; path is read-only.
 /// </summary>
-public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog, ProcessGroupService processGroups, AppListService appLists) : PageModel
+public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog, ProcessGroupService processGroups, AppListService appLists, SpecReviewService specReview) : PageModel
 {
     private static readonly Regex VersionPattern = new(@"\d+(\.\d+){1,3}", RegexOptions.Compiled);
 
@@ -24,6 +24,13 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
     public int PendingSuggestionCount { get; private set; }
     public int IgnoredCount { get; private set; }
     public int BlankPathCount { get; private set; }
+
+    public IReadOnlyList<SpecReviewService.ReviewAppRow> SpecPending { get; private set; } = [];
+    public IReadOnlyList<SpecReviewService.UntamedAppRow> SpecUntamed { get; private set; } = [];
+    public IReadOnlyList<SpecReviewService.StaleAlertRow> SpecStaleAlerts { get; private set; } = [];
+
+    [BindProperty(SupportsGet = true)]
+    public string Tab { get; set; } = "classify";
 
     [BindProperty(SupportsGet = true)]
     public bool HideIgnored { get; set; } = true;
@@ -46,7 +53,77 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
 
     public async Task OnGetAsync()
     {
+        Tab = NormalizeTab(Tab);
+        if (Tab == "spec-review")
+        {
+            var page = await specReview.GetReviewPageAsync(HttpContext.RequestAborted);
+            SpecPending = page.Pending;
+            SpecUntamed = page.Untamed;
+            SpecStaleAlerts = page.Stale;
+            return;
+        }
+
         await LoadAsync(skipBackfill: TempData["SkipDiscoveryBackfill"] as string == "1");
+    }
+
+    public async Task<IActionResult> OnPostSpecContinueAsync(int reviewId)
+    {
+        try
+        {
+            await specReview.ContinueAsync(reviewId, HttpContext.RequestAborted);
+            TempData["Message"] = "Continued tracking on the team primary list.";
+        }
+        catch (Exception ex)
+        {
+            TempData["Error"] = ex.Message;
+        }
+
+        return RedirectToPage(new { tab = "spec-review" });
+    }
+
+    public async Task<IActionResult> OnPostSpecIgnoreAsync(int reviewId)
+    {
+        try
+        {
+            await specReview.IgnoreAsync(reviewId, HttpContext.RequestAborted);
+            TempData["Message"] = "Ignored for this team — removed from primary list (recover later from Applications).";
+        }
+        catch (Exception ex)
+        {
+            TempData["Error"] = ex.Message;
+        }
+
+        return RedirectToPage(new { tab = "spec-review" });
+    }
+
+    public async Task<IActionResult> OnPostSpecStaleKeepAsync(int alertId)
+    {
+        try
+        {
+            await specReview.ResolveStaleAlertAsync(alertId, keepSticky: true, HttpContext.RequestAborted);
+            TempData["Message"] = "Kept network sticky link.";
+        }
+        catch (Exception ex)
+        {
+            TempData["Error"] = ex.Message;
+        }
+
+        return RedirectToPage(new { tab = "spec-review" });
+    }
+
+    public async Task<IActionResult> OnPostSpecStaleRemoveAsync(int alertId)
+    {
+        try
+        {
+            await specReview.ResolveStaleAlertAsync(alertId, keepSticky: false, HttpContext.RequestAborted);
+            TempData["Message"] = "Removed / archived stale network Spec app.";
+        }
+        catch (Exception ex)
+        {
+            TempData["Error"] = ex.Message;
+        }
+
+        return RedirectToPage(new { tab = "spec-review" });
     }
 
     public async Task<IActionResult> OnPostApproveAsync(int id)
@@ -73,6 +150,8 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         await processGroups.AssignGroupsAsync([entry.ProcessName], group, HttpContext.RequestAborted);
         await catalog.ClearSuggestionsAsync([entry.ProcessName], HttpContext.RequestAborted);
         await appLists.SyncSystemListsFromClassificationsAsync(HttpContext.RequestAborted);
+        if (group == AppGroup.Specialization)
+            await specReview.OnClassifiedAsSpecializationAsync([entry.ProcessName], HttpContext.RequestAborted);
 
         var message = $"Approved {entry.ProcessName} as {label}.";
         if (WantsAjax())
@@ -271,6 +350,8 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
             var names = entries.Select(e => e.ProcessName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             await processGroups.AssignGroupsAsync(names, targetGroup, ct);
             await appLists.SyncSystemListsFromClassificationsAsync(ct);
+            if (targetGroup == AppGroup.Specialization)
+                await specReview.OnClassifiedAsSpecializationAsync(names, ct);
 
             var cat = string.IsNullOrWhiteSpace(category) ? null : category.Trim();
             var sub = string.IsNullOrWhiteSpace(subcategory) ? null : subcategory.Trim();
@@ -406,6 +487,13 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
 
         db.ChangeTracker.Clear();
         await appLists.SyncSystemListsFromClassificationsAsync(ct);
+        var specNames = batch
+            .Where(e => e.SuggestedGroup == AppGroup.Specialization)
+            .Select(e => e.ProcessName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (specNames.Count > 0)
+            await specReview.OnClassifiedAsSpecializationAsync(specNames, ct);
         return (nameSet.Count, toClear.Select(e => e.Id).Distinct().ToArray());
     }
 
@@ -448,6 +536,8 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
 
         await processGroups.AssignGroupsAsync([entry.ProcessName], targetGroup, HttpContext.RequestAborted);
         await appLists.SyncSystemListsFromClassificationsAsync(HttpContext.RequestAborted);
+        if (targetGroup == AppGroup.Specialization)
+            await specReview.OnClassifiedAsSpecializationAsync([entry.ProcessName], HttpContext.RequestAborted);
 
         // Re-load after AssignGroups (may have saved); update category fields on all name matches.
         // Empty dropdown ("—") clears Category/Subcategory.
@@ -680,6 +770,7 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
     private IActionResult RedirectToFilters() =>
         RedirectToPage(new
         {
+            tab = Tab,
             hideIgnored = HideIgnored,
             blankPathOnly = BlankPathOnly,
             showClassified = ShowClassified,
@@ -687,6 +778,9 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
             sort = Sort,
             dir = Dir
         });
+
+    private static string NormalizeTab(string? tab) =>
+        string.Equals(tab, "spec-review", StringComparison.OrdinalIgnoreCase) ? "spec-review" : "classify";
 
     private bool WantsAjax() =>
         string.Equals(Request.Headers.Accept.ToString(), "application/json", StringComparison.OrdinalIgnoreCase)

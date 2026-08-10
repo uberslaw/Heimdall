@@ -14,12 +14,27 @@
     <div>
         <h1 class="hd-title mb-1">Discovery &amp; Classification</h1>
         <p class="hd-sub mb-0" id="discovery-stats">
-            <span id="discovery-total-count">@Model.TotalCount</span> in catalog
-            · <span id="discovery-unclassified-count" class="@(Model.UnclassifiedCount > 0 ? "text-warning" : "text-secondary")">@Model.UnclassifiedCount</span> awaiting classification
-            <span id="discovery-pending-wrap" class="text-secondary" style="@(Model.PendingSuggestionCount > 0 ? null : "display:none")"> · <span id="discovery-pending-count">@Model.PendingSuggestionCount</span> pending suggestion(s)</span>
-            @if (Model.BlankPathCount > 0)
+            @if (Model.Tab == "spec-review")
             {
-                <span class="text-secondary"> · @Model.BlankPathCount missing path — use <strong>Find missing paths</strong> below, or <a asp-page="/AppLists">Request Inventory</a> on App Lists</span>
+                <span>@Model.SpecPending.Count pending Spec review</span>
+                @if (Model.SpecStaleAlerts.Count > 0)
+                {
+                    <span class="text-warning"> · @Model.SpecStaleAlerts.Count network path(s) unseen 12+ months</span>
+                }
+                @if (Model.SpecUntamed.Count > 0)
+                {
+                    <span class="text-secondary"> · @Model.SpecUntamed.Count on machines not in a team</span>
+                }
+            }
+            else
+            {
+                <span id="discovery-total-count">@Model.TotalCount</span><text> in catalog
+                · </text><span id="discovery-unclassified-count" class="@(Model.UnclassifiedCount > 0 ? "text-warning" : "text-secondary")">@Model.UnclassifiedCount</span><text> awaiting classification</text>
+                <span id="discovery-pending-wrap" class="text-secondary" style="@(Model.PendingSuggestionCount > 0 ? "" : "display:none")"> · <span id="discovery-pending-count">@Model.PendingSuggestionCount</span> pending suggestion(s)</span>
+                @if (Model.BlankPathCount > 0)
+                {
+                    <span class="text-secondary"> · @Model.BlankPathCount missing path — use <strong>Find missing paths</strong> below, or <a asp-page="/AppLists">Request Inventory</a> on App Lists</span>
+                }
             }
         </p>
     </div>
@@ -29,6 +44,23 @@
         <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="discovery" title="How Discovery works">Help</a>
     </div>
 </div>
+
+<ul class="nav nav-tabs hd-ops-tabs mb-3">
+    <li class="nav-item">
+        <a class="nav-link @(Model.Tab == "classify" ? "active" : null)"
+           asp-page="/Discovery" asp-route-tab="classify">Classify</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link @(Model.Tab == "spec-review" ? "active" : null)"
+           asp-page="/Discovery" asp-route-tab="spec-review">
+            Spec review
+            @if (Model.Tab == "spec-review" && Model.SpecPending.Count > 0)
+            {
+                <span class="badge text-bg-warning">@Model.SpecPending.Count</span>
+            }
+        </a>
+    </li>
+</ul>
 
 <div id="hd-toast-region" class="hd-toast-region">
     @if (TempData["Message"] is string msg)
@@ -47,7 +79,14 @@
     }
 </div>
 
+@if (Model.Tab == "spec-review")
+{
+    <partial name="_SpecReview" model="Model" />
+}
+else
+{
 <form method="get" class="hd-panel mb-3" id="discovery-filter-form">
+    <input type="hidden" name="tab" value="classify" />
     <input type="hidden" name="sort" value="@sort" />
     <input type="hidden" name="dir" value="@dir" />
     <div class="row g-3 align-items-end">
@@ -597,9 +636,12 @@
         Drag column borders to resize (saved for this browser session).
     </p>
 </div>
+}
 
 @section Scripts {
-<script>
+@if (Model.Tab == "classify")
+{
+    <script>
 (() => {
   document.querySelectorAll('.hd-toast[data-autodismiss]').forEach((toast) => {
     const dismiss = () => {
@@ -1370,4 +1412,5 @@
   syncDescriptionVisibility();
 })();
 </script>
+}
 }

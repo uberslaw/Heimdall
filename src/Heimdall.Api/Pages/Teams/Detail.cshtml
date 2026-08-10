@@ -212,6 +212,7 @@ else
 
     <div class="hd-panel mb-4">
         <h2 class="h5 mb-3">Tracking</h2>
+        <p class="small text-secondary mb-3">Mark one list as <strong>Primary</strong> — Spec review auto-adds new Specialization apps there.</p>
         @if (Model.TrackingLists.Count == 0)
         {
             <p class="text-secondary mb-0">No tracking lists linked.</p>
@@ -230,9 +231,24 @@ else
                 @foreach (var a in Model.TrackingLists)
                 {
                     <tr>
-                        <td><strong>@a.Name</strong> <span class="text-secondary small">(@a.EntryCount)</span></td>
+                        <td>
+                            <strong>@a.Name</strong>
+                            <span class="text-secondary small">(@a.EntryCount)</span>
+                            @if (a.IsPrimary)
+                            {
+                                <span class="badge badge-warn ms-1">Primary</span>
+                            }
+                        </td>
                         <td class="small text-secondary" title="@a.AppsSummary">@(a.AppsSummary.Length > 80 ? a.AppsSummary[..80] + "…" : a.AppsSummary)</td>
                         <td class="text-nowrap">
+                            @if (!a.IsPrimary)
+                            {
+                                <form method="post" asp-page-handler="SetPrimaryAppList" class="d-inline">
+                                    <input type="hidden" name="id" value="@Model.Team.Id" />
+                                    <input type="hidden" name="AppListId" value="@a.Id" />
+                                    <button type="submit" class="btn btn-ghost btn-sm">Set primary</button>
+                                </form>
+                            }
                             <form method="post" asp-page-handler="SetAppListExcluded" class="d-inline">
                                 <input type="hidden" name="id" value="@Model.Team.Id" />
                                 <input type="hidden" name="AppListId" value="@a.Id" />

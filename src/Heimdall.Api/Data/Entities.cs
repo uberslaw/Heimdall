@@ -418,6 +418,57 @@ public class TeamAppListLink
     public AppList AppList { get; set; } = null!;
     /// <summary>When true, list is linked but ignored for this team (Do Not Track).</summary>
     public bool IsExcluded { get; set; }
+    /// <summary>
+    /// When true, Spec auto-add / Discovery Spec review targets this list for the team.
+    /// At most one non-excluded primary per team (enforced in SpecReviewService / Teams UI).
+    /// </summary>
+    public bool IsPrimary { get; set; }
+}
+
+/// <summary>
+/// Pending / decided Specialization review for a catalog path+exe on a team.
+/// Sampling still uses process name on the team's primary AppList; path is discovery identity only.
+/// </summary>
+public class SpecReviewItem
+{
+    public int Id { get; set; }
+    public int? CatalogEntryId { get; set; }
+    public required string ProcessName { get; set; }
+    public string ExecutablePath { get; set; } = "";
+    public string? DisplayName { get; set; }
+    public int TeamId { get; set; }
+    public Team Team { get; set; } = null!;
+    /// <summary>Pending | Continued | Ignored | Archived</summary>
+    public string Status { get; set; } = SpecReviewStatuses.Pending;
+    public DateTimeOffset CreatedUtc { get; set; }
+    public DateTimeOffset? DecidedUtc { get; set; }
+    public bool AutoAddedToPrimaryList { get; set; }
+}
+
+public static class SpecReviewStatuses
+{
+    public const string Pending = "Pending";
+    public const string Continued = "Continued";
+    public const string Ignored = "Ignored";
+    public const string Archived = "Archived";
+}
+
+/// <summary>
+/// Network-path Spec apps unseen for 12+ months — admin should confirm keep sticky or remove.
+/// </summary>
+public class SpecStaleAlert
+{
+    public int Id { get; set; }
+    public int? CatalogEntryId { get; set; }
+    public required string ProcessName { get; set; }
+    public string ExecutablePath { get; set; } = "";
+    public string? DisplayName { get; set; }
+    public DateTimeOffset FirstFlaggedUtc { get; set; }
+    public DateTimeOffset LastSeenUtc { get; set; }
+    /// <summary>When set, alert is resolved (kept sticky or removed).</summary>
+    public DateTimeOffset? ResolvedUtc { get; set; }
+    /// <summary>null = unresolved; true = keep sticky; false = removed/archived.</summary>
+    public bool? KeepSticky { get; set; }
 }
 
 /// <summary>Named schema / app list of process names, optionally with a primary team for metadata.</summary>

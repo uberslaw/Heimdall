@@ -23,6 +23,8 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<AppListEntry> AppListEntries => Set<AppListEntry>();
     public DbSet<AppListAssignment> AppListAssignments => Set<AppListAssignment>();
     public DbSet<TeamAppListLink> TeamAppListLinks => Set<TeamAppListLink>();
+    public DbSet<SpecReviewItem> SpecReviewItems => Set<SpecReviewItem>();
+    public DbSet<SpecStaleAlert> SpecStaleAlerts => Set<SpecStaleAlert>();
     public DbSet<MachineAppListOverride> MachineAppListOverrides => Set<MachineAppListOverride>();
     public DbSet<AppListAuditLog> AppListAuditLogs => Set<AppListAuditLog>();
     public DbSet<MachineIdentityEvent> MachineIdentityEvents => Set<MachineIdentityEvent>();
@@ -176,6 +178,22 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
                 .WithMany(x => x.TeamLinks)
                 .HasForeignKey(x => x.AppListId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SpecReviewItem>(e =>
+        {
+            e.HasIndex(x => new { x.TeamId, x.ProcessName, x.ExecutablePath }).IsUnique();
+            e.HasIndex(x => x.Status);
+            e.HasOne(x => x.Team)
+                .WithMany()
+                .HasForeignKey(x => x.TeamId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SpecStaleAlert>(e =>
+        {
+            e.HasIndex(x => new { x.ProcessName, x.ExecutablePath });
+            e.HasIndex(x => x.ResolvedUtc);
         });
 
         modelBuilder.Entity<MachineAppListOverride>(e =>

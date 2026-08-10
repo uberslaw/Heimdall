@@ -50,6 +50,7 @@ builder.Services.AddScoped<ConfigService>();
 builder.Services.AddScoped<ProcessGroupService>();
 builder.Services.AddScoped<ProcessCatalogService>();
 builder.Services.AddScoped<AppListService>();
+builder.Services.AddScoped<SpecReviewService>();
 builder.Services.AddScoped<StatsQueryService>();
 builder.Services.AddScoped<SocratizeQueryService>();
 builder.Services.AddScoped<RemoteMachineService>();
@@ -66,6 +67,7 @@ builder.Services.AddScoped<FleetDashboardService>();
 builder.Services.AddScoped<MachineUtilisationService>();
 builder.Services.AddHostedService<CatalogBackfillHostedService>();
 builder.Services.AddHostedService<FleetSnapshotRetentionHostedService>();
+builder.Services.AddHostedService<SpecReviewHostedService>();
 
 var app = builder.Build();
 

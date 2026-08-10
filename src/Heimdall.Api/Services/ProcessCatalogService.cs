@@ -553,6 +553,32 @@ public sealed class ProcessCatalogService(HeimdallDbContext db, ProcessGroupServ
     public static IReadOnlyList<string> GetSeenHostnames(ProcessCatalogEntry entry) =>
         DeserializeHostSightings(entry.SeenHostnamesJson).Keys.OrderBy(h => h, StringComparer.OrdinalIgnoreCase).ToList();
 
+    /// <summary>Hostname → last seen / count for a catalog entry.</summary>
+    public static IReadOnlyDictionary<string, (DateTimeOffset LastSeenUtc, int Count)> GetHostSightingMap(ProcessCatalogEntry entry)
+    {
+        var map = DeserializeHostSightings(entry.SeenHostnamesJson);
+        return map.ToDictionary(
+            kv => kv.Key,
+            kv => (kv.Value.LastSeenUtc, kv.Value.Count),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Drop a host from SeenHostnamesJson (app gone from that machine).</summary>
+    public async Task<bool> RemoveHostnameAsync(int catalogEntryId, string hostname, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(hostname)) return false;
+        var entry = await db.ProcessCatalogEntries.FirstOrDefaultAsync(e => e.Id == catalogEntryId, ct);
+        if (entry is null) return false;
+        var sightings = DeserializeHostSightings(entry.SeenHostnamesJson);
+        if (!sightings.Remove(hostname.Trim()))
+            return false;
+        entry.SeenHostnamesJson = sightings.Count == 0 ? null : SerializeHostSightings(sightings);
+        if (string.Equals(entry.LastSeenHostname, hostname.Trim(), StringComparison.OrdinalIgnoreCase))
+            entry.LastSeenHostname = sightings.Keys.OrderByDescending(h => sightings[h].LastSeenUtc).FirstOrDefault();
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
     private static void RecordHostname(ProcessCatalogEntry row, string? hostname, DateTimeOffset now, bool incrementSeenCount)
     {
         if (string.IsNullOrWhiteSpace(hostname)) return;

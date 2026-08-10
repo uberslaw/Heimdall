@@ -104,11 +104,14 @@ public sealed class ProcessCollector
     }
 
     /// <summary>One-shot inventory of running processes for server-side app analysis.</summary>
+    /// <param name="throttle">When true, yields briefly between processes to keep agent CPU impact low (~5% target).</param>
     [SupportedOSPlatform("windows")]
-    public static IReadOnlyList<DiscoveredProcessDto> DiscoverInventory()
+    public static IReadOnlyList<DiscoveredProcessDto> DiscoverInventory(bool throttle = false)
     {
         var wmiPaths = ProcessPathResolver.QueryWmiPaths();
+        // Key by name + path so the same exe at different locations is reported separately (Spec discovery).
         var map = new Dictionary<string, DiscoveredProcessDto>(StringComparer.OrdinalIgnoreCase);
+        var n = 0;
         foreach (var process in Process.GetProcesses())
         {
             try
@@ -118,27 +121,11 @@ public sealed class ProcessCollector
                 var path = ProcessPathResolver.TryGetPath(process, wmiPaths);
                 if (!Heimdall.Shared.DiscoveryCatalogFilter.IsEligible(name, path))
                     continue;
-                if (map.TryGetValue(name, out var existing))
-                {
-                    if (string.IsNullOrWhiteSpace(existing.ExecutablePath) && !string.IsNullOrWhiteSpace(path))
-                    {
-                        var version = TryGetVersionInfo(path);
-                        map[name] = new DiscoveredProcessDto
-                        {
-                            ProcessName = existing.ProcessName,
-                            DisplayName = existing.DisplayName,
-                            ExecutablePath = path,
-                            FileVersion = version?.FileVersion,
-                            ProductVersion = version?.ProductVersion,
-                            CompanyName = version?.CompanyName,
-                            FileDescription = version?.FileDescription
-                        };
-                    }
-                }
-                else
+                var key = $"{name}\0{(path ?? "").Trim()}";
+                if (!map.ContainsKey(key))
                 {
                     var version = TryGetVersionInfo(path);
-                    map[name] = new DiscoveredProcessDto
+                    map[key] = new DiscoveredProcessDto
                     {
                         ProcessName = name,
                         DisplayName = name,
@@ -152,8 +139,13 @@ public sealed class ProcessCollector
             }
             catch { /* ignore */ }
             finally { process.Dispose(); }
+
+            if (throttle && ++n % 8 == 0)
+                Thread.Sleep(15);
         }
-        return map.Values.OrderBy(p => p.ProcessName, StringComparer.OrdinalIgnoreCase).ToList();
+        return map.Values.OrderBy(p => p.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(p => p.ExecutablePath ?? "", StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     /// <summary>Best-effort Win32 file version read; honest null fallback when the path is missing/inaccessible/unversioned.</summary>

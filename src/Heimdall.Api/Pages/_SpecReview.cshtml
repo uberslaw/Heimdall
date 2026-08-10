@@ -1,0 +1,162 @@
+@model Heimdall.Api.Pages.DiscoveryModel
+
+<p class="text-secondary small mb-3">
+    New Specialization apps (path + exe) auto-add to the team’s <strong>primary</strong> AppList for sampling by process name.
+    Expand a row to see which machines reported it. Prefer team Continue when the list is long.
+</p>
+
+@if (Model.SpecStaleAlerts.Count > 0)
+{
+    <div class="hd-panel mb-3 border border-warning">
+        <h2 class="h5 mb-2 text-warning">Network paths unseen for 12+ months</h2>
+        <p class="small text-secondary mb-3">Sticky UNC / non-C: links were kept. Confirm keep or remove/archive.</p>
+        <table class="hd-table mb-0">
+            <thead>
+                <tr>
+                    <th>App</th>
+                    <th>Path</th>
+                    <th>Last seen</th>
+                    <th>Flagged</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var a in Model.SpecStaleAlerts)
+            {
+                <tr>
+                    <td><strong>@(a.DisplayName ?? a.ProcessName)</strong> <span class="text-secondary small">@a.ProcessName</span></td>
+                    <td class="small text-break">@a.ExecutablePath</td>
+                    <td class="small">@a.LastSeenUtc.ToString("u")</td>
+                    <td class="small">@a.FirstFlaggedUtc.ToString("u")</td>
+                    <td class="text-nowrap">
+                        <form method="post" asp-page-handler="SpecStaleKeep" class="d-inline">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="alertId" value="@a.AlertId" />
+                            <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Keep sticky</button>
+                        </form>
+                        <form method="post" asp-page-handler="SpecStaleRemove" class="d-inline"
+                              onsubmit="return confirm('Remove and archive this Spec app?');">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="alertId" value="@a.AlertId" />
+                            <button type="submit" class="hd-btn hd-btn-rose hd-btn-sm">Remove</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+
+<div class="hd-panel mb-4">
+    <h2 class="h5 mb-3">Pending team review (@Model.SpecPending.Count)</h2>
+    @if (Model.SpecPending.Count == 0)
+    {
+        <p class="text-secondary mb-0">No new Spec apps awaiting Continue / Ignore.</p>
+    }
+    else
+    {
+        <div class="accordion" id="spec-review-accordion">
+            @{
+                var i = 0;
+                foreach (var g in Model.SpecPending.GroupBy(r => (r.ProcessName, r.ExecutablePath, r.DisplayName)))
+                {
+                    var key = $"spec-{i++}";
+                    var first = g.First();
+                    var title = first.DisplayName ?? first.ProcessName;
+                    <div class="accordion-item">
+                        <h3 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#@key" aria-expanded="false">
+                                <span class="me-2"><strong>@title</strong></span>
+                                <span class="text-secondary small me-2">@first.ProcessName</span>
+                                <span class="text-secondary small text-truncate" style="max-width:40%" title="@first.ExecutablePath">@first.ExecutablePath</span>
+                                <span class="badge text-bg-secondary ms-auto me-2">@g.Count() team(s)</span>
+                            </button>
+                        </h3>
+                        <div id="@key" class="accordion-collapse collapse" data-bs-parent="#spec-review-accordion">
+                            <div class="accordion-body">
+                                <p class="small text-secondary mb-2">Expand shows all devices — list can be long; team Continue is often enough.</p>
+                                @foreach (var r in g.OrderBy(x => x.TeamName))
+                                {
+                                    <div class="border-bottom py-2">
+                                        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                                            <strong>@r.TeamName</strong>
+                                            @if (r.AutoAdded)
+                                            {
+                                                <span class="badge text-bg-success">Auto-added to primary list</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge text-bg-warning">No primary list — set one on Teams</span>
+                                            }
+                                            <form method="post" asp-page-handler="SpecContinue" class="d-inline ms-auto">
+                                                @Html.AntiForgeryToken()
+                                                <input type="hidden" name="reviewId" value="@r.ReviewId" />
+                                                <button type="submit" class="hd-btn hd-btn-gold hd-btn-sm">Continue</button>
+                                            </form>
+                                            <form method="post" asp-page-handler="SpecIgnore" class="d-inline">
+                                                @Html.AntiForgeryToken()
+                                                <input type="hidden" name="reviewId" value="@r.ReviewId" />
+                                                <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Ignore</button>
+                                            </form>
+                                        </div>
+                                        <ul class="small text-secondary mb-0 ps-3">
+                                            @foreach (var h in r.Hosts.OrderBy(x => x.TeamName ?? "").ThenBy(x => x.Hostname))
+                                            {
+                                                <li>Found on: <strong>@h.Hostname</strong>@(h.TeamName is null ? "" : $" ({h.TeamName})")</li>
+                                            }
+                                            @if (r.Hosts.Count == 0)
+                                            {
+                                                <li>No host sightings recorded yet.</li>
+                                            }
+                                        </ul>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+    }
+</div>
+
+<div class="hd-panel mb-4">
+    <h2 class="h5 mb-3">Machines not in a Team (@Model.SpecUntamed.Count)</h2>
+    <p class="small text-secondary mb-3">Visibility only — no auto-add. Assign the machine to a team to enroll Spec tracking.</p>
+    @if (Model.SpecUntamed.Count == 0)
+    {
+        <p class="text-secondary mb-0">None.</p>
+    }
+    else
+    {
+        <div class="accordion" id="spec-untamed-accordion">
+            @{
+                var j = 0;
+                foreach (var u in Model.SpecUntamed)
+                {
+                    var key = $"untamed-{j++}";
+                    <div class="accordion-item">
+                        <h3 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#@key">
+                                <strong class="me-2">@(u.DisplayName ?? u.ProcessName)</strong>
+                                <span class="text-secondary small text-truncate">@u.ExecutablePath</span>
+                                <span class="badge text-bg-secondary ms-auto">@u.Hosts.Count host(s)</span>
+                            </button>
+                        </h3>
+                        <div id="@key" class="accordion-collapse collapse" data-bs-parent="#spec-untamed-accordion">
+                            <div class="accordion-body">
+                                <ul class="small mb-0">
+                                    @foreach (var h in u.Hosts)
+                                    {
+                                        <li>@h.Hostname</li>
+                                    }
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+    }
+</div>
