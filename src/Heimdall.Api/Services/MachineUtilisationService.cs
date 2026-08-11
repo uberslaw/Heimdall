@@ -296,9 +296,16 @@ public class MachineUtilisationService(HeimdallDbContext db)
         var util = (await ComputeAsync([machineId], period, ct)).GetValueOrDefault(machineId)
             ?? new MachineUtilRow(period, 0, null, 100, null, null, null, null, null, null, false);
 
-        var processRuns = await db.ProcessRuns.AsNoTracking()
-            .Where(r => r.MachineId == machineId && r.StartedAtUtc < to && (r.EndedAtUtc == null || r.EndedAtUtc >= from))
-            .ToListAsync(ct);
+        // SQLite EF cannot translate DateTimeOffset comparisons — filter the window in memory.
+        IReadOnlyList<ProcessRun> processRuns = [];
+        if (metric == "active")
+        {
+            processRuns = (await db.ProcessRuns.AsNoTracking()
+                    .Where(r => r.MachineId == machineId)
+                    .ToListAsync(ct))
+                .Where(r => r.StartedAtUtc < to && (r.EndedAtUtc is null || r.EndedAtUtc >= from))
+                .ToList();
+        }
 
         return metric switch
         {

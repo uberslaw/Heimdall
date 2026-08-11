@@ -176,9 +176,9 @@ public class CostModel(HeimdallDbContext db) : PageModel
 
         IdentityHistory = (await db.MachineIdentityEvents.AsNoTracking()
                 .Where(e => e.MachineId == id)
-                .OrderByDescending(e => e.ObservedAtUtc)
-                .Take(20)
                 .ToListAsync())
+            .OrderByDescending(e => e.ObservedAtUtc)
+            .Take(20)
             .Select(e => new IdentityEventRow(
                 e.EventType,
                 e.ObservedAtUtc,

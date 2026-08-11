@@ -249,7 +249,19 @@ else
                     @foreach (var u in Model.UserSummaries)
                     {
                         <tr>
-                            <td data-sort-value="@u.DisplayName">@UsernameDisplay.FormatOrDash(u.Username, u.Domain)</td>
+                            <td data-sort-value="@u.DisplayName">
+                                @{
+                                    var sessUser = UsernameDisplay.Format(u.Username, u.Domain);
+                                }
+                                @if (!string.IsNullOrWhiteSpace(sessUser))
+                                {
+                                    <a asp-page="/User" asp-route-username="@sessUser" asp-route-range="@Model.Range">@sessUser</a>
+                                }
+                                else
+                                {
+                                    <span>—</span>
+                                }
+                            </td>
                             <td>@(u.TeamName ?? "—")</td>
                             <td>@u.SessionCount</td>
                             <td>@u.LocalCount</td>
@@ -318,7 +330,19 @@ else
                         var durationSec = s.ActiveSeconds + s.DisconnectedSeconds;
                         <tr class="@(s.HadAppActivityWhileDisconnected ? "hd-row-highlight" : null)">
                             <td>@s.Hostname</td>
-                            <td data-sort-value="@UsernameDisplay.Format(s.Username, s.Domain)">@UsernameDisplay.FormatOrDash(s.Username, s.Domain)</td>
+                            <td data-sort-value="@UsernameDisplay.Format(s.Username, s.Domain)">
+                                @{
+                                    var logUser = UsernameDisplay.Format(s.Username, s.Domain);
+                                }
+                                @if (!string.IsNullOrWhiteSpace(logUser))
+                                {
+                                    <a asp-page="/User" asp-route-username="@logUser" asp-route-range="@Model.Range">@logUser</a>
+                                }
+                                else
+                                {
+                                    <span>—</span>
+                                }
+                            </td>
                             <td>@(s.TeamName ?? "—")</td>
                             <td>
                                 @if (s.SessionType == SessionType.Rdp)

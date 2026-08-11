@@ -34,6 +34,9 @@ public class MachineModel(
     [BindProperty(SupportsGet = true)]
     public List<string> Apps { get; set; } = [];
 
+    /// <summary>Applications table rows (tracked + any with runs). Filtered client-side via checkboxes.</summary>
+    public IReadOnlyList<MachineAppTableRow> AppTableRows { get; private set; } = [];
+
     [BindProperty]
     public int ApplyAppListId { get; set; }
 
@@ -172,6 +175,8 @@ public class MachineModel(
     public DiskUsageScanProgressDto? DiskUsageProgress { get; private set; }
     public DiskUsageScanResultDto? DiskUsageScan { get; private set; }
     public DateTimeOffset? DiskUsageScanUtc { get; private set; }
+    public string? ReportedAgentVersion { get; private set; }
+    public bool AgentSupportsDiskUsageScan { get; private set; } = true;
 
     /// <summary>Null-if-not-Flood-enrolled — the .cshtml hides the whole TUFLOW panel when this is null
     /// or FloodEnrolled is false. See TuflowRunService.GetMachineViewAsync.</summary>
@@ -323,6 +328,13 @@ public class MachineModel(
             return RedirectToMachine(host);
         }
 
+        if (!VersionCompare.SupportsDiskUsageScan(machine.AgentVersion))
+        {
+            TempData["Error"] =
+                $"Disk usage scan needs agent v{VersionCompare.MinDiskUsageScanVersion}+ (this machine reports v{machine.AgentVersion ?? "unknown"}). Deploy Client / update the agent, then try again.";
+            return RedirectToMachine(host);
+        }
+
         var requestedUtc = DateTimeOffset.UtcNow;
         var request = new DiskUsageScanRequestDto
         {
@@ -341,11 +353,34 @@ public class MachineModel(
             RootPath = root,
             Status = DiskUsageScanStatuses.Queued,
             UpdatedUtc = requestedUtc,
-            Message = "Waiting for agent (usually within ~20s)"
+            Message = "Waiting for agent pickup (config refresh; ~20s poll on current agents)"
         });
         await db.SaveChangesAsync(ct);
         TempData["Message"] =
-            $"Disk usage scan queued for {host} ({root}, files ≥ {minMb} MB) at {FormatLocalTimestamp(requestedUtc)}. Agent usually picks this up within ~20s; scan itself can take up to ~3 min.";
+            $"Disk usage scan queued for {host} ({root}, files ≥ {minMb} MB) at {FormatLocalTimestamp(requestedUtc)}. Not waiting for low CPU — needs an agent that supports disk scans (v{VersionCompare.MinDiskUsageScanVersion}+). Scan itself can take up to ~3 min once started.";
+        return RedirectToMachine(host);
+    }
+
+    public async Task<IActionResult> OnPostCancelDiskUsageScanAsync(CancellationToken ct)
+    {
+        var host = Hostname?.Trim();
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            TempData["Error"] = "Missing hostname.";
+            return RedirectToPage("/Index");
+        }
+
+        var machine = await db.Machines.FirstOrDefaultAsync(m => m.Hostname == host, ct);
+        if (machine is null)
+        {
+            TempData["Error"] = "Machine not found.";
+            return RedirectToMachine(host);
+        }
+
+        machine.PendingDiskUsageScanJson = null;
+        machine.DiskUsageScanProgressJson = null;
+        await db.SaveChangesAsync(ct);
+        TempData["Message"] = $"Cancelled queued disk usage scan for {host}.";
         return RedirectToMachine(host);
     }
 
@@ -479,9 +514,9 @@ public class MachineModel(
         var now = DateTimeOffset.UtcNow;
         var fromUtc = now.AddDays(-days);
         var toUtc = now;
-        var selectedApps = Apps.Count > 0 ? Apps : null;
 
-        Detail = await stats.QueryMachineDetailAsync(host, fromUtc, toUtc, selectedApps, ct);
+        // Always load full app stats for the period; table checkboxes filter client-side.
+        Detail = await stats.QueryMachineDetailAsync(host, fromUtc, toUtc, null, ct);
         HostNotFound = Detail is null;
         if (HostNotFound)
             return;
@@ -498,6 +533,7 @@ public class MachineModel(
         AppListsView = await appLists.GetEffectiveForHostAsync(host, ct);
         AppListPicker = await appLists.ListForPickerAsync(ct);
         MachineExcludedProcesses = await config.GetMachineExcludeProcessesAsync(host, ct);
+        AppTableRows = BuildAppTableRows(Detail!, AppListsView);
         CanAccessFlood = flood.CanAccessFlood(HttpContext);
         if (CanAccessFlood)
             Tuflow = await tuflowRuns.GetMachineViewAsync(host, ct);
@@ -516,6 +552,9 @@ public class MachineModel(
             if (EditFriendly)
                 FriendlyNameInput = FriendlyName;
             ResourceGlance = await LoadResourceGlanceAsync(machine.Id, ct);
+
+            ReportedAgentVersion = machine.AgentVersion;
+            AgentSupportsDiskUsageScan = VersionCompare.SupportsDiskUsageScan(machine.AgentVersion);
 
             PendingInventory = machine.PendingAppAnalysis;
             InventoryCollectedUtc = machine.InventoryCollectedUtc;
@@ -681,9 +720,65 @@ public class MachineModel(
         }
     }
 
+    private static IReadOnlyList<MachineAppTableRow> BuildAppTableRows(
+        MachineDetailSnapshot detail,
+        AppListService.MachineAppListsView? appLists)
+    {
+        var statsByName = detail.Apps.ToDictionary(a => a.ProcessName, StringComparer.OrdinalIgnoreCase);
+        var listMap = appLists?.ProcessListNames
+            ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        var openTotal = detail.Apps.Sum(a => a.TotalOpenSeconds);
+
+        var rows = new List<MachineAppTableRow>();
+        foreach (var opt in detail.AppOptions
+                     .OrderByDescending(o => o.IsTracked)
+                     .ThenBy(o => o.DisplayName, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!opt.IsTracked && !opt.HasData)
+                continue;
+
+            statsByName.TryGetValue(opt.ProcessName, out var stats);
+            listMap.TryGetValue(opt.ProcessName, out var lists);
+            lists ??= [];
+            var openSec = stats?.TotalOpenSeconds ?? 0;
+            var share = openTotal <= 0 || stats is null ? 0 : openSec * 100.0 / openTotal;
+            detail.ProcessPaths.TryGetValue(opt.ProcessName, out var path);
+
+            rows.Add(new MachineAppTableRow(
+                ProcessName: opt.ProcessName,
+                DisplayName: opt.DisplayName,
+                IsTracked: opt.IsTracked,
+                HasData: opt.HasData,
+                ListNames: lists,
+                ExecutablePath: path,
+                TotalOpenSeconds: stats?.TotalOpenSeconds,
+                AvgConcurrentProcesses: stats?.AvgConcurrentProcesses,
+                RunCount: stats?.RunCount,
+                UniqueUsers: stats?.UniqueUsers,
+                SharePct: share,
+                PeakGpuPercent: stats?.PeakGpuPercent));
+        }
+
+        return rows;
+    }
+
     private IActionResult RedirectToMachine(string? host) =>
         RedirectToPage(new { hostname = host, range = Range, statsDuration = StatsDuration });
 }
+
+public sealed record MachineAppTableRow(
+    string ProcessName,
+    string DisplayName,
+    bool IsTracked,
+    bool HasData,
+    IReadOnlyList<string> ListNames,
+    string? ExecutablePath,
+    double? TotalOpenSeconds,
+    double? AvgConcurrentProcesses,
+    int? RunCount,
+    int? UniqueUsers,
+    double SharePct,
+    double? PeakGpuPercent);
 
 public sealed record MachineResourceGlance(
     DateTimeOffset SampledAtUtc,

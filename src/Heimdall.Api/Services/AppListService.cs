@@ -632,13 +632,27 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
 
         var processes = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
         var infos = new List<ActiveAppListInfo>();
+        var listsByProcess = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        void RememberList(string listName, IEnumerable<AppListEntry> entries)
+        {
+            foreach (var e in entries)
+            {
+                processes.Add(e.ProcessName);
+                if (!listsByProcess.TryGetValue(e.ProcessName, out var names))
+                {
+                    names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                    listsByProcess[e.ProcessName] = names;
+                }
+                names.Add(listName);
+            }
+        }
 
         foreach (var a in matching)
         {
             if (ignoredOverrideIds.Contains(a.AppListId))
                 continue;
-            foreach (var e in a.AppList.Entries)
-                processes.Add(e.ProcessName);
+            RememberList(a.AppList.Name, a.AppList.Entries);
             infos.Add(new ActiveAppListInfo(
                 a.Id,
                 a.AppListId,
@@ -667,8 +681,7 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
                     continue;
                 if (infos.Any(i => i.AppListId == link.AppListId))
                     continue;
-                foreach (var e in link.AppList.Entries)
-                    processes.Add(e.ProcessName);
+                RememberList(link.AppList.Name, link.AppList.Entries);
                 infos.Add(new ActiveAppListInfo(
                     0,
                     link.AppListId,
@@ -686,8 +699,7 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         {
             if (infos.Any(i => i.AppListId == list.Id))
                 continue;
-            foreach (var e in list.Entries)
-                processes.Add(e.ProcessName);
+            RememberList(list.Name, list.Entries);
             infos.Add(new ActiveAppListInfo(
                 0,
                 list.Id,
@@ -700,10 +712,16 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
                 true));
         }
 
+        var processListNames = listsByProcess.ToDictionary(
+            kv => kv.Key,
+            kv => (IReadOnlyList<string>)kv.Value.ToList(),
+            StringComparer.OrdinalIgnoreCase);
+
         return new MachineAppListsView(
             hostname,
             infos,
             processes.ToList(),
+            processListNames,
             machine?.AppAnalysisStatus ?? AppAnalysisStatus.None,
             DeserializeProposals(machine?.AppAnalysisProposalJson));
     }
@@ -1274,7 +1292,13 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
     public record AnalysisResult(string Hostname, IReadOnlyList<ProposedApp> Proposals, AppAnalysisStatus Status, bool queuedForAgent, int NewCatalogCount = 0);
     public record ActiveAppListInfo(int AssignmentId, int AppListId, string Name, string? TeamName, ConfigScope Scope, string? ScopeValue, bool IsAutoDiscovered, int EntryCount, bool CanUnassign);
     public record AppListPickerRow(int Id, string Name, int EntryCount);
-    public record MachineAppListsView(string Hostname, IReadOnlyList<ActiveAppListInfo> ActiveLists, IReadOnlyList<string> MergedProcesses, AppAnalysisStatus AnalysisStatus, IReadOnlyList<ProposedApp> PendingProposals);
+    public record MachineAppListsView(
+        string Hostname,
+        IReadOnlyList<ActiveAppListInfo> ActiveLists,
+        IReadOnlyList<string> MergedProcesses,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> ProcessListNames,
+        AppAnalysisStatus AnalysisStatus,
+        IReadOnlyList<ProposedApp> PendingProposals);
     public record TeamAppListOption(int AppListId, string ListName, string? TeamName, int EntryCount, bool MatchesMachineUsers, IReadOnlyList<string> ProcessNames);
 
     public record SpecOverlayRow(

@@ -80,10 +80,13 @@ public sealed class MachineBookingService(HeimdallDbContext db)
                     .ThenByDescending(s => s.ActiveSeconds)
                     .First());
 
-        var bookings = await db.MachineBookings.AsNoTracking()
-            .Where(b => ids.Contains(b.MachineId) && b.StartUtc < now.AddDays(1) && b.EndUtc > now)
+        // SQLite cannot filter/ORDER BY DateTimeOffset reliably — load then filter/sort in memory.
+        var bookings = (await db.MachineBookings.AsNoTracking()
+                .Where(b => ids.Contains(b.MachineId))
+                .ToListAsync(ct))
+            .Where(b => b.StartUtc < now.AddDays(1) && b.EndUtc > now)
             .OrderBy(b => b.StartUtc)
-            .ToListAsync(ct);
+            .ToList();
 
         var bookingByMachine = bookings
             .GroupBy(b => b.MachineId)
@@ -151,21 +154,20 @@ public sealed class MachineBookingService(HeimdallDbContext db)
         if (machine.Team is null || !machine.Team.IsPublicFacing)
             return new BookingResult(false, "That machine is not in the Staff RDP pool (team is not public-facing).");
 
-        var overlap = await db.MachineBookings.AsNoTracking()
-            .AnyAsync(b =>
-                b.MachineId == machineId
-                && b.StartUtc < endUtc
-                && b.EndUtc > startUtc, ct);
+        var machineBookings = await db.MachineBookings.AsNoTracking()
+            .Where(b => b.MachineId == machineId)
+            .ToListAsync(ct);
+        var overlap = machineBookings.Any(b => b.StartUtc < endUtc && b.EndUtc > startUtc);
         if (overlap)
             return new BookingResult(false, "Another booking overlaps that window. Cancel it or pick a different time.");
 
         // Soft rule: one active booking per user per machine — replace own future/current booking.
-        var mine = await db.MachineBookings
-            .Where(b =>
-                b.MachineId == machineId
-                && b.BookedByEmail == email
-                && b.EndUtc > DateTimeOffset.UtcNow)
-            .ToListAsync(ct);
+        var nowUtc = DateTimeOffset.UtcNow;
+        var mine = (await db.MachineBookings
+                .Where(b => b.MachineId == machineId && b.BookedByEmail == email)
+                .ToListAsync(ct))
+            .Where(b => b.EndUtc > nowUtc)
+            .ToList();
         if (mine.Count > 0)
             db.MachineBookings.RemoveRange(mine);
 

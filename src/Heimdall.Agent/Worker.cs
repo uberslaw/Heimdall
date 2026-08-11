@@ -209,6 +209,7 @@ public sealed class Worker(
                 DiskUsageScanResultDto? result = null;
                 if (t.Status == TaskStatus.RanToCompletion)
                     result = t.Result;
+                DiskUsageScanRequestDto? next = null;
                 lock (_diskScanGate)
                 {
                     if (result is not null)
@@ -216,10 +217,17 @@ public sealed class Worker(
                     if (_pendingDiskScan is not null
                         && string.Equals(_pendingDiskScan.ScanId, scanReq.ScanId, StringComparison.OrdinalIgnoreCase))
                         _pendingDiskScan = null;
+                    // A newer request may have been parked while this scan ran — start it next.
+                    if (_pendingDiskScan is not null
+                        && !string.Equals(_pendingDiskScan.ScanId, scanReq.ScanId, StringComparison.OrdinalIgnoreCase))
+                        next = _pendingDiskScan;
+                    _diskScanTask = null;
                 }
                 logger.LogInformation(
                     "Disk usage scan finished: folders={Folders} files={Files} truncated={Truncated} err={Error}",
                     result?.TopFolders.Count, result?.LargeFiles.Count, result?.Truncated, result?.Error);
+                if (next is not null)
+                    QueueDiskUsageScan(host, next);
             }, TaskScheduler.Default);
         }
     }
@@ -430,6 +438,17 @@ public sealed class Worker(
         var ok = await api.UploadAsync(batch, ct);
         if (!ok)
         {
+            // Keep disk-scan payload for the next successful upload (don't drop the only copy).
+            if (diskScan is not null || diskProgress is not null)
+            {
+                lock (_diskScanGate)
+                {
+                    if (diskScan is not null && _diskScanResultReady is null)
+                        _diskScanResultReady = diskScan;
+                    if (diskProgress is not null && _diskScanProgressReady is null)
+                        _diskScanProgressReady = diskProgress;
+                }
+            }
             _queue?.Enqueue(batch);
             logger.LogWarning("Queued batch offline ({Sessions} sessions, {Processes} processes)", sessions.Count, processes.Count);
             return;

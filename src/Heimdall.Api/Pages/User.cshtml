@@ -1,0 +1,249 @@
+@page
+@model UserModel
+@using Heimdall.Api.Services
+@{
+    var d = Model.Detail;
+    ViewData["Title"] = d is null
+        ? (string.IsNullOrWhiteSpace(Model.Username) ? "User" : Model.Username)
+        : d.DisplayName;
+    var shortLabel = Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d";
+    var maxHour = d is { HourOfDay.Count: > 0 } ? d.HourOfDay.Max(h => h.ActiveSeconds) : 0;
+    var maxDow = d is { DayOfWeek.Count: > 0 } ? d.DayOfWeek.Max(h => h.ActiveSeconds) : 0;
+}
+
+<p class="hd-meta-line mb-2">
+    <a asp-page="/Fleet" asp-route-tab="machines">← Computers</a>
+    <span> · </span>
+    <a asp-page="/Fleet" asp-route-tab="sessions" asp-route-range="@Model.Range">Sessions</a>
+</p>
+
+@if (Model.MissingUsername)
+{
+    <div class="hd-panel">
+        <p class="text-secondary mb-0">No username specified. Click a user on the Fleet computers or Live tab.</p>
+    </div>
+}
+else if (d is null)
+{
+    <div class="hd-panel">
+        <p class="mb-0" style="color:#f0a0a0;">Could not load user detail.</p>
+    </div>
+}
+else
+{
+    <h1 class="hd-title">@d.DisplayName</h1>
+    <p class="hd-sub">
+        @Model.RangeLabel usage
+        @if (!string.Equals(d.DisplayName, d.Username, StringComparison.OrdinalIgnoreCase))
+        {
+            <span>· <code>@d.Username</code></span>
+        }
+        @if (!string.IsNullOrWhiteSpace(d.TeamName))
+        {
+            <span>· @d.TeamName</span>
+        }
+    </p>
+
+    <div class="hd-grid mb-3">
+        <div class="hd-stat">
+            <div class="label">Sessions (@shortLabel)</div>
+            <div class="value">@d.SessionCount</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Active time</div>
+            <div class="value" style="font-size:1.1rem;">@DurationDisplay.Render(d.ActiveSeconds)</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Avg session time</div>
+            <div class="value" style="font-size:1.1rem;">@DurationDisplay.Render(d.AvgSessionActiveSeconds)</div>
+            <div class="text-secondary small mt-1">Active time ÷ sessions</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Avg inactivity</div>
+            <div class="value" style="font-size:1.1rem;">@DurationDisplay.Render(d.AvgSessionInactiveSeconds)</div>
+            <div class="text-secondary small mt-1">Disconnected time ÷ sessions</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Disconnected</div>
+            <div class="value" style="font-size:1.1rem;">@DurationDisplay.Render(d.DisconnectedSeconds)</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Active days</div>
+            <div class="value">@d.DistinctDays</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Machines</div>
+            <div class="value">@d.Machines.Count</div>
+        </div>
+        <div class="hd-stat">
+            <div class="label">Apps</div>
+            <div class="value">@d.Apps.Count</div>
+        </div>
+    </div>
+
+    <form method="get" class="hd-panel mb-3">
+        <input type="hidden" name="username" value="@Model.Username" />
+        <div class="row g-3 align-items-end">
+            <div class="col-md-4 col-lg-3">
+                <label class="form-label" for="util-range">Period</label>
+                <select class="form-select" name="range" id="util-range">
+                    @foreach (var opt in IndexModel.RangeOptions)
+                    {
+                        if (Model.Range == opt.Key)
+                        {
+                            <option value="@opt.Key" selected>@opt.Label</option>
+                        }
+                        else
+                        {
+                            <option value="@opt.Key">@opt.Label</option>
+                        }
+                    }
+                </select>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <button type="submit" class="btn btn-hd w-100">Apply</button>
+            </div>
+        </div>
+    </form>
+
+    <div class="row g-3 mb-3">
+        <div class="col-lg-6">
+            <div class="hd-panel h-100">
+                <h2 class="hd-section-title mb-2">Active by day of week</h2>
+                <p class="text-secondary small mb-2">Local time · session active seconds started on each weekday</p>
+                @if (maxDow <= 0)
+                {
+                    <p class="text-secondary mb-0">No session activity in this period.</p>
+                }
+                else
+                {
+                    <div class="hd-user-bars">
+                        @foreach (var row in d.DayOfWeek)
+                        {
+                            <div class="hd-user-bar-row">
+                                <div class="hd-user-bar-label">@row.Label[..3]</div>
+                                <div class="hd-user-bar-track" title="@DurationDisplay.Render(row.ActiveSeconds) · @row.SessionCount session(s)">
+                                    <div class="hd-user-bar-fill" style="width:@UserModel.FormatHourBar(row.ActiveSeconds, maxDow)"></div>
+                                </div>
+                                <div class="hd-user-bar-val">@DurationDisplay.Render(row.ActiveSeconds)</div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="hd-panel h-100">
+                <h2 class="hd-section-title mb-2">Active by hour of day</h2>
+                <p class="text-secondary small mb-2">Local time · active seconds distributed across hours spanned</p>
+                @if (maxHour <= 0)
+                {
+                    <p class="text-secondary mb-0">No session activity in this period.</p>
+                }
+                else
+                {
+                    <div class="hd-user-bars hd-user-bars--hours">
+                        @foreach (var row in d.HourOfDay)
+                        {
+                            <div class="hd-user-bar-row">
+                                <div class="hd-user-bar-label">@row.Label</div>
+                                <div class="hd-user-bar-track" title="@DurationDisplay.Render(row.ActiveSeconds)">
+                                    <div class="hd-user-bar-fill" style="width:@UserModel.FormatHourBar(row.ActiveSeconds, maxHour)"></div>
+                                </div>
+                                <div class="hd-user-bar-val">@DurationDisplay.Render(row.ActiveSeconds)</div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="hd-panel mb-3">
+        <h2 class="hd-section-title mb-2">Machines</h2>
+        <p class="text-secondary small mb-2">Most → least used by active session time in this period</p>
+        @if (d.Machines.Count == 0)
+        {
+            <p class="text-secondary mb-0">No machines for this user in the selected period.</p>
+        }
+        else
+        {
+            <table class="hd-table hd-sortable" id="user-machines">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Machine</th>
+                        <th data-sort="num" data-default-desc>Active</th>
+                        <th data-sort="num">Disconnected</th>
+                        <th data-sort="num">Sessions</th>
+                        <th data-sort="num">Local</th>
+                        <th data-sort="num">RDP</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var m in d.Machines)
+                {
+                    <tr>
+                        <td data-sort-value="@m.Hostname">
+                            <a asp-page="/Machine" asp-route-hostname="@m.Hostname" asp-route-range="@Model.Range">@m.Hostname</a>
+                        </td>
+                        <td data-sort-value="@m.ActiveSeconds">@DurationDisplay.Render(m.ActiveSeconds)</td>
+                        <td data-sort-value="@m.DisconnectedSeconds">@DurationDisplay.Render(m.DisconnectedSeconds)</td>
+                        <td data-sort-value="@m.SessionCount">@m.SessionCount</td>
+                        <td data-sort-value="@m.LocalCount">@m.LocalCount</td>
+                        <td data-sort-value="@m.RdpCount">@m.RdpCount</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    <div class="hd-panel mb-3">
+        <h2 class="hd-section-title mb-2">Apps</h2>
+        <p class="text-secondary small mb-2">Most → least used by open time (tracked process runs)</p>
+        @if (d.Apps.Count == 0)
+        {
+            <p class="text-secondary mb-0">No tracked app runs for this user in the selected period.</p>
+        }
+        else
+        {
+            <table class="hd-table hd-sortable" id="user-apps">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Application</th>
+                        <th data-sort="num" data-default-desc>Time open</th>
+                        <th data-sort="num">Runs</th>
+                        <th data-sort="num">Machines</th>
+                        <th data-sort="date">Last used</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var a in d.Apps)
+                {
+                    <tr>
+                        <td data-sort-value="@a.DisplayName">
+                            <a asp-page="/Application" asp-route-process="@a.ProcessName" asp-route-range="@Model.Range">@a.DisplayName</a>
+                            @if (!string.Equals(a.DisplayName, a.ProcessName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                <div class="text-secondary small">@a.ProcessName</div>
+                            }
+                        </td>
+                        <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
+                        <td data-sort-value="@a.RunCount">@a.RunCount</td>
+                        <td data-sort-value="@a.UniqueMachines">@a.UniqueMachines</td>
+                        <td data-sort-value="@a.LastUsedUtc.ToUnixTimeSeconds()">@a.LastUsedUtc.ToLocalTime().ToString("g")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
+}
+
+@section Scripts {
+<script>
+  if (window.HeimdallTable) {
+    HeimdallTable.initSort(document);
+  }
+</script>
+}

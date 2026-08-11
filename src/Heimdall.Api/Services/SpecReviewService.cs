@@ -258,8 +258,9 @@ public sealed class SpecReviewService(
                 .ToList();
         }
 
-        var stale = await db.SpecStaleAlerts.AsNoTracking()
-            .Where(a => a.ResolvedUtc == null)
+        var stale = (await db.SpecStaleAlerts.AsNoTracking()
+                .Where(a => a.ResolvedUtc == null)
+                .ToListAsync(ct))
             .OrderBy(a => a.FirstFlaggedUtc)
             .Select(a => new StaleAlertRow(
                 a.Id,
@@ -269,7 +270,7 @@ public sealed class SpecReviewService(
                 a.DisplayName,
                 a.LastSeenUtc,
                 a.FirstFlaggedUtc))
-            .ToListAsync(ct);
+            .ToList();
 
         return (pendingRows, untamed, stale);
     }

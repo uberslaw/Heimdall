@@ -292,11 +292,13 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
         if (machine is null)
             return [];
 
-        var rows = await db.TuflowRunRecords.AsNoTracking()
-            .Where(r => r.MachineId == machine.Id)
+        // SQLite cannot ORDER BY DateTimeOffset — sort/take in memory.
+        var rows = (await db.TuflowRunRecords.AsNoTracking()
+                .Where(r => r.MachineId == machine.Id)
+                .ToListAsync(ct))
             .OrderByDescending(r => r.RequestedUtc)
             .Take(Math.Clamp(take, 1, 200))
-            .ToListAsync(ct);
+            .ToList();
 
         return rows.Select(r => new TuflowRunHistoryEntry(
             r.RunId, r.RunName, r.TcfPath, r.RequestedUtc, r.RequestedBy, r.StartedUtc, r.EndedUtc, r.State,

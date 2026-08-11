@@ -19,6 +19,12 @@ public static class VersionCompare
     public const int MinUpdateClientVersion = 3;
 
     /// <summary>
+    /// First simple version that understands on-demand disk usage scans via config / poll.
+    /// Older agents ignore <c>PendingDiskUsageScan</c> and leave the API request Queued forever.
+    /// </summary>
+    public const int MinDiskUsageScanVersion = 6;
+
+    /// <summary>
     /// True when the agent can process silent UpdateClient (simple version ≥ <see cref="MinUpdateClientVersion"/>).
     /// Null/empty AgentVersion is treated as incapable (unknown → bootstrap).
     /// </summary>
@@ -26,6 +32,13 @@ public static class VersionCompare
     {
         var simple = TryGetSimpleVersion(agentVersion);
         return simple is int n && n >= MinUpdateClientVersion;
+    }
+
+    /// <summary>True when the agent can pick up and run disk usage scans.</summary>
+    public static bool SupportsDiskUsageScan(string? agentVersion)
+    {
+        var simple = TryGetSimpleVersion(agentVersion);
+        return simple is int n && n >= MinDiskUsageScanVersion;
     }
 
     public static string GetCoreVersion(string? version)

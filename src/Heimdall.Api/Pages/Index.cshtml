@@ -10,18 +10,42 @@
     async Task RenderColumnHeaders()
     {
         <tr>
-            <th class="hd-col-name" data-sort="text" scope="col" title="Friendly name (or hostname) with last known IP underneath. Hover the name for hostname and serial.">Name</th>
-            <th class="hd-col-status" data-sort="text" scope="col" title="From the latest agent check-in (5‑minute window): Active = online with a non-disconnected session; Idle = online, no active session; Off = no recent check-in.">Status</th>
-            <th class="hd-col-user" data-sort="text" scope="col" title="Username from the preferred session: Active first, then most recently observed, then highest ActiveSeconds.">Last user</th>
-            <th class="hd-col-pct" data-sort="num" scope="col" title="Share of the selected period spent in non-disconnected sessions (session overlap with the window). Click a value for people, dates, and overlapping tracked processes. Example: 40% over 7d ≈ ~67h of active session time.">Active</th>
-            <th class="hd-col-pct" data-sort="num" scope="col" title="Best-effort: ~30s fleet sample intervals where a disconnected session overlaps and CPU or GPU &gt; 5%. Click for people, dates, and top processes on those ticks. Shows — until samples exist.">Passive</th>
-            <th class="hd-col-pct" data-sort="num" scope="col" title="Remainder of the calendar window after Active and Passive (Passive counted as 0% if unknown). Free% ≈ 100 − Active% − Passive%. Click for context (not process-attributed).">Free</th>
-            <th class="hd-col-hw" data-sort="num" scope="col" title="GPU-hours from always-on ~30s fleet samples: Σ (GPU% ÷ 100 × Δt hours). Click for processes, people, and days. Shows — until samples arrive.">GPU h</th>
-            <th class="hd-col-hw" data-sort="num" scope="col" title="CPU-hours from always-on ~30s fleet samples: Σ (CPU% ÷ 100 × Δt hours). Click for processes, people, and days. Shows — until samples arrive.">CPU h</th>
-            <th class="hd-col-io" data-sort="num" scope="col" title="Disk read volume integrated from sample rates (MBps × Δt). Click for top read processes, people, and days. Shows — until samples arrive.">Dr</th>
-            <th class="hd-col-io" data-sort="num" scope="col" title="Disk write volume integrated from sample rates (MBps × Δt). Click for top write processes, people, and days. Shows — until samples arrive.">Dw</th>
-            <th class="hd-col-io" data-sort="num" scope="col" title="Network transmit (outbound) volume from sample rates. Click for people and days (no per-process network counters). Shows — until samples arrive.">NTx</th>
-            <th class="hd-col-io" data-sort="num" scope="col" title="Network receive (inbound) volume from sample rates. Click for people and days (no per-process network counters). Shows — until samples arrive.">NRx</th>
+            <th class="hd-col-name hd-th-tip" data-sort="text" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Friendly name (or hostname) with last known IP underneath. Hover a row name for hostname and serial. Click to sort.">Name</th>
+            <th class="hd-col-status hd-th-tip" data-sort="text" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="From the latest agent check-in (5-minute window): Active = online with a non-disconnected session; Idle = online, no active session; Off = no recent check-in. Click to sort.">Status</th>
+            <th class="hd-col-user hd-th-tip" data-sort="text" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Username from the preferred session: Active first, then most recently observed, then highest ActiveSeconds. Click to sort.">Last user</th>
+            <th class="hd-col-pct hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Share of the selected Period spent in non-disconnected sessions (session time overlapping the window ÷ window length). Click a cell for people, dates, and overlapping tracked processes. Example: 40% over 7d ≈ ~67h of active session time.">Active</th>
+            <th class="hd-col-pct hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Best-effort: ~30s fleet sample intervals where a disconnected session overlaps and CPU or GPU &gt; 5%. Click a cell for people, dates, and top processes on those ticks. Shows — until samples exist.">Passive</th>
+            <th class="hd-col-pct hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Remainder of the Period after Active and Passive (Passive counted as 0% if unknown). Free% ≈ 100 − Active% − Passive%. Click a cell for context (not process-attributed).">Free</th>
+            <th class="hd-col-hw hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="GPU-hours from always-on ~30s fleet samples: Σ (GPU% ÷ 100 × Δt hours). GPU% can exceed 100 when Windows GPU Engine counters are summed across engines (3D, Copy, Compute, …). Click a cell for processes, people, and days. Shows — until samples arrive.">GPU h</th>
+            <th class="hd-col-hw hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="CPU-hours from always-on ~30s fleet samples: Σ (CPU% ÷ 100 × Δt hours). Click a cell for processes, people, and days. Shows — until samples arrive.">CPU h</th>
+            <th class="hd-col-io hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Disk read volume integrated from sample rates (MBps × Δt). Click a cell for top read processes, people, and days. Shows — until samples arrive.">Dr</th>
+            <th class="hd-col-io hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Disk write volume integrated from sample rates (MBps × Δt). Click a cell for top write processes, people, and days. Shows — until samples arrive.">Dw</th>
+            <th class="hd-col-io hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Network transmit (outbound) volume from sample rates (MBps × Δt). Click a cell for people and days (no per-process network counters). Shows — until samples arrive.">NTx</th>
+            <th class="hd-col-io hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Network receive (inbound) volume from sample rates (MBps × Δt). Click a cell for people and days (no per-process network counters). Shows — until samples arrive.">NRx</th>
         </tr>
     }
 
@@ -45,7 +69,19 @@
             <td class="hd-col-status" data-sort-value="@m.Status">
                 <span class="hd-status-text hd-status-@m.Status.ToString().ToLowerInvariant()" title="@m.Status">@m.Status</span>
             </td>
-            <td class="hd-col-user" data-sort-value="@UsernameDisplay.Format(m.LastUser)" title="@UsernameDisplay.Format(m.LastUser)">@UsernameDisplay.FormatOrDash(m.LastUser)</td>
+            <td class="hd-col-user" data-sort-value="@UsernameDisplay.Format(m.LastUser)" title="@UsernameDisplay.Format(m.LastUser)">
+                @{
+                    var lastUser = UsernameDisplay.Format(m.LastUser);
+                }
+                @if (!string.IsNullOrWhiteSpace(lastUser))
+                {
+                    <a asp-page="/User" asp-route-username="@lastUser" asp-route-range="@(u.PeriodKey is "today" or "24h" ? "1d" : u.PeriodKey is "5d" or "7d" ? "7d" : u.PeriodKey is "30d" ? "4w" : "year")">@lastUser</a>
+                }
+                else
+                {
+                    <span>—</span>
+                }
+            </td>
             <td class="hd-col-pct" data-sort-value="@u.ActivePct">
                 <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="active" title="Open Active breakdown">@MachineUtilisationService.FormatPct(u.ActivePct)</a>
             </td>
@@ -356,5 +392,16 @@ else
   }
 
   applyView('by-group');
+
+  // Calculation tips on column headers (Bootstrap tooltip; title= is the fallback).
+  if (window.bootstrap?.Tooltip) {
+    document.querySelectorAll('.hd-machines-table thead th[data-bs-toggle="tooltip"]').forEach((el) => {
+      bootstrap.Tooltip.getOrCreateInstance(el, {
+        container: 'body',
+        trigger: 'hover focus',
+        delay: { show: 150, hide: 50 }
+      });
+    });
+  }
 })();
 </script>

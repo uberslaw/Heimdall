@@ -6,7 +6,6 @@
     ViewData["Title"] = string.IsNullOrWhiteSpace(Model.Hostname) ? "Machine" : Model.Hostname;
     var d = Model.Detail;
     var shortLabel = Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d";
-    var appTotal = d?.Apps.Sum(a => a.TotalOpenSeconds) ?? 0;
     var appLists = Model.AppListsView;
     var excluded = Model.MachineExcludedProcesses.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -221,7 +220,7 @@ else if (d is not null)
                     @foreach (var row in ps.TopUsers)
                     {
                         <li>
-                            <span class="hd-stat-rank-name" title="@row.Label">@TruncateName(row.Label, 18)</span>
+                            <a class="hd-stat-rank-name" asp-page="/User" asp-route-username="@row.Label" asp-route-range="@Model.SessionsRangeKey" title="@row.Label">@TruncateName(row.Label, 18)</a>
                             <span class="hd-stat-rank-detail">@row.Detail</span>
                         </li>
                     }
@@ -324,7 +323,12 @@ else if (d is not null)
         <h3 class="h6 mb-2">Disk usage scan</h3>
         <p class="text-secondary small mb-2">
             On-demand agent scan: largest folders under the drive root, plus files at or above the size threshold.
-            Requires an updated agent. Pickup is usually within ~20s; scan itself is throttled (≤ ~3 minutes).
+            Not gated on CPU/GPU idle — the agent picks this up on config refresh (or ~20s poll on current agents), then runs a throttled scan (≤ ~3 minutes).
+            Requires agent v@(Heimdall.Api.Services.VersionCompare.MinDiskUsageScanVersion)+.
+            @if (!Model.AgentSupportsDiskUsageScan)
+            {
+                <span class="text-warning">This machine reports agent v@(Model.ReportedAgentVersion ?? "unknown") — update it before requesting a scan.</span>
+            }
             Leaving this page does not cancel a queued or running scan.
         </p>
         <div id="disk-usage-status"
@@ -365,7 +369,7 @@ else if (d is not null)
                     }
                     else if (Model.PendingDiskUsageScan)
                     {
-                        <span class="text-warning">Queued</span><text> - waiting for agent (usually within about 20s)</text>
+                        <span class="text-warning">Queued</span><text> — waiting for agent pickup (not waiting for low CPU)</text>
                     }
                 </p>
             </div>
@@ -401,11 +405,20 @@ else if (d is not null)
                        value="@Model.DiskScanMinFileMb" min="10" max="10240" step="10" style="width:7rem" />
             </div>
             <div class="col-auto">
-                <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm" @(Model.PendingDiskUsageScan ? "disabled" : null)>
+                <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm"
+                        @(Model.PendingDiskUsageScan || !Model.AgentSupportsDiskUsageScan ? "disabled" : null)>
                     Scan disk usage
                 </button>
             </div>
         </form>
+        @if (Model.PendingDiskUsageScan)
+        {
+            <form method="post" asp-page-handler="CancelDiskUsageScan" class="mb-3">
+                <input type="hidden" name="Hostname" value="@Model.Hostname" />
+                <input type="hidden" name="Range" value="@Model.Range" />
+                <button type="submit" class="btn btn-link btn-sm text-secondary p-0">Cancel queued scan</button>
+            </form>
+        }
 
         @if (Model.DiskUsageScan is { } scan)
         {
@@ -712,122 +725,123 @@ else if (d is not null)
                 <button type="submit" class="btn btn-hd w-100">Apply</button>
             </div>
         </div>
-
-        @if (d.AppOptions.Count > 0)
-        {
-            <div class="mt-3">
-                <label class="form-label">Filter applications table</label>
-                <div class="d-flex flex-wrap gap-2">
-                    @foreach (var opt in d.AppOptions)
-                    {
-                        var checkedAttr = Model.Apps.Count == 0 || Model.Apps.Contains(opt.ProcessName, StringComparer.OrdinalIgnoreCase);
-                        <label class="badge-pill @(opt.IsTracked ? "badge-local" : "badge-ended")" style="cursor:pointer;"
-                               title="@(opt.IsTracked ? "On this machine's track list" : "Not on track list")@(opt.HasData ? "" : " · no runs in selected time range")">
-                            <input type="checkbox" name="apps" value="@opt.ProcessName" class="form-check-input me-1" @(checkedAttr ? "checked" : null) />
-                            @opt.DisplayName
-                            @if (!opt.HasData)
-                            {
-                                <span class="text-secondary" title="No process runs in the selected time range">*</span>
-                            }
-                        </label>
-                    }
-                </div>
-                <p class="text-secondary small mb-0 mt-2">
-                    Checkboxes only control which rows appear in the Applications table below — they do not change agent tracking.
-                    List = apps on this machine's track list (from App lists / config), plus any process that had runs in the time range.
-                    Blue = currently tracked · grey = not tracked · * = no runs recorded in this time range (so nothing to show in the table).
-                    To change what the agent tracks, use <strong>App lists</strong> above (or Customize tracked apps).
-                </p>
-            </div>
-        }
     </form>
 
     <div class="hd-panel">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
             <h2 class="hd-section-title mb-0">Applications</h2>
-            @if (d.Apps.Count > 0)
-            {
-                <button type="button" class="btn btn-ghost btn-sm" id="machine-apps-expand-all" aria-pressed="false">Show full details</button>
-            }
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                @if (Model.AppTableRows.Count > 0)
+                {
+                    <button type="button" class="btn btn-ghost btn-sm" id="machine-apps-select-all" title="Check all rows">Select all</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="machine-apps-deselect-all" title="Uncheck all rows">Deselect all</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="machine-apps-expand-all" aria-pressed="false">Show full details</button>
+                }
+            </div>
         </div>
-        @if (d.Apps.Count == 0)
+        <p class="text-secondary small mb-2">
+            Default shows tracked apps. Use checkboxes to customize the view (Shift+click for a range, Ctrl+click to toggle without clearing).
+            Lists column shows which app list(s) include each process. Changing checkboxes does not change agent tracking.
+        </p>
+        @if (Model.AppTableRows.Count == 0)
         {
             <p class="text-secondary mb-0">
-                No process runs for the selected apps in this period.
-                Time-open stats come from <code>ProcessRun</code> durations (allowlisted apps only).
+                No tracked apps on this machine yet. Assign an app list above, or wait for process runs in this period.
             </p>
         }
         else
         {
             <div class="hd-machine-apps" id="machine-apps-grid">
                 <div class="hd-machine-apps-head">
-                    <div class="hd-machine-apps-th" data-sort="text" data-default-desc>Application</div>
+                    <div class="hd-machine-apps-th hd-machine-apps-th--check" title="Include in view">
+                        <input type="checkbox" id="machine-apps-check-all" class="form-check-input" title="Select / deselect all" aria-label="Select all apps" />
+                    </div>
+                    <div class="hd-machine-apps-th" data-sort="text">Application</div>
+                    <div class="hd-machine-apps-th" data-sort="text">Lists</div>
                     <div class="hd-machine-apps-th" data-sort="num" data-default-desc>Time open</div>
                     <div class="hd-machine-apps-th" data-sort="num">Avg # open</div>
                     <div class="hd-machine-apps-th" data-sort="num">Runs</div>
                     <div class="hd-machine-apps-th" data-sort="num">Users</div>
                     <div class="hd-machine-apps-th" data-sort="num">Share</div>
-                    <div class="hd-machine-apps-th" data-sort="num">Peak CPU</div>
+                    <div class="hd-machine-apps-th" data-sort="num" title="Peak GPU % from ProcessRun samples in this period (replaces Peak CPU).">Peak GPU</div>
                 </div>
-                @foreach (var a in d.Apps)
+                @foreach (var a in Model.AppTableRows)
                 {
-                    var share = appTotal <= 0 ? 0 : a.TotalOpenSeconds * 100.0 / appTotal;
-                    var display = d.AppOptions.FirstOrDefault(o =>
-                        string.Equals(o.ProcessName, a.ProcessName, StringComparison.OrdinalIgnoreCase))?.DisplayName
-                        ?? a.ProcessName;
-                    d.ProcessPaths.TryGetValue(a.ProcessName, out var exePath);
-                    var label = display;
+                    var label = a.DisplayName;
                     var truncated = label.Length > 20;
                     var shortLabel2 = TruncateName(label);
-                    <div class="hd-machine-apps-row">
+                    var listsLabel = a.ListNames.Count == 0 ? "—" : string.Join(", ", a.ListNames);
+                    var listsSort = a.ListNames.Count == 0 ? "" : string.Join("|", a.ListNames);
+                    <div class="hd-machine-apps-row@(a.IsTracked ? "" : " d-none")"
+                         data-process="@a.ProcessName"
+                         data-tracked="@(a.IsTracked ? "1" : "0")">
+                        <div class="hd-machine-apps-cell hd-machine-apps-cell--check">
+                            <input type="checkbox"
+                                   class="form-check-input machine-apps-row-check"
+                                   value="@a.ProcessName"
+                                   @(a.IsTracked ? "checked" : null)
+                                   aria-label="Show @label" />
+                        </div>
                         <div class="hd-machine-apps-cell hd-machine-apps-cell--app"
                              data-sort-value="@label"
                              data-full-name="@label"
                              data-process="@a.ProcessName"
-                             data-path="@(exePath ?? "")"
+                             data-path="@(a.ExecutablePath ?? "")"
                              data-truncated="@(truncated ? "true" : "false")">
                             <a asp-page="/Application" asp-route-process="@a.ProcessName" asp-route-range="@Model.Range" asp-route-hostname="@d.Hostname" class="hd-machine-apps-link" title="@(truncated ? label : null)">
                                 <strong class="hd-machine-apps-name">@shortLabel2</strong>
                             </a>
-                            @if (!string.Equals(display, a.ProcessName, StringComparison.OrdinalIgnoreCase))
+                            @if (!string.Equals(a.DisplayName, a.ProcessName, StringComparison.OrdinalIgnoreCase))
                             {
                                 <span class="hd-machine-apps-meta text-secondary">@TruncateName(a.ProcessName)</span>
                             }
-                            @if (truncated || !string.IsNullOrWhiteSpace(exePath))
+                            @if (!a.IsTracked)
+                            {
+                                <span class="hd-machine-apps-meta text-secondary" title="Not on this machine's track list">not tracked</span>
+                            }
+                            else if (!a.HasData)
+                            {
+                                <span class="hd-machine-apps-meta text-secondary" title="No process runs in the selected time range">no runs</span>
+                            }
+                            @if (truncated || !string.IsNullOrWhiteSpace(a.ExecutablePath))
                             {
                                 <div class="hd-machine-apps-detail" hidden>
                                     @if (truncated)
                                     {
                                         <div class="hd-machine-apps-fullname">@label</div>
                                     }
-                                    @if (!string.IsNullOrWhiteSpace(exePath))
+                                    @if (!string.IsNullOrWhiteSpace(a.ExecutablePath))
                                     {
-                                        <div class="hd-machine-apps-path text-secondary">@exePath</div>
+                                        <div class="hd-machine-apps-path text-secondary">@a.ExecutablePath</div>
                                     }
                                 </div>
                             }
                         </div>
-                        <div class="hd-machine-apps-cell" data-sort-value="@a.TotalOpenSeconds">
-                            <span class="hd-machine-apps-val">@DurationDisplay.Render(a.TotalOpenSeconds)</span>
+                        <div class="hd-machine-apps-cell" data-sort-value="@listsSort" title="@listsLabel">
+                            <span class="hd-machine-apps-val hd-machine-apps-lists">@TruncateName(listsLabel, 28)</span>
                         </div>
-                        <div class="hd-machine-apps-cell" data-sort-value="@a.AvgConcurrentProcesses.ToString("0.###")">
-                            <span class="hd-machine-apps-val">@ConcurrentDisplay.Render(a.AvgConcurrentProcesses)</span>
+                        <div class="hd-machine-apps-cell" data-sort-value="@(a.TotalOpenSeconds ?? -1)">
+                            <span class="hd-machine-apps-val">@(a.TotalOpenSeconds is double open ? DurationDisplay.Render(open) : "—")</span>
                         </div>
-                        <div class="hd-machine-apps-cell" data-sort-value="@a.RunCount">
-                            <span class="hd-machine-apps-val">@a.RunCount</span>
+                        <div class="hd-machine-apps-cell" data-sort-value="@(a.AvgConcurrentProcesses?.ToString("0.###") ?? "-1")">
+                            <span class="hd-machine-apps-val">@(a.AvgConcurrentProcesses is double avg ? ConcurrentDisplay.Render(avg) : "—")</span>
                         </div>
-                        <div class="hd-machine-apps-cell" data-sort-value="@a.UniqueUsers">
-                            <span class="hd-machine-apps-val">@a.UniqueUsers</span>
+                        <div class="hd-machine-apps-cell" data-sort-value="@(a.RunCount ?? -1)">
+                            <span class="hd-machine-apps-val">@(a.RunCount?.ToString() ?? "—")</span>
                         </div>
-                        <div class="hd-machine-apps-cell" data-sort-value="@share">
-                            <span class="hd-machine-apps-val">@share.ToString("0")%</span>
+                        <div class="hd-machine-apps-cell" data-sort-value="@(a.UniqueUsers ?? -1)">
+                            <span class="hd-machine-apps-val">@(a.UniqueUsers?.ToString() ?? "—")</span>
                         </div>
-                        <div class="hd-machine-apps-cell" data-sort-value="@(a.PeakCpuPercent ?? -1)">
-                            <span class="hd-machine-apps-val">@StatsModel.FormatPct(a.PeakCpuPercent)</span>
+                        <div class="hd-machine-apps-cell" data-sort-value="@a.SharePct">
+                            <span class="hd-machine-apps-val">@(a.TotalOpenSeconds is null ? "—" : a.SharePct.ToString("0") + "%")</span>
+                        </div>
+                        <div class="hd-machine-apps-cell" data-sort-value="@(a.PeakGpuPercent ?? -1)">
+                            <span class="hd-machine-apps-val">@StatsModel.FormatPct(a.PeakGpuPercent)</span>
                         </div>
                     </div>
                 }
             </div>
+            <p class="text-secondary small mb-0 mt-2" id="machine-apps-filter-status"></p>
         }
     </div>
 }
@@ -838,6 +852,42 @@ else if (d is not null)
   const grid = document.getElementById('machine-apps-grid');
   if (grid) {
     const expandBtn = document.getElementById('machine-apps-expand-all');
+    const selectAllBtn = document.getElementById('machine-apps-select-all');
+    const deselectAllBtn = document.getElementById('machine-apps-deselect-all');
+    const headerCheck = document.getElementById('machine-apps-check-all');
+    const statusLine = document.getElementById('machine-apps-filter-status');
+    const head = grid.querySelector('.hd-machine-apps-head');
+    let lastCheckIndex = -1;
+
+    const rowChecks = () => [...grid.querySelectorAll('.machine-apps-row-check')];
+    const rows = () => [...grid.querySelectorAll('.hd-machine-apps-row')];
+
+    const syncVisibility = () => {
+      let shown = 0;
+      rows().forEach((row) => {
+        const cb = row.querySelector('.machine-apps-row-check');
+        const on = !!(cb && cb.checked);
+        row.classList.toggle('d-none', !on);
+        if (on) shown++;
+      });
+      const total = rows().length;
+      if (statusLine) {
+        statusLine.textContent = shown === total
+          ? `Showing all ${total} apps`
+          : `Showing ${shown} of ${total} apps`;
+      }
+      if (headerCheck) {
+        headerCheck.checked = shown === total && total > 0;
+        headerCheck.indeterminate = shown > 0 && shown < total;
+      }
+    };
+
+    const setAll = (on) => {
+      rowChecks().forEach((cb) => { cb.checked = on; });
+      lastCheckIndex = -1;
+      syncVisibility();
+    };
+
     const setExpanded = (on) => {
       grid.classList.toggle('hd-machine-apps--expanded', on);
       if (expandBtn) {
@@ -848,6 +898,28 @@ else if (d is not null)
     if (expandBtn) {
       expandBtn.addEventListener('click', () => setExpanded(!grid.classList.contains('hd-machine-apps--expanded')));
     }
+    if (selectAllBtn) selectAllBtn.addEventListener('click', () => setAll(true));
+    if (deselectAllBtn) deselectAllBtn.addEventListener('click', () => setAll(false));
+    if (headerCheck) {
+      headerCheck.addEventListener('change', () => setAll(headerCheck.checked));
+    }
+
+    rowChecks().forEach((cb, idx) => {
+      cb.addEventListener('click', (e) => {
+        const checks = rowChecks();
+        const i = checks.indexOf(cb);
+        if (e.shiftKey && lastCheckIndex >= 0 && lastCheckIndex !== i) {
+          const from = Math.min(lastCheckIndex, i);
+          const to = Math.max(lastCheckIndex, i);
+          const state = cb.checked;
+          for (let k = from; k <= to; k++) checks[k].checked = state;
+        } else if (e.ctrlKey || e.metaKey) {
+          // Native toggle already applied; leave other boxes alone.
+        }
+        lastCheckIndex = i >= 0 ? i : idx;
+        syncVisibility();
+      });
+    });
 
     grid.querySelectorAll('.hd-machine-apps-cell--app[data-truncated="true"]').forEach(cell => {
       cell.addEventListener('click', (e) => {
@@ -860,17 +932,18 @@ else if (d is not null)
     });
 
     const headers = [...grid.querySelectorAll('.hd-machine-apps-th[data-sort]')];
-    headers.forEach((th, colIdx) => {
+    headers.forEach((th) => {
       th.style.cursor = 'pointer';
       th.addEventListener('click', () => {
         const type = th.dataset.sort;
-        const rows = [...grid.querySelectorAll('.hd-machine-apps-row')];
-        // First click / empty dir → descending; then toggle asc ↔ desc.
+        const colIdx = head ? [...head.children].indexOf(th) : -1;
+        if (colIdx < 0) return;
+        const list = rows();
         const asc = th.dataset.dir === 'desc';
         headers.forEach(h => { h.dataset.dir = ''; h.classList.remove('sorted-asc', 'sorted-desc'); });
         th.dataset.dir = asc ? 'asc' : 'desc';
         th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
-        rows.sort((ra, rb) => {
+        list.sort((ra, rb) => {
           const ca = ra.children[colIdx], cb = rb.children[colIdx];
           let va = ca?.dataset.sortValue ?? ca?.textContent ?? '';
           let vb = cb?.dataset.sortValue ?? cb?.textContent ?? '';
@@ -883,10 +956,12 @@ else if (d is not null)
           va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
           return asc ? va.localeCompare(vb) : vb.localeCompare(va);
         });
-        rows.forEach(r => grid.appendChild(r));
+        list.forEach(r => grid.appendChild(r));
       });
       if (th.dataset.defaultDesc !== undefined) th.click();
     });
+
+    syncVisibility();
   }
 
   const statusEl = document.getElementById('disk-usage-status');

@@ -464,6 +464,222 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
             ToUtc: toUtc);
     }
 
+    /// <summary>
+    /// Estate-wide user detail: machines by active time, top apps, session averages, DoW + hour-of-day patterns.
+    /// </summary>
+    public async Task<UserDetailSnapshot?> QueryUserDetailAsync(
+        string username,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(username))
+            return null;
+
+        var raw = username.Trim();
+        var matchKeys = UserMatchKeys(raw, null).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (matchKeys.Count == 0)
+            return null;
+
+        var now = DateTimeOffset.UtcNow;
+        var machines = await db.Machines.AsNoTracking().ToListAsync(ct);
+        var hostnameById = machines.ToDictionary(m => m.Id, m => m.Hostname);
+        var displayNames = await BuildDisplayNameMapAsync(ct);
+
+        var sessions = FilterSessionsInWindow(
+                await db.Sessions.AsNoTracking().ToListAsync(ct),
+                fromUtc,
+                toUtc)
+            .Where(s => MatchesUserKeys(s.Username, s.Domain, matchKeys))
+            .ToList();
+
+        var runs = FilterRunsInWindow(
+                await db.ProcessRuns.AsNoTracking().ToListAsync(ct),
+                fromUtc,
+                toUtc)
+            .Where(r => MatchesUserKeys(r.Username, null, matchKeys))
+            .ToList();
+
+        if (sessions.Count == 0 && runs.Count == 0)
+        {
+            var displayEmpty = Heimdall.Shared.UsernameDisplay.Format(raw);
+            return new UserDetailSnapshot(
+                Username: raw,
+                DisplayName: string.IsNullOrWhiteSpace(displayEmpty) ? raw : displayEmpty,
+                TeamName: await ResolveTeamNameAsync(raw, ct),
+                SessionCount: 0,
+                ActiveSeconds: 0,
+                DisconnectedSeconds: 0,
+                AvgSessionActiveSeconds: 0,
+                AvgSessionInactiveSeconds: 0,
+                DistinctDays: 0,
+                Machines: [],
+                Apps: [],
+                DayOfWeek: Enumerable.Range(0, 7)
+                    .Select(i => new UserTimeBucket(((DayOfWeek)i).ToString(), 0, 0))
+                    .ToList(),
+                HourOfDay: Enumerable.Range(0, 24)
+                    .Select(h => new UserTimeBucket($"{h:00}:00", 0, 0))
+                    .ToList(),
+                FromUtc: fromUtc,
+                ToUtc: toUtc);
+        }
+
+        long totalActive = 0, totalDisc = 0;
+        var byMachine = new Dictionary<int, (long Active, long Disc, int Sessions, int Local, int Rdp)>();
+        var byDow = new double[7];
+        var byHour = new double[24];
+        var dowSessions = new int[7];
+
+        foreach (var s in sessions)
+        {
+            var (active, disc) = SessionMetricsInWindow(s, fromUtc, toUtc, now);
+            totalActive += active;
+            totalDisc += disc;
+
+            var slot = byMachine.GetValueOrDefault(s.MachineId);
+            slot.Active += active;
+            slot.Disc += disc;
+            slot.Sessions += 1;
+            if (s.SessionType == SessionType.Local) slot.Local += 1;
+            else slot.Rdp += 1;
+            byMachine[s.MachineId] = slot;
+
+            var start = s.StartedAtUtc < fromUtc ? fromUtc : s.StartedAtUtc;
+            var end = s.EndedAtUtc ?? now;
+            if (end > toUtc) end = toUtc;
+            if (end > start && active > 0)
+            {
+                var localStart = start.ToLocalTime();
+                byDow[(int)localStart.DayOfWeek] += active;
+                dowSessions[(int)localStart.DayOfWeek] += 1;
+                AddActiveToLocalHours(byHour, start, end, active);
+            }
+        }
+
+        var sessionCount = sessions.Count;
+        var avgActive = sessionCount == 0 ? 0 : (double)totalActive / sessionCount;
+        var avgInactive = sessionCount == 0 ? 0 : (double)totalDisc / sessionCount;
+        var distinctDays = sessions
+            .Select(s => s.StartedAtUtc.ToLocalTime().Date)
+            .Distinct()
+            .Count();
+
+        var machineRows = byMachine
+            .Select(kv =>
+            {
+                var host = hostnameById.GetValueOrDefault(kv.Key) ?? $"#{kv.Key}";
+                return new UserMachineUsageRow(
+                    Hostname: host,
+                    SessionCount: kv.Value.Sessions,
+                    ActiveSeconds: kv.Value.Active,
+                    DisconnectedSeconds: kv.Value.Disc,
+                    LocalCount: kv.Value.Local,
+                    RdpCount: kv.Value.Rdp);
+            })
+            .OrderByDescending(m => m.ActiveSeconds)
+            .ThenByDescending(m => m.SessionCount)
+            .ThenBy(m => m.Hostname, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var appRows = runs
+            .GroupBy(r => r.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var group = g.ToList();
+                var openSec = ProcessRunMetrics.UnionDurationSeconds(group, fromUtc, toUtc);
+                return new UserAppUsageRow(
+                    ProcessName: g.Key,
+                    DisplayName: displayNames.GetValueOrDefault(g.Key, g.Key),
+                    RunCount: group.Count,
+                    TotalOpenSeconds: openSec,
+                    UniqueMachines: group.Select(r => r.MachineId).Distinct().Count(),
+                    LastUsedUtc: group.Max(r => r.LastSeenAtUtc));
+            })
+            .OrderByDescending(a => a.TotalOpenSeconds)
+            .ThenBy(a => a.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var dowLabels = new[] { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
+        // Present Mon→Sun for readability.
+        var dowOrder = new[] { 1, 2, 3, 4, 5, 6, 0 };
+        var dayRows = dowOrder
+            .Select(i => new UserTimeBucket(dowLabels[i], byDow[i], dowSessions[i]))
+            .ToList();
+        var hourRows = Enumerable.Range(0, 24)
+            .Select(h => new UserTimeBucket($"{h:00}:00", byHour[h], 0))
+            .ToList();
+
+        var display = Heimdall.Shared.UsernameDisplay.Format(raw);
+        if (string.IsNullOrWhiteSpace(display))
+            display = raw;
+
+        // Prefer a domain\user key seen in sessions for stable title when route was bare.
+        var canonical = sessions
+            .Select(s => NormalizeUser(s.Username, s.Domain))
+            .FirstOrDefault(u => !string.IsNullOrWhiteSpace(u) && !string.Equals(u, "unknown", StringComparison.OrdinalIgnoreCase))
+            ?? raw;
+
+        return new UserDetailSnapshot(
+            Username: canonical,
+            DisplayName: Heimdall.Shared.UsernameDisplay.Format(canonical) is { Length: > 0 } d ? d : display,
+            TeamName: await ResolveTeamNameAsync(canonical, ct),
+            SessionCount: sessionCount,
+            ActiveSeconds: totalActive,
+            DisconnectedSeconds: totalDisc,
+            AvgSessionActiveSeconds: avgActive,
+            AvgSessionInactiveSeconds: avgInactive,
+            DistinctDays: distinctDays,
+            Machines: machineRows,
+            Apps: appRows,
+            DayOfWeek: dayRows,
+            HourOfDay: hourRows,
+            FromUtc: fromUtc,
+            ToUtc: toUtc);
+    }
+
+    private async Task<string?> ResolveTeamNameAsync(string username, CancellationToken ct)
+    {
+        var keys = UserMatchKeys(username, null).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (keys.Count == 0) return null;
+
+        var people = await db.PersonTeams.AsNoTracking()
+            .Include(p => p.Team)
+            .ToListAsync(ct);
+        foreach (var p in people)
+        {
+            if (UserMatchKeys(p.Username, p.Domain).Any(keys.Contains))
+                return p.Team.Name;
+        }
+
+        return null;
+    }
+
+    private static bool MatchesUserKeys(string username, string? domain, HashSet<string> keys) =>
+        UserMatchKeys(username, domain).Any(keys.Contains);
+
+    /// <summary>Distribute active seconds across local-time hours spanned by [start, end).</summary>
+    private static void AddActiveToLocalHours(double[] byHour, DateTimeOffset startUtc, DateTimeOffset endUtc, double activeSeconds)
+    {
+        if (activeSeconds <= 0 || endUtc <= startUtc) return;
+        var start = startUtc.ToLocalTime();
+        var end = endUtc.ToLocalTime();
+        var wall = (end - start).TotalSeconds;
+        if (wall <= 0) return;
+
+        var cursor = start;
+        while (cursor < end)
+        {
+            var hourStart = new DateTimeOffset(cursor.Year, cursor.Month, cursor.Day, cursor.Hour, 0, 0, cursor.Offset);
+            var nextHour = hourStart.AddHours(1);
+            if (nextHour > end) nextHour = end;
+            var sliceWall = (nextHour - cursor).TotalSeconds;
+            if (sliceWall <= 0) break;
+            byHour[cursor.Hour] += activeSeconds * (sliceWall / wall);
+            cursor = nextHour;
+        }
+    }
+
     public async Task<StatsScopeOptions> GetScopeOptionsAsync(CancellationToken ct = default)
     {
         var machines = await db.Machines.AsNoTracking().ToListAsync(ct);
@@ -1113,3 +1329,41 @@ public sealed record SessionDetailRow(
     string? ClientAddress,
     bool HadAppActivityWhileDisconnected,
     IReadOnlyList<string> AppProcesses);
+
+public sealed record UserDetailSnapshot(
+    string Username,
+    string DisplayName,
+    string? TeamName,
+    int SessionCount,
+    long ActiveSeconds,
+    long DisconnectedSeconds,
+    double AvgSessionActiveSeconds,
+    double AvgSessionInactiveSeconds,
+    int DistinctDays,
+    IReadOnlyList<UserMachineUsageRow> Machines,
+    IReadOnlyList<UserAppUsageRow> Apps,
+    IReadOnlyList<UserTimeBucket> DayOfWeek,
+    IReadOnlyList<UserTimeBucket> HourOfDay,
+    DateTimeOffset FromUtc,
+    DateTimeOffset ToUtc);
+
+public sealed record UserMachineUsageRow(
+    string Hostname,
+    int SessionCount,
+    long ActiveSeconds,
+    long DisconnectedSeconds,
+    int LocalCount,
+    int RdpCount);
+
+public sealed record UserAppUsageRow(
+    string ProcessName,
+    string DisplayName,
+    int RunCount,
+    double TotalOpenSeconds,
+    int UniqueMachines,
+    DateTimeOffset LastUsedUtc);
+
+public sealed record UserTimeBucket(
+    string Label,
+    double ActiveSeconds,
+    int SessionCount);
