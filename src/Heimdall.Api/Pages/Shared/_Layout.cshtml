@@ -57,7 +57,28 @@
                 </a>
             </div>
             <nav class="hd-links">
-                <a class="hd-nav-link" asp-page="/Fleet">Fleet</a>
+                @{
+                    var fleetPath = Context.Request.Path.Value ?? "";
+                    var onFleet = fleetPath.Equals("/Fleet", StringComparison.OrdinalIgnoreCase)
+                                  || fleetPath.Equals("/Ops", StringComparison.OrdinalIgnoreCase)
+                                  || fleetPath.Equals("/", StringComparison.OrdinalIgnoreCase);
+                    var fleetTab = Context.Request.Query["tab"].FirstOrDefault() ?? "machines";
+                    fleetTab = FleetModel.NormalizeTab(fleetTab);
+                }
+                <div class="dropdown hd-nav-dropdown">
+                    <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        Fleet
+                    </button>
+                    <div class="dropdown-menu hd-nav-dropdown-menu">
+                        @foreach (var t in FleetModel.Tabs)
+                        {
+                            var isActive = onFleet && t.Key == fleetTab;
+                            <a class="dropdown-item @(isActive ? "active" : null)"
+                               asp-page="/Fleet"
+                               asp-route-tab="@t.Key">@t.Label</a>
+                        }
+                    </div>
+                </div>
                 <div class="dropdown hd-nav-dropdown">
                     <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
                         Applications

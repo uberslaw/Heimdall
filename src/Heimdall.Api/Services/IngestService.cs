@@ -378,6 +378,9 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
             ?? db.Sessions.Local.FirstOrDefault(s => s.ExternalEventId == dto.EventId);
         if (existing is null)
         {
+            var sessionType = CoerceSessionType(
+                dto.SessionType, clientName, dto.ClientAddress,
+                previous: null, dto.ActiveSeconds, dto.DisconnectedSeconds);
             existing = new UserSession
             {
                 ExternalEventId = dto.EventId,
@@ -385,7 +388,7 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
                 SessionId = dto.SessionId,
                 Username = username,
                 Domain = domain,
-                SessionType = CoerceSessionType(dto.SessionType, clientName, dto.ClientAddress),
+                SessionType = sessionType,
                 State = dto.State,
                 StartedAtUtc = dto.StartedAtUtc ?? dto.ObservedAtUtc,
                 EndedAtUtc = dto.EndedAtUtc,
@@ -399,6 +402,7 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
                 InboundRdpActiveSeconds = dto.InboundRdpActiveSeconds,
                 InboundRdpDisconnectedSeconds = dto.InboundRdpDisconnectedSeconds
             };
+            RemapLocalBucketsToInboundRdp(existing);
             db.Sessions.Add(existing);
             return;
         }
@@ -423,27 +427,59 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
             existing.Domain = domain ?? existing.Domain;
         }
 
-        // Agents that still clear SessionType on disconnect keep republishing Local; coerce from fingerprint.
+        // Agents that still clear SessionType on disconnect keep republishing Local; coerce from
+        // fingerprint, prior RDP classify, or orphaned-disconnect pattern (never Active + disc time).
         existing.SessionType = CoerceSessionType(
-            dto.SessionType, existing.ClientName, existing.ClientAddress);
+            dto.SessionType, existing.ClientName, existing.ClientAddress,
+            existing.SessionType, existing.ActiveSeconds, existing.DisconnectedSeconds);
+        RemapLocalBucketsToInboundRdp(existing);
     }
 
     /// <summary>
     /// Agents may report Local after WTS clears client fields on disconnect while ClientName/Address remain.
+    /// Also treats orphaned disconnects (never Active while tracked, empty client) as inbound RDP, and never
+    /// downgrades a prior RDP classify when an older agent republishes Local.
     /// </summary>
-    private static SessionType CoerceSessionType(SessionType reported, string? clientName, string? clientAddress)
+    private static SessionType CoerceSessionType(
+        SessionType reported,
+        string? clientName,
+        string? clientAddress,
+        SessionType? previous = null,
+        long activeSeconds = 0,
+        long disconnectedSeconds = 0)
     {
-        if (reported == SessionType.Rdp)
+        if (reported == SessionType.Rdp || previous == SessionType.Rdp)
             return SessionType.Rdp;
 
         if (!string.IsNullOrWhiteSpace(clientName))
             return SessionType.Rdp;
 
-        if (string.IsNullOrWhiteSpace(clientAddress))
-            return reported;
+        if (!string.IsNullOrWhiteSpace(clientAddress))
+        {
+            var addr = clientAddress.Trim();
+            if (addr is not ("0.0.0.0" or "::" or "::1"))
+                return SessionType.Rdp;
+        }
 
-        var addr = clientAddress.Trim();
-        return addr is "0.0.0.0" or "::" or "::1" ? reported : SessionType.Rdp;
+        // Orphaned disconnect: first seen after WTS wiped protocol/client (rack RDP-to-console).
+        if (activeSeconds == 0 && disconnectedSeconds > 0)
+            return SessionType.Rdp;
+
+        return reported;
+    }
+
+    /// <summary>When SessionType is RDP, fold any Local time buckets into Inbound RDP (legacy/misclass agents).</summary>
+    private static void RemapLocalBucketsToInboundRdp(UserSession session)
+    {
+        if (session.SessionType != SessionType.Rdp)
+            return;
+        if (session.LocalActiveSeconds == 0 && session.LocalDisconnectedSeconds == 0)
+            return;
+
+        session.InboundRdpActiveSeconds += session.LocalActiveSeconds;
+        session.InboundRdpDisconnectedSeconds += session.LocalDisconnectedSeconds;
+        session.LocalActiveSeconds = 0;
+        session.LocalDisconnectedSeconds = 0;
     }
 
     private async Task UpsertProcessRunAsync(Machine machine, ProcessRunDto dto, CancellationToken ct)
@@ -1186,6 +1222,26 @@ public static class SeedData
                      AND ClientAddress NOT IN ('0.0.0.0', '::', '::1'))
               )
             """);
+        // Orphaned disconnects: agent first saw the session after WTS cleared client fields (rack RDP-to-console).
+        // Pattern: Local + empty/loopback client + never Active while tracked + some disconnected time.
+        // Moves Local time buckets into Inbound RDP so Socratize/stats match the corrected type.
+        await TryExec(db, """
+            UPDATE Sessions
+            SET SessionType = 1,
+                InboundRdpActiveSeconds = InboundRdpActiveSeconds + LocalActiveSeconds,
+                InboundRdpDisconnectedSeconds = InboundRdpDisconnectedSeconds + LocalDisconnectedSeconds,
+                LocalActiveSeconds = 0,
+                LocalDisconnectedSeconds = 0
+            WHERE SessionType = 0
+              AND ActiveSeconds = 0
+              AND DisconnectedSeconds > 0
+              AND (ClientName IS NULL OR TRIM(ClientName) = '')
+              AND (
+                    ClientAddress IS NULL
+                 OR TRIM(ClientAddress) = ''
+                 OR ClientAddress IN ('0.0.0.0', '::', '::1')
+              )
+            """);
         await TryExec(db, """
             CREATE TABLE IF NOT EXISTS MetricPolicies (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1611,6 +1667,17 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN TopGpuProcessesJson TEXT NOT NULL DEFAULT '[]'");
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN TopDiskReadProcessesJson TEXT NOT NULL DEFAULT '[]'");
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN TopDiskWriteProcessesJson TEXT NOT NULL DEFAULT '[]'");
+        // GPU Engine perf counter glitches (1e13+%) blow up Today GPU h — null them out.
+        await TryExec(db, """
+            UPDATE FleetMetricSnapshots
+            SET GpuPercent = NULL
+            WHERE GpuPercent IS NOT NULL AND (GpuPercent < 0 OR GpuPercent > 1000)
+            """);
+        await TryExec(db, """
+            UPDATE FleetMetricSnapshots
+            SET ProcessGpuPercent = NULL
+            WHERE ProcessGpuPercent IS NOT NULL AND (ProcessGpuPercent < 0 OR ProcessGpuPercent > 1000)
+            """);
 
         // Machines list redesign — friendly names + team sections
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN FriendlyName TEXT NULL");

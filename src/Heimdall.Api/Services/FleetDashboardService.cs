@@ -163,10 +163,12 @@ public class FleetDashboardService(HeimdallDbContext db)
             return false;
 
         // Prefer process-specific util for Active/Idle; fall back to system gauges for older agents.
+        var gpuPercent = SanitizeGpuPercent(dto.GpuPercent);
+        var processGpuPercent = SanitizeGpuPercent(dto.ProcessGpuPercent);
         var isActive = FleetActiveThresholds.ComputeIsActive(
             dto.TuflowRunning,
             dto.ProcessCpuPercent ?? dto.CpuPercent,
-            dto.ProcessGpuPercent ?? dto.GpuPercent,
+            processGpuPercent ?? gpuPercent,
             dto.ProcessDiskReadMBps ?? dto.DiskReadMBps,
             dto.ProcessDiskWriteMBps ?? dto.DiskWriteMBps);
 
@@ -177,7 +179,7 @@ public class FleetDashboardService(HeimdallDbContext db)
             Username = string.IsNullOrWhiteSpace(dto.Username) ? null : dto.Username.Trim(),
             TuflowRunning = dto.TuflowRunning,
             CpuPercent = dto.CpuPercent,
-            GpuPercent = dto.GpuPercent,
+            GpuPercent = gpuPercent,
             GpuMemoryUsedMb = dto.GpuMemoryUsedMb,
             RamUsedMb = dto.RamUsedMb,
             DiskReadMBps = dto.DiskReadMBps,
@@ -185,7 +187,7 @@ public class FleetDashboardService(HeimdallDbContext db)
             NetworkInMBps = dto.NetworkInMBps,
             NetworkOutMBps = dto.NetworkOutMBps,
             ProcessCpuPercent = dto.ProcessCpuPercent,
-            ProcessGpuPercent = dto.ProcessGpuPercent,
+            ProcessGpuPercent = processGpuPercent,
             ProcessDiskReadMBps = dto.ProcessDiskReadMBps,
             ProcessDiskWriteMBps = dto.ProcessDiskWriteMBps,
             IsActive = isActive,
@@ -222,28 +224,36 @@ public class FleetDashboardService(HeimdallDbContext db)
     /// </summary>
     public async Task<IReadOnlyList<LiveFleetRow>> GetLiveFleetAsync(bool enrolledOnly, CancellationToken ct)
     {
-        List<(int MachineId, string Hostname, string? LastIp, DateTimeOffset LastSeenUtc)> machines;
+        List<(int MachineId, string Hostname, string? FriendlyName, string? LastIp, DateTimeOffset LastSeenUtc, int? TeamId, string? TeamName)> machines;
         if (enrolledOnly)
         {
             var enrolled = await db.FleetDashboardMachines.AsNoTracking()
-                .Include(e => e.Machine)
+                .Include(e => e.Machine).ThenInclude(m => m.Team)
                 .ToListAsync(ct);
             if (enrolled.Count == 0)
                 return [];
             machines = enrolled
                 .OrderBy(e => e.Machine.Hostname)
-                .Select(e => (e.MachineId, e.Machine.Hostname, e.Machine.LastIp, e.Machine.LastSeenUtc))
+                .Select(e => (
+                    e.MachineId,
+                    e.Machine.Hostname,
+                    e.Machine.FriendlyName,
+                    e.Machine.LastIp,
+                    e.Machine.LastSeenUtc,
+                    e.Machine.TeamId,
+                    e.Machine.Team?.Name))
                 .ToList();
         }
         else
         {
             var all = await db.Machines.AsNoTracking()
+                .Include(m => m.Team)
                 .OrderBy(m => m.Hostname)
                 .ToListAsync(ct);
             if (all.Count == 0)
                 return [];
             machines = all
-                .Select(m => (m.Id, m.Hostname, m.LastIp, m.LastSeenUtc))
+                .Select(m => (m.Id, m.Hostname, m.FriendlyName, m.LastIp, m.LastSeenUtc, m.TeamId, m.Team?.Name))
                 .ToList();
         }
 
@@ -276,12 +286,13 @@ public class FleetDashboardService(HeimdallDbContext db)
             rows.Add(new LiveFleetRow(
                 m.MachineId,
                 m.Hostname,
+                string.IsNullOrWhiteSpace(m.FriendlyName) ? null : m.FriendlyName.Trim(),
                 m.LastIp,
                 latest?.Username,
                 latest?.TuflowRunning ?? false,
                 status,
                 latest?.CpuPercent,
-                latest?.GpuPercent,
+                SanitizeGpuPercent(latest?.GpuPercent),
                 latest?.GpuMemoryUsedMb,
                 latest?.RamUsedMb,
                 latest?.DiskReadMBps,
@@ -292,7 +303,9 @@ public class FleetDashboardService(HeimdallDbContext db)
                 todayAgg.ActiveRuntimeHours,
                 todayAgg.GpuHours,
                 latest?.SampledAtUtc,
-                m.LastSeenUtc));
+                m.LastSeenUtc,
+                m.TeamId,
+                m.TeamName));
         }
 
         return rows;
@@ -458,7 +471,11 @@ public class FleetDashboardService(HeimdallDbContext db)
             }
 
             if (s.GpuPercent is double gpu)
-                gpuHours += (gpu / 100.0) * dtHours;
+            {
+                var sane = SanitizeGpuPercent(gpu);
+                if (sane is double g)
+                    gpuHours += (g / 100.0) * dtHours;
+            }
             if (s.CpuPercent is double cpu)
                 cpuHours += (cpu / 100.0) * dtHours;
             if (s.RamUsedMb is double ramMb)
@@ -488,6 +505,22 @@ public class FleetDashboardService(HeimdallDbContext db)
             netOutGb);
     }
 
+    /// <summary>
+    /// Drop GPU Engine counter glitches (seen as 1e13+% on some NVIDIA hosts). Multi-GPU can exceed 100%;
+    /// 1000% is a generous ceiling (~10× full engines).
+    /// </summary>
+    public const double MaxSaneGpuPercent = 1000.0;
+
+    public static double? SanitizeGpuPercent(double? gpu)
+    {
+        if (gpu is null) return null;
+        if (double.IsNaN(gpu.Value) || double.IsInfinity(gpu.Value) || gpu.Value < 0)
+            return null;
+        if (gpu.Value > MaxSaneGpuPercent)
+            return null;
+        return gpu.Value;
+    }
+
     private static double? Avg(IReadOnlyList<FleetMetricSnapshot> list, Func<FleetMetricSnapshot, double?> select)
     {
         var values = list.Select(select).Where(v => v is not null).Select(v => v!.Value).ToList();
@@ -515,6 +548,7 @@ public class FleetDashboardService(HeimdallDbContext db)
     public sealed record LiveFleetRow(
         int MachineId,
         string Hostname,
+        string? FriendlyName,
         string? LastIp,
         string? Username,
         bool TuflowRunning,
@@ -531,7 +565,13 @@ public class FleetDashboardService(HeimdallDbContext db)
         double TodayActiveHours,
         double TodayGpuHours,
         DateTimeOffset? LastSampleUtc,
-        DateTimeOffset LastSeenUtc);
+        DateTimeOffset LastSeenUtc,
+        int? TeamId = null,
+        string? TeamName = null)
+    {
+        public string DisplayName =>
+            string.IsNullOrWhiteSpace(FriendlyName) ? Hostname : FriendlyName!;
+    }
 
     public sealed record FleetMetrics(
         int SampleCount,

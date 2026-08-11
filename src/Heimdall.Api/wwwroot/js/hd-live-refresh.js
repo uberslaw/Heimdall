@@ -1,1 +1,1 @@
-setTimeout(function () { location.reload(); }, 30000);
+/* Flood Live soft-refresh lives inline in HistoricalDashboard.cshtml (Fleet Live pattern). */

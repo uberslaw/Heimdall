@@ -207,7 +207,12 @@ public class MachineUtilisationService(HeimdallDbContext db)
                     dtSec = SampleInterval.TotalSeconds;
             }
             var dtH = dtSec / 3600.0;
-            if (s.GpuPercent is double g) gpuH += (g / 100.0) * dtH;
+            if (s.GpuPercent is double g)
+            {
+                var sane = FleetDashboardService.SanitizeGpuPercent(g);
+                if (sane is double sg)
+                    gpuH += (sg / 100.0) * dtH;
+            }
             if (s.CpuPercent is double c) cpuH += (c / 100.0) * dtH;
             // MBps × seconds → MB → bytes
             if (s.DiskReadMBps is double r) dr += r * dtSec * 1024 * 1024;

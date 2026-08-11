@@ -113,6 +113,23 @@
     if (link) loadTab(key, link.getAttribute("data-hd-ops-src"), false);
   });
 
+  window.HeimdallOpsTabs = {
+    invalidate: function (key) {
+      if (key) delete cache[key];
+      else {
+        Object.keys(cache).forEach(function (k) {
+          delete cache[k];
+        });
+      }
+    },
+    refreshActive: function () {
+      var link = document.querySelector('[data-hd-ops-tab="' + active + '"]');
+      if (!link) return;
+      delete cache[active];
+      loadTab(active, link.getAttribute("data-hd-ops-src"), false);
+    }
+  };
+
   // First paint: load only the active tab.
   var initial = document.querySelector('[data-hd-ops-tab="' + active + '"]');
   if (initial) {

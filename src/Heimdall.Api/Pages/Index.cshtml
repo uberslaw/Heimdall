@@ -174,6 +174,17 @@
     <div class="hd-machines-period-row">
         <div class="hd-machines-period-controls d-flex flex-wrap gap-3 align-items-end">
             <div>
+                <label class="form-label" for="machines-view-mode">View</label>
+                <select class="form-select form-select-sm" id="machines-view-mode" style="min-width:10rem">
+                    <option value="by-group" selected>By Group</option>
+                    <option value="ungrouped">Ungrouped</option>
+                    @foreach (var teamSec in Model.Sections)
+                    {
+                        <option value="group:@(teamSec.TeamName)">@(teamSec.TeamName)</option>
+                    }
+                </select>
+            </div>
+            <div>
                 <label class="form-label" for="util-period">Period</label>
                 <select class="form-select form-select-sm" name="period" id="util-period" onchange="this.form.requestSubmit()">
                     @foreach (var opt in MachineUtilisationService.PeriodOptions)
@@ -186,17 +197,6 @@
                         {
                             <option value="@opt.Key">@opt.Label</option>
                         }
-                    }
-                </select>
-            </div>
-            <div>
-                <label class="form-label" for="machines-view-mode">View</label>
-                <select class="form-select form-select-sm" id="machines-view-mode" style="min-width:10rem">
-                    <option value="by-group" selected>By Group</option>
-                    <option value="ungrouped">Ungrouped</option>
-                    @foreach (var teamSec in Model.Sections)
-                    {
-                        <option value="group:@(teamSec.TeamName)">@(teamSec.TeamName)</option>
                     }
                 </select>
             </div>

@@ -6,6 +6,112 @@
     var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
     if (isPartial)
         Layout = null;
+
+    void RenderLiveTableHeaders()
+    {
+        <tr>
+            <th class="hd-col-host hd-th-tip" data-sort="text" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Friendly name when set, otherwise hostname. Hostname and IP show underneath when a friendly name is used. Click to sort.">Machine</th>
+            <th class="hd-col-user hd-th-tip" data-sort="text" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Username from the latest fleet sample (~30s). Empty when nobody is reported on that sample. Click to sort.">User</th>
+            <th class="hd-th-tip" data-sort="text" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="From the latest sample: Active = TUFLOW is running and the machine is busy (GPU &gt; 5%, CPU &gt; 10%, or disk read/write &gt; 5 MB/s). Idle = TUFLOW is running but below those thresholds. N/A = TUFLOW not detected. Click to sort.">Active</th>
+            <th class="hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="GPU utilisation from the latest ~30s sample. Can exceed 100% when Windows GPU Engine counters are summed across engines. Click to sort.">GPU %</th>
+            <th class="hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="CPU utilisation from the latest ~30s sample. Click to sort.">CPU %</th>
+            <th class="hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="GPU memory in use on the latest sample (auto-scaled KB/MB/GB). Click to sort.">GPU mem</th>
+            <th class="hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="System RAM in use on the latest sample (auto-scaled KB/MB/GB). Click to sort.">RAM</th>
+            <th class="hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Disk read rate from the latest sample (auto-scaled KB/s–TB/s). Click to sort.">Disk R</th>
+            <th class="hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Disk write rate from the latest sample (auto-scaled KB/s–TB/s). Click to sort.">Disk W</th>
+            <th class="hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Network receive (inbound) rate from the latest sample. Click to sort.">Net Rx</th>
+            <th class="hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Network transmit (outbound) rate from the latest sample. Click to sort.">Net Tx</th>
+            <th class="hd-th-tip" data-sort="num" data-default-desc scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Hours today with TUFLOW detected, from ~30s samples (sum of sample intervals while TUFLOW was running). Click to sort.">Today runtime</th>
+            <th class="hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="Hours today counted as Active while TUFLOW was running (same busy thresholds as the Active column). Click to sort.">Today active</th>
+            <th class="hd-th-tip" data-sort="num" scope="col"
+                data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                title="GPU-hours today from samples: Σ (GPU% ÷ 100 × interval hours). Can exceed wall-clock hours when GPU% is over 100. Click to sort.">Today GPU h</th>
+        </tr>
+    }
+
+    async Task RenderLiveRow(FleetDashboardService.LiveFleetRow r)
+    {
+        var liveUser = UsernameDisplay.Format(r.Username);
+        var statusLabel = HistoricalDashboardModel.ActiveIdleLabel(r.Status);
+        var statusClass = HistoricalDashboardModel.FleetStatusTextClass(r.Status);
+        var hasFriendly = !string.IsNullOrWhiteSpace(r.FriendlyName);
+        var stale = (DateTimeOffset.UtcNow - r.LastSeenUtc).TotalMinutes > 15;
+        var checkInLabel = HistoricalDashboardModel.FormatContact(r.LastSeenUtc);
+        <tr data-machine-id="@r.MachineId">
+            <td class="hd-col-host" data-sort-value="@r.DisplayName" data-live="host" title="@(stale ? $"Last agent check-in: {checkInLabel} (stale)" : r.Hostname)">
+                <a class="hd-live-host @(stale ? "hd-live-host-stale" : null)" asp-page="/Machine" asp-route-id="@r.MachineId" title="@(stale ? $"Last agent check-in: {checkInLabel}" : r.Hostname)">@r.DisplayName</a>
+                @if (hasFriendly)
+                {
+                    <div class="hd-live-hostname text-secondary small">@r.Hostname</div>
+                }
+                @if (!string.IsNullOrWhiteSpace(r.LastIp))
+                {
+                    <div class="hd-live-ip small">@r.LastIp</div>
+                }
+            </td>
+            <td class="hd-col-user" data-sort-value="@liveUser" data-live="user">
+                @if (!string.IsNullOrWhiteSpace(liveUser))
+                {
+                    <a asp-page="/User" asp-route-username="@liveUser" asp-route-range="7d">@liveUser</a>
+                }
+                else
+                {
+                    <span>—</span>
+                }
+            </td>
+            <td data-sort-value="@statusLabel" data-live="status">
+                @if (statusLabel == "N/A")
+                {
+                    <span class="text-secondary" title="TUFLOW not running">N/A</span>
+                }
+                else if (statusLabel != "—")
+                {
+                    <span class="hd-status-text @statusClass" title="@statusLabel">@statusLabel</span>
+                }
+                else
+                {
+                    <span class="text-secondary">—</span>
+                }
+            </td>
+            <td class="hd-live-metric" data-sort-value="@(r.GpuPercent ?? -1)" data-live="gpu">@HistoricalDashboardModel.FormatGauge(r.GpuPercent)</td>
+            <td class="hd-live-metric" data-sort-value="@(r.CpuPercent ?? -1)" data-live="cpu">@HistoricalDashboardModel.FormatGauge(r.CpuPercent)</td>
+            <td class="hd-live-metric" data-sort-value="@(r.GpuMemoryUsedMb ?? -1)" data-live="gpumem">@HistoricalDashboardModel.FormatDataFromMb(r.GpuMemoryUsedMb)</td>
+            <td class="hd-live-metric" data-sort-value="@(r.RamUsedMb ?? -1)" data-live="ram">@HistoricalDashboardModel.FormatDataFromMb(r.RamUsedMb)</td>
+            <td class="hd-live-metric" data-sort-value="@(r.DiskReadMBps ?? -1)" data-live="diskr">@HistoricalDashboardModel.FormatDataRateFromMBps(r.DiskReadMBps)</td>
+            <td class="hd-live-metric" data-sort-value="@(r.DiskWriteMBps ?? -1)" data-live="diskw">@HistoricalDashboardModel.FormatDataRateFromMBps(r.DiskWriteMBps)</td>
+            <td class="hd-live-metric" data-sort-value="@(r.NetworkInMBps ?? -1)" data-live="netin">@HistoricalDashboardModel.FormatDataRateFromMBps(r.NetworkInMBps)</td>
+            <td class="hd-live-metric" data-sort-value="@(r.NetworkOutMBps ?? -1)" data-live="netout">@HistoricalDashboardModel.FormatDataRateFromMBps(r.NetworkOutMBps)</td>
+            <td class="hd-live-metric" data-sort-value="@r.TodayRuntimeHours" data-live="runtime">@(HistoricalDashboardModel.FormatHours(r.TodayRuntimeHours) + "\u00A0h")</td>
+            <td class="hd-live-metric" data-sort-value="@r.TodayActiveHours" data-live="activeh">@(HistoricalDashboardModel.FormatHours(r.TodayActiveHours) + "\u00A0h")</td>
+            <td class="hd-live-metric" data-sort-value="@r.TodayGpuHours" data-live="gpuh">@(HistoricalDashboardModel.FormatHours(r.TodayGpuHours) + "\u00A0h")</td>
+        </tr>
+    }
 }
 
 @if (!isPartial)
@@ -16,150 +122,323 @@
     </div>
 }
 
-<div class="d-flex flex-wrap gap-2 align-items-end mb-3">
-    <form method="get" class="d-flex flex-wrap gap-2 align-items-end" id="fleet-live-filter-form" action="/FleetLive">
-        <input type="hidden" name="partial" value="1" />
+<div id="fleet-live-root" data-fleet-live-root>
+    <div class="d-flex flex-wrap gap-2 align-items-end mb-3">
         <div>
-            <label class="form-label small mb-1" for="fleet-live-q">Search</label>
-            <input class="form-control form-control-sm" id="fleet-live-q" name="q" value="@Model.Q" placeholder="User or machine" />
-        </div>
-        <div>
-            <label class="form-label small mb-1" for="fleet-live-status">Status</label>
-            <select class="form-select form-select-sm" id="fleet-live-status" name="statusFilter" onchange="this.form.submit()">
-                @if (Model.StatusFilter == "all")
+            <label class="form-label small mb-1" for="fleet-live-view-mode">View</label>
+            <select class="form-select form-select-sm" id="fleet-live-view-mode" style="min-width:10rem" data-fleet-live-view>
+                <option value="by-group" selected>By Group</option>
+                <option value="ungrouped">Ungrouped</option>
+                @foreach (var teamSec in Model.Sections)
                 {
-                    <option value="all" selected>All</option>
-                }
-                else
-                {
-                    <option value="all">All</option>
-                }
-                @if (Model.StatusFilter == "active")
-                {
-                    <option value="active" selected>Active</option>
-                }
-                else
-                {
-                    <option value="active">Active</option>
-                }
-                @if (Model.StatusFilter == "idle")
-                {
-                    <option value="idle" selected>Idle</option>
-                }
-                else
-                {
-                    <option value="idle">Idle</option>
-                }
-                @if (Model.StatusFilter is "notrunning" or "not-running")
-                {
-                    <option value="notrunning" selected>Not Running</option>
-                }
-                else
-                {
-                    <option value="notrunning">Not Running</option>
+                    <option value="group:@(teamSec.TeamName)">@(teamSec.TeamName)</option>
                 }
             </select>
         </div>
-        <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Apply</button>
-    </form>
-    <span class="text-secondary small ms-auto">@Model.MachineCount machines · auto-refresh 30s</span>
-</div>
+        <form method="get" class="d-flex flex-wrap gap-2 align-items-end" id="fleet-live-filter-form" action="/FleetLive" data-fleet-live-filter>
+            <input type="hidden" name="partial" value="1" />
+            <div>
+                <label class="form-label small mb-1" for="fleet-live-q">Search</label>
+                <input class="form-control form-control-sm" id="fleet-live-q" name="q" value="@Model.Q" placeholder="User, machine, or team" />
+            </div>
+            <div>
+                <label class="form-label small mb-1" for="fleet-live-status">Status</label>
+                <select class="form-select form-select-sm" id="fleet-live-status" name="statusFilter" onchange="this.form.requestSubmit()">
+                    @if (Model.StatusFilter == "all")
+                    {
+                        <option value="all" selected>All</option>
+                    }
+                    else
+                    {
+                        <option value="all">All</option>
+                    }
+                    @if (Model.StatusFilter == "active")
+                    {
+                        <option value="active" selected>Active</option>
+                    }
+                    else
+                    {
+                        <option value="active">Active</option>
+                    }
+                    @if (Model.StatusFilter == "idle")
+                    {
+                        <option value="idle" selected>Idle</option>
+                    }
+                    else
+                    {
+                        <option value="idle">Idle</option>
+                    }
+                    @if (Model.StatusFilter is "notrunning" or "not-running" or "na" or "n/a")
+                    {
+                        <option value="notrunning" selected>N/A</option>
+                    }
+                    else
+                    {
+                        <option value="notrunning">N/A</option>
+                    }
+                </select>
+            </div>
+            <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Apply</button>
+        </form>
+        <span class="text-secondary small ms-auto" data-live="meta">@Model.FilteredLiveRows.Count / @Model.MachineCount machines · auto-refresh 30s</span>
+    </div>
 
-<div class="hd-panel hd-live-fleet-panel">
+    <div id="fleet-live-groups" data-fleet-live-groups>
     @if (Model.MachineCount == 0)
     {
-        <p class="text-secondary mb-0">No machines in the estate yet. Agents appear here after their first heartbeat.</p>
+        <div class="hd-panel hd-live-fleet-panel">
+            <p class="text-secondary mb-0">No machines in the estate yet. Agents appear here after their first heartbeat.</p>
+        </div>
+    }
+    else if (Model.FilteredLiveRows.Count == 0)
+    {
+        <div class="hd-panel hd-live-fleet-panel">
+            <p class="text-secondary mb-0">No rows match the current filter.</p>
+        </div>
     }
     else
     {
-        <table class="hd-table hd-live-fleet-table hd-sortable" id="fleet-live-table">
-            <thead>
-                <tr>
-                    <th class="hd-col-host" data-sort="text">Machine</th>
-                    <th class="hd-col-user" data-sort="text">User</th>
-                    <th data-sort="text">TUFLOW</th>
-                    <th data-sort="text">Active / Idle</th>
-                    <th data-sort="num">GPU %</th>
-                    <th data-sort="num">CPU %</th>
-                    <th data-sort="num">GPU mem</th>
-                    <th data-sort="num">RAM GB</th>
-                    <th data-sort="num">Disk R MB/s</th>
-                    <th data-sort="num">Disk W MB/s</th>
-                    <th data-sort="num">Net In MB/s</th>
-                    <th data-sort="num">Net Out MB/s</th>
-                    <th data-sort="num" data-default-desc>Today runtime</th>
-                    <th data-sort="num">Today active</th>
-                    <th data-sort="num">Today GPU h</th>
-                    <th class="hd-col-checkin" data-sort="date">Last check-in</th>
-                </tr>
-            </thead>
-            <tbody>
-            @if (Model.FilteredLiveRows.Count == 0)
-            {
-                <tr><td colspan="16">No rows match the current filter.</td></tr>
-            }
-            @foreach (var r in Model.FilteredLiveRows)
-            {
-                <tr>
-                    <td class="hd-col-host" data-sort-value="@r.Hostname">
-                        <a class="hd-live-host" asp-page="/Machine" asp-route-id="@r.MachineId">@r.Hostname</a>
-                        @if (!string.IsNullOrWhiteSpace(r.LastIp))
+        <div id="fleet-live-by-group" class="hd-machines-groups">
+        @foreach (var teamSection in Model.Sections)
+        {
+            <section class="hd-panel hd-machines-group mb-3" data-machines-group="@teamSection.TeamName">
+                <h2 class="hd-team-name">@teamSection.TeamName</h2>
+                <div class="hd-machines-panel">
+                    <table class="hd-table hd-live-fleet-table hd-sortable">
+                        <thead>
+                            @{ RenderLiveTableHeaders(); }
+                        </thead>
+                        <tbody>
+                        @foreach (var r in teamSection.Machines)
                         {
-                            <div class="hd-live-ip text-secondary small">@r.LastIp</div>
+                            await RenderLiveRow(r);
                         }
-                    </td>
-                    <td class="hd-col-user" data-sort-value="@UsernameDisplay.Format(r.Username)">
-                        @{
-                            var liveUser = UsernameDisplay.Format(r.Username);
-                        }
-                        @if (!string.IsNullOrWhiteSpace(liveUser))
-                        {
-                            <a asp-page="/User" asp-route-username="@liveUser" asp-route-range="7d">@liveUser</a>
-                        }
-                        else
-                        {
-                            <span>—</span>
-                        }
-                    </td>
-                    <td data-sort-value="@(r.TuflowRunning ? "Y" : "N")">@(r.TuflowRunning ? "Y" : "N")</td>
-                    <td data-sort-value="@HistoricalDashboardModel.ActiveIdleLabel(r.Status)">
-                        @if (r.Status is FleetDashboardService.FleetStatus.Active or FleetDashboardService.FleetStatus.Idle)
-                        {
-                            <span class="badge-pill @HistoricalDashboardModel.StatusBadgeClass(r.Status)">
-                                @HistoricalDashboardModel.ActiveIdleLabel(r.Status)
-                            </span>
-                        }
-                        else
-                        {
-                            <span class="text-secondary">—</span>
-                        }
-                    </td>
-                    <td data-sort-value="@(r.GpuPercent ?? -1)">@HistoricalDashboardModel.FormatGauge(r.GpuPercent)</td>
-                    <td data-sort-value="@(r.CpuPercent ?? -1)">@HistoricalDashboardModel.FormatGauge(r.CpuPercent)</td>
-                    <td data-sort-value="@(r.GpuMemoryUsedMb ?? -1)">@HistoricalDashboardModel.FormatMb(r.GpuMemoryUsedMb)</td>
-                    <td data-sort-value="@(r.RamUsedMb ?? -1)">@HistoricalDashboardModel.FormatRamGb(r.RamUsedMb)</td>
-                    <td data-sort-value="@(r.DiskReadMBps ?? -1)">@HistoricalDashboardModel.FormatMBps(r.DiskReadMBps)</td>
-                    <td data-sort-value="@(r.DiskWriteMBps ?? -1)">@HistoricalDashboardModel.FormatMBps(r.DiskWriteMBps)</td>
-                    <td data-sort-value="@(r.NetworkInMBps ?? -1)">@HistoricalDashboardModel.FormatMBps(r.NetworkInMBps)</td>
-                    <td data-sort-value="@(r.NetworkOutMBps ?? -1)">@HistoricalDashboardModel.FormatMBps(r.NetworkOutMBps)</td>
-                    <td data-sort-value="@r.TodayRuntimeHours">@HistoricalDashboardModel.FormatHours(r.TodayRuntimeHours) h</td>
-                    <td data-sort-value="@r.TodayActiveHours">@HistoricalDashboardModel.FormatHours(r.TodayActiveHours) h</td>
-                    <td data-sort-value="@r.TodayGpuHours">@HistoricalDashboardModel.FormatHours(r.TodayGpuHours)</td>
-                    <td data-sort-value="@(r.LastSampleUtc?.ToUnixTimeSeconds() ?? 0)">
-                        @HistoricalDashboardModel.FormatContact(r.LastSampleUtc ?? r.LastSeenUtc)
-                    </td>
-                </tr>
-            }
-            </tbody>
-        </table>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        }
+        </div>
+
+        <div id="fleet-live-ungrouped" class="hd-panel hd-live-fleet-panel d-none">
+            <table class="hd-table hd-live-fleet-table hd-sortable">
+                <thead>
+                    @{ RenderLiveTableHeaders(); }
+                </thead>
+                <tbody>
+                @foreach (var teamSection in Model.Sections)
+                {
+                    foreach (var r in teamSection.Machines)
+                    {
+                        await RenderLiveRow(r);
+                    }
+                }
+                </tbody>
+            </table>
+        </div>
     }
+    </div>
 </div>
 
 <script src="~/js/hd-table.js" asp-append-version="true"></script>
 <script>
-    if (window.HeimdallTable) {
-        HeimdallTable.initSort(document);
-        HeimdallTable.initTextFilter(document);
+(() => {
+  const root = document.querySelector('[data-fleet-live-root]');
+  if (!root || root.dataset.fleetLiveBound === '1') return;
+  root.dataset.fleetLiveBound = '1';
+
+  function initHeaderTooltips(scope) {
+    if (!window.bootstrap?.Tooltip) return;
+    (scope || root).querySelectorAll('.hd-live-fleet-table thead th[data-bs-toggle="tooltip"]').forEach((el) => {
+      bootstrap.Tooltip.getOrCreateInstance(el, {
+        container: 'body',
+        trigger: 'hover focus',
+        delay: { show: 150, hide: 50 }
+      });
+    });
+  }
+
+  if (window.HeimdallTable) {
+    HeimdallTable.initSort(root);
+    HeimdallTable.initTextFilter(root);
+  }
+  initHeaderTooltips(root);
+
+  const form = root.querySelector('[data-fleet-live-filter]');
+  const viewSelect = root.querySelector('[data-fleet-live-view]');
+  let currentView = 'by-group';
+
+  function applyView(mode) {
+    currentView = mode || 'by-group';
+    if (viewSelect && viewSelect.value !== currentView) {
+      const opt = [...viewSelect.options].find((o) => o.value === currentView);
+      if (opt) viewSelect.value = currentView;
+      else currentView = 'by-group';
     }
-    setTimeout(function () { location.reload(); }, 30000);
+
+    const byGroup = root.querySelector('#fleet-live-by-group');
+    const ungrouped = root.querySelector('#fleet-live-ungrouped');
+    if (!byGroup && !ungrouped) return;
+
+    if (currentView === 'ungrouped') {
+      byGroup?.classList.add('d-none');
+      ungrouped?.classList.remove('d-none');
+      return;
+    }
+
+    ungrouped?.classList.add('d-none');
+    byGroup?.classList.remove('d-none');
+
+    const wantGroup = currentView.startsWith('group:') ? currentView.slice('group:'.length) : null;
+    byGroup?.querySelectorAll('[data-machines-group]').forEach((section) => {
+      const name = section.getAttribute('data-machines-group') || '';
+      section.classList.toggle('d-none', !!(wantGroup && name !== wantGroup));
+    });
+  }
+
+  if (viewSelect) {
+    viewSelect.addEventListener('change', () => applyView(viewSelect.value));
+  }
+  applyView(viewSelect?.value || 'by-group');
+
+  function buildUrl() {
+    const params = new URLSearchParams();
+    params.set('partial', '1');
+    if (form) {
+      const q = form.querySelector('[name="q"]');
+      const status = form.querySelector('[name="statusFilter"]');
+      if (q && q.value) params.set('q', q.value);
+      if (status && status.value) params.set('statusFilter', status.value);
+    }
+    return '/FleetLive?' + params.toString();
+  }
+
+  function syncViewOptions(nextRoot) {
+    if (!viewSelect) return;
+    const nextSelect = nextRoot.querySelector('[data-fleet-live-view]');
+    if (!nextSelect) return;
+    const prev = currentView;
+    viewSelect.innerHTML = nextSelect.innerHTML;
+    const stillThere = [...viewSelect.options].some((o) => o.value === prev);
+    currentView = stillThere ? prev : 'by-group';
+    viewSelect.value = currentView;
+  }
+
+  function patchRows(scopeOld, scopeNew) {
+    scopeNew.querySelectorAll('tr[data-machine-id]').forEach((newRow) => {
+      const id = newRow.getAttribute('data-machine-id');
+      scopeOld.querySelectorAll('tr[data-machine-id="' + id + '"]').forEach((oldRow) => {
+        newRow.querySelectorAll('[data-live]').forEach((newCell) => {
+          const key = newCell.getAttribute('data-live');
+          if (!key || key === 'host') return;
+          const oldCell = oldRow.querySelector('[data-live="' + key + '"]');
+          if (!oldCell) return;
+          if (oldCell.innerHTML !== newCell.innerHTML) oldCell.innerHTML = newCell.innerHTML;
+          if (newCell.hasAttribute('data-sort-value'))
+            oldCell.setAttribute('data-sort-value', newCell.getAttribute('data-sort-value'));
+        });
+        const newHost = newRow.querySelector('[data-live="host"]');
+        const oldHost = oldRow.querySelector('[data-live="host"]');
+        if (oldHost && newHost) {
+          const newLink = newHost.querySelector('.hd-live-host');
+          const oldLink = oldHost.querySelector('.hd-live-host');
+          if (newLink && oldLink && oldLink.textContent !== newLink.textContent)
+            oldLink.textContent = newLink.textContent;
+          const newHn = newHost.querySelector('.hd-live-hostname');
+          const oldHn = oldHost.querySelector('.hd-live-hostname');
+          if (newHn && oldHn) oldHn.textContent = newHn.textContent;
+          else if (newHn && !oldHn) oldHost.insertBefore(newHn.cloneNode(true), oldHost.querySelector('.hd-live-ip'));
+          else if (!newHn && oldHn) oldHn.remove();
+          const newIp = newHost.querySelector('.hd-live-ip');
+          const oldIp = oldHost.querySelector('.hd-live-ip');
+          if (newIp && oldIp) oldIp.textContent = newIp.textContent;
+          else if (newIp && !oldIp) oldHost.appendChild(newIp.cloneNode(true));
+          else if (!newIp && oldIp) oldIp.remove();
+          if (newHost.hasAttribute('data-sort-value'))
+            oldHost.setAttribute('data-sort-value', newHost.getAttribute('data-sort-value'));
+        }
+      });
+    });
+  }
+
+  function patchFromHtml(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const nextRoot = doc.querySelector('[data-fleet-live-root]');
+    if (!nextRoot) return false;
+
+    const metaOld = root.querySelector('[data-live="meta"]');
+    const metaNew = nextRoot.querySelector('[data-live="meta"]');
+    if (metaOld && metaNew) metaOld.textContent = metaNew.textContent;
+
+    syncViewOptions(nextRoot);
+
+    const groupsOld = root.querySelector('[data-fleet-live-groups]');
+    const groupsNew = nextRoot.querySelector('[data-fleet-live-groups]');
+    if (!groupsOld || !groupsNew) return false;
+
+    const oldGroups = [...groupsOld.querySelectorAll('[data-machines-group]')].map((el) => el.getAttribute('data-machines-group'));
+    const newGroups = [...groupsNew.querySelectorAll('[data-machines-group]')].map((el) => el.getAttribute('data-machines-group'));
+    const structureSame =
+      oldGroups.length === newGroups.length &&
+      oldGroups.every((g, i) => g === newGroups[i]) &&
+      groupsOld.querySelectorAll('#fleet-live-by-group tr[data-machine-id]').length ===
+        groupsNew.querySelectorAll('#fleet-live-by-group tr[data-machine-id]').length;
+
+    if (!structureSame) {
+      groupsOld.innerHTML = groupsNew.innerHTML;
+      if (window.HeimdallTable) HeimdallTable.initSort(groupsOld);
+      initHeaderTooltips(groupsOld);
+      applyView(currentView);
+      return true;
+    }
+
+    patchRows(groupsOld, groupsNew);
+    applyView(currentView);
+    return true;
+  }
+
+  let timer = null;
+  let refreshing = false;
+
+  async function softRefresh() {
+    if (refreshing || document.hidden) return;
+    refreshing = true;
+    try {
+      const res = await fetch(buildUrl(), {
+        credentials: 'same-origin',
+        headers: {
+          'X-Fleet-Partial': '1',
+          'X-Ops-Partial': '1',
+          Accept: 'text/html'
+        }
+      });
+      if (!res.ok) return;
+      const html = await res.text();
+      patchFromHtml(html);
+      if (window.HeimdallOpsTabs && typeof window.HeimdallOpsTabs.invalidate === 'function')
+        window.HeimdallOpsTabs.invalidate('live');
+    } catch (_) {
+      /* keep current numbers */
+    } finally {
+      refreshing = false;
+    }
+  }
+
+  function schedule() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(softRefresh, 30000);
+  }
+
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      softRefresh();
+    });
+  }
+
+  schedule();
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) softRefresh();
+  });
+})();
 </script>

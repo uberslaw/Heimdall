@@ -27,7 +27,9 @@ internal static class NativeWts
         WTSClientName = 10,
         WTSClientAddress = 14,
         WTSClientProtocolType = 16,
-        WTSSessionInfo = 24
+        WTSSessionInfo = 24,
+        /// <summary>BOOL — true when the session is remote (often still set after disconnect clears client fields).</summary>
+        WTSIsRemoteSession = 29
     }
 
     /// <summary>WTS_PROTOCOL_TYPE_* values from WTSClientProtocolType.</summary>
@@ -141,7 +143,8 @@ public sealed class SessionCollector
                 // WTS often clears protocol/client fields on disconnect; keep the last known fingerprint.
                 tracked.ClientName = liveSession.ClientName ?? tracked.ClientName;
                 tracked.ClientAddress = liveSession.ClientAddress ?? tracked.ClientAddress;
-                tracked.SessionType = StickySessionType(liveSession.SessionType, tracked.ClientName, tracked.ClientAddress);
+                tracked.SessionType = StickySessionType(
+                    liveSession.SessionType, tracked.SessionType, tracked.ClientName, tracked.ClientAddress);
                 tracked.LastObservedUtc = now;
 
                 if (stateChanged)
@@ -308,7 +311,8 @@ public sealed class SessionCollector
                 };
 
                 var resolvedClientName = string.IsNullOrWhiteSpace(clientName) ? null : clientName;
-                var type = ClassifySessionType(winStation, protocol, resolvedClientName, address);
+                var isRemote = QueryBool(info.SessionId, NativeWts.WTS_INFO_CLASS.WTSIsRemoteSession);
+                var type = ClassifySessionType(winStation, protocol, resolvedClientName, address, isRemote);
 
                 results.Add(new TrackedSession
                 {
@@ -335,7 +339,7 @@ public sealed class SessionCollector
     }
 
     /// <summary>
-    /// Classify by protocol / RDP- WinStation first. Console alone must not force Local when
+    /// Classify by protocol / RDP- WinStation / WTSIsRemoteSession first. Console alone must not force Local when
     /// the session is RDP (common when someone RDPs into the console session).
     /// RDP-to-self is still inbound RDP — physical presence is not what this field means.
     /// </summary>
@@ -343,7 +347,8 @@ public sealed class SessionCollector
         string? winStation,
         ushort protocol,
         string? clientName = null,
-        string? clientAddress = null)
+        string? clientAddress = null,
+        bool isRemoteSession = false)
     {
         if (protocol is NativeWts.ProtocolRdp or NativeWts.ProtocolIca)
             return SessionType.Rdp;
@@ -351,6 +356,10 @@ public sealed class SessionCollector
         if (!string.IsNullOrWhiteSpace(winStation)
             && (winStation.StartsWith("RDP-", StringComparison.OrdinalIgnoreCase)
                 || winStation.StartsWith("ICA-", StringComparison.OrdinalIgnoreCase)))
+            return SessionType.Rdp;
+
+        // Survives disconnect when WTS clears protocol/client (rack hosts / RDP-to-console).
+        if (isRemoteSession)
             return SessionType.Rdp;
 
         // Corroboration: remote client fingerprint on an otherwise "Console"/protocol-0 session
@@ -363,14 +372,15 @@ public sealed class SessionCollector
 
     /// <summary>
     /// After disconnect, WTS often reports Console/protocol-0 with empty client fields even though
-    /// the session was inbound RDP. Prefer a retained client fingerprint over a fresh Local classify.
+    /// the session was inbound RDP. Prefer a retained RDP classify or client fingerprint over a fresh Local.
     /// </summary>
     internal static SessionType StickySessionType(
         SessionType classified,
+        SessionType previous,
         string? clientName,
         string? clientAddress)
     {
-        if (classified == SessionType.Rdp)
+        if (classified == SessionType.Rdp || previous == SessionType.Rdp)
             return SessionType.Rdp;
         if (HasRemoteClientFingerprint(clientName, clientAddress))
             return SessionType.Rdp;
@@ -427,6 +437,26 @@ public sealed class SessionCollector
         }
     }
 
+    private static bool QueryBool(int sessionId, NativeWts.WTS_INFO_CLASS infoClass)
+    {
+        if (!NativeWts.WTSQuerySessionInformation(IntPtr.Zero, sessionId, infoClass, out var buffer, out var bytes)
+            || buffer == IntPtr.Zero
+            || bytes < 1)
+            return false;
+
+        try
+        {
+            // WTSIsRemoteSession returns a BOOL (4 bytes on Windows); accept 1-byte too.
+            if (bytes >= 4)
+                return Marshal.ReadInt32(buffer) != 0;
+            return Marshal.ReadByte(buffer) != 0;
+        }
+        finally
+        {
+            NativeWts.WTSFreeMemory(buffer);
+        }
+    }
+
     private static string? QueryClientAddress(int sessionId)
     {
         if (!NativeWts.WTSQuerySessionInformation(IntPtr.Zero, sessionId, NativeWts.WTS_INFO_CLASS.WTSClientAddress, out var buffer, out _))
@@ -435,9 +465,18 @@ public sealed class SessionCollector
         try
         {
             var addr = Marshal.PtrToStructure<NativeWts.WTS_CLIENT_ADDRESS>(buffer);
-            // AF_INET = 2
+            // AF_INET = 2 — Address[2..5] are the IPv4 octets (bytes 0-1 are port / reserved).
             if (addr.AddressFamily == 2 && addr.Address is { Length: >= 6 })
                 return $"{addr.Address[2]}.{addr.Address[3]}.{addr.Address[4]}.{addr.Address[5]}";
+
+            // AF_INET6 = 23 — Address[2..17] are the 16 IPv6 octets.
+            if (addr.AddressFamily == 23 && addr.Address is { Length: >= 18 })
+            {
+                var bytes = new byte[16];
+                Buffer.BlockCopy(addr.Address, 2, bytes, 0, 16);
+                return new System.Net.IPAddress(bytes).ToString();
+            }
+
             return null;
         }
         finally

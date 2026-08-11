@@ -176,6 +176,11 @@ html[data-theme="light-clean"] {
   --hd-btn-primary-hover: #0f6b58;
   --hd-focus-ring: rgba(23, 138, 114, 0.2);
   --hd-code: #33424f;
+  /* Cool metals — slightly deeper than cosmic so they stay readable on white panels */
+  --hd-gunmetal: #5a6574;
+  --hd-silver: #7a8494;
+  --hd-silver-bright: #5c6573;
+  --hd-silver-rim: rgba(90, 101, 116, 0.45);
 }
 
 html[data-theme="light-clean"] body {
@@ -1923,18 +1928,28 @@ body.hd-col-resizing {
 /* Live Fleet (Historical Dashboard) — keep hostname / IP / user readable */
 .hd-live-fleet-table {
   width: 100%;
-  min-width: 72rem;
+  min-width: 58rem;
   table-layout: fixed;
+  /* Metric text rhythm from GPU % onward: white, blue, white, blue, … */
+  --hd-live-text-white: #eef1f8;
+  --hd-live-text-blue: #9ec0f0;
+}
+
+html[data-theme="light-clean"] .hd-live-fleet-table {
+  --hd-live-text-white: #1c2530;
+  --hd-live-text-blue: #3f6690;
 }
 
 .hd-live-fleet-table .hd-col-host {
-  width: 11.5rem;
-  text-align: left;
+  width: 8.5rem;
 }
 
 .hd-live-fleet-table .hd-col-user {
-  width: 12rem;
-  text-align: left;
+  width: 7.5rem;
+}
+
+.hd-live-fleet-table .hd-col-active {
+  width: 4.5rem;
 }
 
 .hd-live-fleet-table .hd-col-checkin {
@@ -1942,10 +1957,27 @@ body.hd-col-resizing {
   white-space: nowrap;
 }
 
-.hd-live-fleet-table th,
-.hd-live-fleet-table td {
+/* Beat table.hd-table { text-align:left } specificity */
+table.hd-table.hd-live-fleet-table th,
+table.hd-table.hd-live-fleet-table td {
   padding: 0.55rem 0.5rem;
   vertical-align: middle;
+  text-align: center;
+}
+
+/* Headers stay gold (do not inherit metric column colours) */
+table.hd-table.hd-live-fleet-table th {
+  color: var(--hd-gold, var(--hd-accent));
+}
+
+/* From GPU % (col 4) → last: white, blue, white, blue, repeat — data cells only */
+table.hd-table.hd-live-fleet-table td:nth-child(n + 4) {
+  color: var(--hd-live-text-white);
+}
+
+table.hd-table.hd-live-fleet-table td:nth-child(4n + 5),
+table.hd-table.hd-live-fleet-table td:nth-child(4n + 7) {
+  color: var(--hd-live-text-blue);
 }
 
 .hd-live-fleet-table .hd-col-host,
@@ -1954,10 +1986,73 @@ body.hd-col-resizing {
   word-break: normal;
 }
 
+table.hd-table.hd-live-fleet-table th.hd-col-host,
+table.hd-table.hd-live-fleet-table td.hd-col-host {
+  text-align: left;
+}
+
+.hd-live-fleet-table .hd-live-host {
+  color: var(--hd-silver, #c8ced8);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.hd-live-fleet-table .hd-live-ip {
+  color: var(--hd-silver, #c8ced8);
+}
+
+.hd-live-fleet-table .hd-live-host.hd-live-host-stale {
+  color: #e07070;
+}
+
+.hd-live-fleet-table .hd-live-host:hover,
+.hd-live-fleet-table .hd-live-host:focus {
+  color: var(--hd-silver-bright, #e8ecf2);
+  text-decoration: underline;
+  text-decoration-color: var(--hd-silver-rim, currentColor);
+}
+
+.hd-live-fleet-table .hd-live-host.hd-live-host-stale:hover,
+.hd-live-fleet-table .hd-live-host.hd-live-host-stale:focus {
+  color: #f09090;
+  text-decoration-color: rgba(224, 112, 112, 0.55);
+}
+
+.hd-live-fleet-table .hd-col-user,
+.hd-live-fleet-table .hd-col-user a {
+  color: var(--hd-silver, #c8ced8);
+}
+
+.hd-live-fleet-table .hd-col-user a:hover,
+.hd-live-fleet-table .hd-col-user a:focus {
+  color: var(--hd-silver-bright, #e8ecf2);
+  text-decoration: underline;
+  text-decoration-color: var(--hd-silver-rim, currentColor);
+}
+
 .hd-live-fleet-table .hd-live-host,
+.hd-live-fleet-table .hd-live-hostname,
 .hd-live-fleet-table .hd-live-ip,
 .hd-live-fleet-table .hd-col-user {
   white-space: nowrap;
+}
+
+.hd-live-fleet-table .hd-live-metric,
+.hd-live-fleet-table td.hd-live-metric {
+  white-space: nowrap;
+}
+
+.hd-live-fleet-table th.hd-th-tip {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+
+/* Sort still works; no ↑/↓ glyphs on Live headers */
+table.hd-table.hd-live-fleet-table.hd-sortable th.sorted-asc::after,
+table.hd-table.hd-live-fleet-table.hd-sortable th.sorted-desc::after {
+  content: none;
 }
 
 .hd-live-fleet-panel {
@@ -3053,7 +3148,7 @@ details.hd-panel[data-key="existing-lists"] {
 }
 
 .hd-machines-period-controls {
-  flex: 0 1 14rem;
+  flex: 0 1 auto;
   min-width: 10rem;
 }
 
@@ -3285,7 +3380,7 @@ button.hd-machines-stat-filter:focus-visible {
   display: block;
   text-align: left;
   font-weight: 600;
-  font-size: 200%;
+  font-size: 150%;
   line-height: 1.2;
   margin: 0 0 0.65rem;
   /* Rose gold — matches hd-btn-rose mid tone */
@@ -3307,6 +3402,15 @@ button.hd-machines-stat-filter:focus-visible {
 .hd-machines-table .hd-status-text.hd-status-active { color: #3db8a0; }
 .hd-machines-table .hd-status-text.hd-status-idle { color: #d4a017; }
 .hd-machines-table .hd-status-text.hd-status-off { color: #c45c5c; }
+
+.hd-live-fleet-table .hd-status-text {
+  font-size: 1em;
+  font-weight: 600;
+  line-height: inherit;
+}
+.hd-live-fleet-table .hd-status-text.hd-status-active { color: #3db8a0; }
+.hd-live-fleet-table .hd-status-text.hd-status-idle { color: #d4a017; }
+.hd-live-fleet-table .hd-status-text.hd-status-off { color: #c45c5c; }
 
 .hd-machines-table tr.hd-machine-row td {
   height: 2.35rem;

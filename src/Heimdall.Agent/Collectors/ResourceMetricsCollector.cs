@@ -42,18 +42,24 @@ public static class ResourceMetricsCollector
         var gpuByProcess = TryCollectGpuByProcess();
         foreach (var (name, gpu) in gpuByProcess)
         {
+            if (gpu > MaxSaneGpuPercent)
+                continue;
             if (processes.TryGetValue(name, out var existing))
                 processes[name] = existing with { GpuPercent = existing.GpuPercent + gpu };
         }
 
         var (cpuTotal, ramPercent, ramUsedGb, ramTotalGb) = TryCollectSystemCpuRam();
         var (diskRead, diskWrite) = TryCollectDiskTotals();
-        var gpuTotal = gpuByProcess.Count == 0 ? (double?)null : gpuByProcess.Values.DefaultIfEmpty(0).Max();
+        var gpuCandidates = gpuByProcess.Values.Where(v => v > 0 && v <= MaxSaneGpuPercent).ToList();
+        var gpuTotal = gpuCandidates.Count == 0 ? (double?)null : gpuCandidates.Max();
         var gpuMemMb = TryCollectGpuMemoryMb();
         var (netIn, netOut) = TryCollectNetworkTotals();
 
         return new Sample(cpuTotal, gpuTotal, ramPercent, ramUsedGb, ramTotalGb, diskRead, diskWrite, processes, gpuMemMb, netIn, netOut);
     }
+
+    /// <summary>GPU Engine counter glitches can report 1e13+%; multi-GPU legitimately exceeds 100%.</summary>
+    public const double MaxSaneGpuPercent = 1000.0;
 
     public static List<TopProcessSampleDto> TopByCpu(Sample s, int count) =>
         Top(s.ProcessesByName, count, p => p.CpuPercent);

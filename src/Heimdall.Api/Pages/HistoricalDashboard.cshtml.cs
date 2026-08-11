@@ -108,6 +108,8 @@ public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGu
             var q = Q.Trim();
             FilteredLiveRows = LiveRows.Where(r =>
                 r.Hostname.Contains(q, StringComparison.OrdinalIgnoreCase)
+                || r.DisplayName.Contains(q, StringComparison.OrdinalIgnoreCase)
+                || (r.FriendlyName?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
                 || (r.Username?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
                 || (r.LastIp?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
         }
@@ -241,27 +243,68 @@ public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGu
         _ => "badge-ended"
     };
 
+    /// <summary>Fleet machines Status colours: Active green / Idle amber / Off red.</summary>
+    public static string FleetStatusTextClass(FleetDashboardService.FleetStatus s) => s switch
+    {
+        FleetDashboardService.FleetStatus.Active => "hd-status-active",
+        FleetDashboardService.FleetStatus.Idle => "hd-status-idle",
+        FleetDashboardService.FleetStatus.NotRunning => "hd-status-off",
+        _ => "hd-status-off"
+    };
+
     public static string ActiveIdleLabel(FleetDashboardService.FleetStatus s) => s switch
     {
         FleetDashboardService.FleetStatus.Active => "Active",
         FleetDashboardService.FleetStatus.Idle => "Idle",
+        FleetDashboardService.FleetStatus.NotRunning => "N/A",
         _ => "—"
     };
 
     public static string FormatHours(double hours) =>
-        hours < 0.01 ? "0" : hours.ToString("0.##");
+        hours < 0.05 && hours > -0.05 ? "0.0" : hours.ToString("0.0");
 
     public static string FormatGauge(double? value, string suffix = "%") =>
         value is null ? "—" : $"{value.Value:0.#}{suffix}";
 
-    public static string FormatMb(double? mb) =>
-        mb is null ? "—" : $"{mb.Value:0.#} MB";
+    public static string FormatMb(double? mb) => FormatDataFromMb(mb);
 
-    public static string FormatRamGb(double? mb) =>
-        mb is null ? "—" : $"{mb.Value / 1024.0:0.##} GB";
+    public static string FormatRamGb(double? mb) => FormatDataFromMb(mb);
 
-    public static string FormatMBps(double? mbps) =>
-        mbps is null ? "—" : $"{mbps.Value:0.##}";
+    public static string FormatMBps(double? mbps) => FormatDataRateFromMBps(mbps);
+
+    /// <summary>Auto-scale MB quantities so the coefficient stays under 1000 (KB/MB/GB/TB).</summary>
+    public static string FormatDataFromMb(double? mb)
+    {
+        if (mb is null) return "—";
+        if (Math.Abs(mb.Value) < 0.0005) return "0\u00A0MB";
+        return FormatDataSize(mb.Value * 1024.0 * 1024.0);
+    }
+
+    /// <summary>Auto-scale MB/s rates so the coefficient stays under 1000 (KB/s … TB/s).</summary>
+    public static string FormatDataRateFromMBps(double? mbps)
+    {
+        if (mbps is null) return "—";
+        if (Math.Abs(mbps.Value) < 0.0005) return "0";
+        return FormatDataSize(mbps.Value * 1024.0 * 1024.0) + "/s";
+    }
+
+    /// <summary>Format a byte magnitude with at most 3 digits before the unit steps up (1000-based).</summary>
+    public static string FormatDataSize(double bytes)
+    {
+        var v = Math.Abs(bytes);
+        string[] units = ["B", "KB", "MB", "GB", "TB", "PB"];
+        var u = 0;
+        while (v >= 1000.0 && u < units.Length - 1)
+        {
+            v /= 1000.0;
+            u++;
+        }
+
+        var text = v >= 100 ? v.ToString("0")
+            : v.ToString("0.0");
+        // Non-breaking space keeps value + unit on one line in narrow Live columns.
+        return $"{text}\u00A0{units[u]}";
+    }
 
     public static string FormatContact(DateTimeOffset? utc)
     {
