@@ -25,6 +25,12 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
             await UpsertSessionAsync(machine, session, ct);
         }
 
+        // Agent session snapshots are complete for the host: any open DB row whose EventId was
+        // not in this batch is an orphan (agent restart / new EventId) — close it so util and
+        // Status cannot treat it as live Active forever.
+        if (machine is not null && batch.Sessions.Count > 0)
+            await CloseOrphanOpenSessionsAsync(machine, batch.Sessions, ct);
+
         foreach (var run in batch.ProcessRuns)
         {
             machine ??= await EnsureMachineAsync(run.Hostname, ct);
@@ -364,6 +370,22 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
         };
         db.Machines.Add(machine);
         return machine;
+    }
+
+    private async Task CloseOrphanOpenSessionsAsync(
+        Machine machine,
+        IReadOnlyList<SessionEventDto> batchSessions,
+        CancellationToken ct)
+    {
+        var seen = batchSessions.Select(s => s.EventId).ToHashSet(StringComparer.Ordinal);
+        var open = await db.Sessions
+            .Where(s => s.MachineId == machine.Id && s.State != SessionState.Ended)
+            .ToListAsync(ct);
+        foreach (var orphan in open.Where(s => !seen.Contains(s.ExternalEventId)))
+        {
+            orphan.State = SessionState.Ended;
+            orphan.EndedAtUtc ??= orphan.LastObservedUtc;
+        }
     }
 
     private async Task UpsertSessionAsync(Machine machine, SessionEventDto dto, CancellationToken ct)

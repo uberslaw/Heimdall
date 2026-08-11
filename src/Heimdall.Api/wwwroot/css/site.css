@@ -1466,6 +1466,21 @@ table.hd-sortable th.sorted-desc::after {
   background: rgba(212, 160, 23, 0.06);
 }
 
+/* Client Version: 2+ simple versions behind (amber highlight = exactly 1 behind). */
+.hd-row-behind-critical td {
+  background: rgba(200, 80, 80, 0.08);
+}
+
+.hd-client-ver-behind-1 code {
+  color: #d4a017;
+  font-weight: 600;
+}
+
+.hd-client-ver-behind-2 code {
+  color: #c45c5c;
+  font-weight: 600;
+}
+
 .hd-row-muted td {
   opacity: 0.55;
 }

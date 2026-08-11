@@ -134,20 +134,25 @@
             }
             @foreach (var r in Model.Rows)
             {
-                <tr class="@(r.Status == ClientVersionModel.ClientVersionStatus.OutOfDate ? "hd-row-highlight" : null)"
+                var hasFriendly = !string.IsNullOrWhiteSpace(r.FriendlyName);
+                <tr class="@ClientVersionModel.BehindRowClass(r.VersionsBehind)"
                     data-status="@r.Status">
                     <td>
                         <input type="checkbox" class="form-check-input host-check" name="SelectedHostnames" value="@r.Hostname"
                                @(r.IsOnline ? null : "title=\"Offline — queue when agent is back\"") />
                     </td>
                     <td data-sort-value="@((int)r.Status)">
-                        <span class="badge-pill @ClientVersionModel.StatusBadgeClass(r.Status)"
+                        <span class="badge-pill @ClientVersionModel.StatusBadgeClass(r.Status, r.VersionsBehind)"
                               title="@(r.AgentVersion ?? "")">
                             @ClientVersionModel.StatusLabel(r.Status)
                         </span>
                     </td>
-                    <td data-sort-value="@r.Hostname">
-                        <a asp-page="/Machine" asp-route-hostname="@r.Hostname"><strong>@r.Hostname</strong></a>
+                    <td data-sort-value="@r.DisplayName">
+                        <a asp-page="/Machine" asp-route-hostname="@r.Hostname" title="@r.Hostname"><strong>@r.DisplayName</strong></a>
+                        @if (hasFriendly)
+                        {
+                            <div class="text-secondary small">@r.Hostname</div>
+                        }
                         <div class="text-secondary small">@(string.IsNullOrWhiteSpace(r.LastIp) ? "—" : r.LastIp.Trim())</div>
                     </td>
                     <td data-sort-value="@(r.IsOnline ? 1 : 0)">
@@ -172,7 +177,7 @@
                             <span class="text-secondary">—</span>
                         }
                     </td>
-                    <td data-sort-value="@(r.SimpleVersion ?? -1)">
+                    <td class="@ClientVersionModel.VersionCellClass(r.VersionsBehind)" data-sort-value="@(r.SimpleVersion ?? -1)">
                         @if (r.SimpleVersion is int sv)
                         {
                             <code>@sv</code>
@@ -189,7 +194,7 @@
                     <td data-sort-value="@(r.VersionsBehind ?? 0)">
                         @if (r.VersionsBehind is int behind and > 0)
                         {
-                            <span class="badge-pill badge-expired">@behind version@(behind == 1 ? "" : "s") behind</span>
+                            <span class="badge-pill @ClientVersionModel.BehindBadgeClass(behind)">@behind version@(behind == 1 ? "" : "s") behind</span>
                         }
                         else
                         {

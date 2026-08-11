@@ -1,0 +1,21 @@
+using Heimdall.Api.Data;
+using Heimdall.Api.Services;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+
+var dbPath = @"C:\ProgramData\Heimdall\heimdall.db";
+var services = new ServiceCollection();
+services.AddDbContext<HeimdallDbContext>(o => o.UseSqlite($"Data Source={dbPath};Mode=ReadOnly"));
+services.AddScoped<MachineUtilisationService>();
+var sp = services.BuildServiceProvider();
+using var scope = sp.CreateScope();
+var util = scope.ServiceProvider.GetRequiredService<MachineUtilisationService>();
+var db = scope.ServiceProvider.GetRequiredService<HeimdallDbContext>();
+var id = db.Machines.AsNoTracking().Where(m => m.Hostname == "BNEDT4CE548CX12").Select(m => m.Id).First();
+var d = await util.GetDrilldownAsync(id, "today", "active", default);
+Console.WriteLine($"Drill total={d!.TotalDisplay} persons={d.ByPerson.Count} sessions={d.Sessions.Count}");
+foreach (var p in d.ByPerson) Console.WriteLine($"  person {p.Label}: {p.Detail}");
+foreach (var day in d.ByDay) Console.WriteLine($"  day {day.Label}: {day.Detail}");
+foreach (var s in d.Sessions) Console.WriteLine($"  sess {s.Username} {s.State} start={s.StartedUtc:u} end={s.EndedUtc?.ToString("u") ?? "-"} inWin={s.SecondsInWindow/3600:0.##}h apps={s.Processes.Count}");
+var row = (await util.ComputeAsync([id], "today", default))[id];
+Console.WriteLine($"Machine ActivePct={row.ActivePct:0.#} Passive={row.PassivePct?.ToString("0.#") ?? "-"} Free={row.FreePct:0.#}");

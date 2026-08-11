@@ -114,6 +114,7 @@ public class ClientVersionModel(
         {
             var simple = VersionCompare.TryGetSimpleVersion(m.AgentVersion);
             var behind = VersionCompare.GetVersionsBehind(PublishedVersion, m.AgentVersion);
+            var friendly = string.IsNullOrWhiteSpace(m.FriendlyName) ? null : m.FriendlyName.Trim();
 
             ClientVersionStatus status;
             if (string.IsNullOrWhiteSpace(PublishedVersion))
@@ -138,6 +139,7 @@ public class ClientVersionModel(
             return new ClientRow(
                 m.Id,
                 m.Hostname,
+                friendly,
                 m.LastIp,
                 m.MachineGroup,
                 m.Region,
@@ -152,17 +154,23 @@ public class ClientVersionModel(
                 activeUserSession?.State,
                 m.ClientUpdateProgressJson,
                 status);
-        }).ToList();
+        })
+            .OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         UpToDateCount = Rows.Count(r => r.Status == ClientVersionStatus.UpToDate);
         OutOfDateCount = Rows.Count(r => r.Status is ClientVersionStatus.OutOfDate or ClientVersionStatus.Missing);
         UnknownCount = Rows.Count(r => r.Status == ClientVersionStatus.NoBaseline);
     }
 
-    public static string StatusBadgeClass(ClientVersionStatus status) => status switch
+    /// <summary>
+    /// Out-of-date grading: amber when exactly one simple version behind, red when two or more.
+    /// Missing / unknown stays red; current and unparsed-as-behind stay non-alarm.
+    /// </summary>
+    public static string StatusBadgeClass(ClientVersionStatus status, int? versionsBehind = null) => status switch
     {
         ClientVersionStatus.UpToDate => "badge-active",
-        ClientVersionStatus.OutOfDate => "badge-expired",
+        ClientVersionStatus.OutOfDate => versionsBehind is 1 ? "badge-warn" : "badge-expired",
         ClientVersionStatus.Missing => "badge-expired",
         _ => "badge-warn"
     };
@@ -173,6 +181,27 @@ public class ClientVersionModel(
         ClientVersionStatus.OutOfDate => "Out of date",
         ClientVersionStatus.Missing => "Missing / unknown",
         _ => "No baseline set"
+    };
+
+    public static string? BehindBadgeClass(int? versionsBehind) => versionsBehind switch
+    {
+        1 => "badge-warn",
+        > 1 => "badge-expired",
+        _ => null
+    };
+
+    public static string? BehindRowClass(int? versionsBehind) => versionsBehind switch
+    {
+        1 => "hd-row-highlight",
+        > 1 => "hd-row-behind-critical",
+        _ => null
+    };
+
+    public static string? VersionCellClass(int? versionsBehind) => versionsBehind switch
+    {
+        1 => "hd-client-ver-behind-1",
+        > 1 => "hd-client-ver-behind-2",
+        _ => null
     };
 
     public static string FormatContact(DateTimeOffset utc) => RemoteMachineService.FormatAgentContact(utc);
@@ -196,6 +225,7 @@ public class ClientVersionModel(
     public sealed record ClientRow(
         int MachineId,
         string Hostname,
+        string? FriendlyName,
         string? LastIp,
         string? MachineGroup,
         string? Region,
@@ -209,7 +239,11 @@ public class ClientVersionModel(
         string? ActiveUser,
         SessionState? ActiveUserState,
         string? ClientUpdateProgressJson,
-        ClientVersionStatus Status);
+        ClientVersionStatus Status)
+    {
+        public string DisplayName =>
+            string.IsNullOrWhiteSpace(FriendlyName) ? Hostname : FriendlyName!;
+    }
 
     public static string ActiveUserBadgeClass(SessionState? state) => state switch
     {

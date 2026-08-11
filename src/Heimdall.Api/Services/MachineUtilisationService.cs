@@ -5,12 +5,18 @@ using Microsoft.EntityFrameworkCore;
 namespace Heimdall.Api.Services;
 
 /// <summary>
-/// Machines-list utilisation windows: Active (non-disconnected sessions), Passive/hardware from
-/// FleetMetricSnapshots when present, Free = remainder of calendar window.
+/// Machines-list utilisation windows: Active (WTS Active / connected time from session counters),
+/// Passive/hardware from FleetMetricSnapshots when present, Free = remainder of calendar window.
 /// </summary>
 public class MachineUtilisationService(HeimdallDbContext db)
 {
     public static readonly TimeSpan SampleInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Open sessions with no recent agent observation are treated as ended at LastObservedUtc
+    /// so stale Active rows cannot stretch to "now" across days.
+    /// </summary>
+    public static readonly TimeSpan SessionFreshness = TimeSpan.FromMinutes(15);
 
     public static IReadOnlyList<(string Key, string Label)> PeriodOptions { get; } =
     [
@@ -133,25 +139,64 @@ public class MachineUtilisationService(HeimdallDbContext db)
     {
         double total = 0;
         foreach (var s in sessions)
-        {
-            if (s.State == SessionState.Disconnected)
-                continue;
-
-            // Ended or Active (non-disconnected): count overlap, but for Disconnected segments
-            // we only have state at last observe — treat Disconnected rows as not active.
-            var start = s.StartedAtUtc < from ? from : s.StartedAtUtc;
-            var end = s.EndedAtUtc ?? to;
-            if (end > to) end = to;
-            if (end <= start) continue;
-
-            // If currently Disconnected, ActiveSeconds may still reflect prior active time —
-            // prefer clamping to ActiveSeconds when Ended and Disconnected history is unknown.
-            var overlap = (end - start).TotalSeconds;
-            if (s.State == SessionState.Ended && s.ActiveSeconds > 0)
-                overlap = Math.Min(overlap, s.ActiveSeconds);
-            total += Math.Max(0, overlap);
-        }
+            total += ActiveSecondsInWindow(s, from, to);
         return total;
+    }
+
+    /// <summary>
+    /// Active time in [from,to]: WTS-connected seconds attributed to the window.
+    /// Uses ActiveSeconds/(Active+Disconnected) when counters exist; never extends open sessions
+    /// past LastObservedUtc when the agent has stopped reporting (zombie Active rows).
+    /// </summary>
+    internal static double ActiveSecondsInWindow(
+        UserSession s,
+        DateTimeOffset from,
+        DateTimeOffset to)
+    {
+        var (start, end) = SessionPresenceInWindow(s, from, to);
+        if (end <= start)
+            return 0;
+
+        var overlap = (end - start).TotalSeconds;
+        var measured = s.ActiveSeconds + s.DisconnectedSeconds;
+        if (measured > 0)
+        {
+            // Cap presence by measured lifetime so a stale open row cannot invent wall time,
+            // then take the Active share of that presence.
+            var capped = Math.Min(overlap, measured);
+            return Math.Max(0, capped * (s.ActiveSeconds / (double)measured));
+        }
+
+        // No counters yet (brand-new session): count only while last known state is Active.
+        return s.State == SessionState.Active ? overlap : 0;
+    }
+
+    /// <summary>
+    /// Wall-clock presence of a session clipped to [from,to]. Open sessions that are still
+    /// fresh (observed within SessionFreshness of <paramref name="to"/>) extend to <paramref name="to"/>;
+    /// otherwise presence ends at EndedAtUtc or LastObservedUtc.
+    /// </summary>
+    internal static (DateTimeOffset Start, DateTimeOffset End) SessionPresenceInWindow(
+        UserSession s,
+        DateTimeOffset from,
+        DateTimeOffset to)
+    {
+        var start = s.StartedAtUtc < from ? from : s.StartedAtUtc;
+        DateTimeOffset end;
+        if (s.EndedAtUtc is DateTimeOffset ended)
+        {
+            end = ended;
+        }
+        else
+        {
+            var fresh = s.LastObservedUtc >= to - SessionFreshness;
+            end = fresh ? to : s.LastObservedUtc;
+        }
+
+        if (end > to) end = to;
+        if (end < from) return (from, from);
+        if (start > end) return (start, start);
+        return (start, end);
     }
 
     /// <summary>
@@ -316,7 +361,7 @@ public class MachineUtilisationService(HeimdallDbContext db)
         {
             "active" => BuildActiveDrilldown(machine, period, from, to, windowSeconds, util, sessions, processRuns),
             "passive" => BuildPassiveDrilldown(machine, period, from, to, windowSeconds, util, sessions, snaps),
-            "free" => BuildFreeDrilldown(machine, period, util, sessions, snaps),
+            "free" => BuildFreeDrilldown(machine, period, from, to, util, sessions, snaps),
             "gpu" or "cpu" or "dr" or "dw" or "ntx" or "nrx" =>
                 BuildHardwareDrilldown(machine, period, metric, from, to, util, sessions, snaps),
             _ => BuildActiveDrilldown(machine, period, from, to, windowSeconds, util, sessions, processRuns)
@@ -340,22 +385,14 @@ public class MachineUtilisationService(HeimdallDbContext db)
 
         foreach (var s in sessions)
         {
-            if (s.State == SessionState.Disconnected)
+            var activeInWindow = ActiveSecondsInWindow(s, from, to);
+            if (activeInWindow <= 0)
                 continue;
 
-            var start = s.StartedAtUtc < from ? from : s.StartedAtUtc;
-            var end = s.EndedAtUtc ?? to;
-            if (end > to) end = to;
-            if (end <= start) continue;
-
-            var overlap = (end - start).TotalSeconds;
-            if (s.State == SessionState.Ended && s.ActiveSeconds > 0)
-                overlap = Math.Min(overlap, s.ActiveSeconds);
-            if (overlap <= 0) continue;
-
+            var (start, end) = SessionPresenceInWindow(s, from, to);
             var user = DisplayUser(s.Username);
-            byPerson[user] = byPerson.GetValueOrDefault(user) + overlap;
-            AccumulateByDay(byDay, start, end, overlap);
+            byPerson[user] = byPerson.GetValueOrDefault(user) + activeInWindow;
+            AccumulateByDay(byDay, start, end, activeInWindow);
 
             var apps = processRuns
                 .Where(r => UsersMatch(r.Username, s.Username)
@@ -368,14 +405,18 @@ public class MachineUtilisationService(HeimdallDbContext db)
                 .ToList();
 
             foreach (var app in apps)
-                processWeights[app] = processWeights.GetValueOrDefault(app) + overlap;
+                processWeights[app] = processWeights.GetValueOrDefault(app) + activeInWindow;
+
+            var displayState = s.State.ToString();
+            if (s.EndedAtUtc is null && s.LastObservedUtc < to - SessionFreshness)
+                displayState = "Ended (stale)";
 
             sessionRows.Add(new DrillSessionRow(
                 user,
-                s.State.ToString(),
-                start,
-                s.EndedAtUtc,
-                overlap,
+                displayState,
+                s.StartedAtUtc,
+                s.EndedAtUtc ?? (s.LastObservedUtc < to - SessionFreshness ? s.LastObservedUtc : null),
+                activeInWindow,
                 apps));
         }
 
@@ -389,7 +430,7 @@ public class MachineUtilisationService(HeimdallDbContext db)
             "active",
             MetricLabel("active"),
             FormatPct(util.ActivePct),
-            "Non-disconnected session time over the selected window. Processes listed are tracked app runs that overlapped each session (may not cover every process).",
+            "WTS Active (connected) session time over the selected window — from agent ActiveSeconds, not calendar span while Disconnected. Stale open sessions stop at last observation. Concurrent sessions can sum above 100% in breakdowns; the Computers cell is capped at 100%. Processes are tracked app runs that overlapped each session.",
             hasProcessSamples,
             hasProcessSamples
                 ? null
@@ -471,12 +512,14 @@ public class MachineUtilisationService(HeimdallDbContext db)
     private static UtilDrilldown BuildFreeDrilldown(
         Machine machine,
         string period,
+        DateTimeOffset from,
+        DateTimeOffset to,
         MachineUtilRow util,
         IReadOnlyList<UserSession> sessions,
         IReadOnlyList<FleetMetricSnapshot> snaps)
     {
         var activeUsers = sessions
-            .Where(s => s.State != SessionState.Disconnected)
+            .Where(s => ActiveSecondsInWindow(s, from, to) > 0)
             .Select(s => DisplayUser(s.Username))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(u => u, StringComparer.OrdinalIgnoreCase)

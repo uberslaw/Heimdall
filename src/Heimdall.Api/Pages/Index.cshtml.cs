@@ -38,8 +38,9 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
             MachineHierarchy.EnsureDefaults(m);
 
         var sessions = await db.Sessions.AsNoTracking().ToListAsync(ct);
+        var freshCutoff = now - MachineUtilisationService.SessionFreshness;
         var openByMachine = sessions
-            .Where(s => s.State != SessionState.Ended)
+            .Where(s => s.State != SessionState.Ended && s.LastObservedUtc >= freshCutoff)
             .GroupBy(s => s.MachineId)
             .ToDictionary(g => g.Key, g => g.ToList());
 
@@ -56,7 +57,7 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
             var status = ResolveStatus(m.LastSeenUtc >= onlineCutoff, hasActiveSession);
 
             var lastUser = sessions.Where(s => s.MachineId == m.Id)
-                .OrderByDescending(s => s.State == SessionState.Active)
+                .OrderByDescending(s => s.State == SessionState.Active && s.LastObservedUtc >= freshCutoff)
                 .ThenByDescending(s => s.LastObservedUtc)
                 .ThenByDescending(s => s.ActiveSeconds)
                 .FirstOrDefault();
