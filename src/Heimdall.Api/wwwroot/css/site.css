@@ -675,6 +675,24 @@ html[data-theme="cosmic"] .hd-theme-opt.active {
   padding: 1rem 1.1rem;
 }
 
+a.hd-stat-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  cursor: pointer;
+}
+
+a.hd-stat-link:hover {
+  border-color: var(--hd-accent, #5b8def);
+  box-shadow: 0 0 0 1px rgba(91, 141, 239, 0.35);
+}
+
+a.hd-stat-link:focus-visible {
+  outline: 2px solid var(--hd-accent, #5b8def);
+  outline-offset: 2px;
+}
+
 html[data-theme="cosmic"] .hd-stat,
 html[data-theme="cosmic"] .hd-panel,
 html[data-theme="cosmic"] .hd-tree,
@@ -726,6 +744,89 @@ html[data-theme="cosmic"] table.hd-table th {
   font-size: 1.8rem;
   font-weight: 600;
   margin-top: 0.2rem;
+}
+
+.hd-stats-duration {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.hd-stats-duration-label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--hd-silver, #c8ced8);
+  min-width: 14rem;
+  text-align: center;
+}
+
+.hd-stats-duration-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--hd-border);
+  border-radius: 8px;
+  background: var(--hd-panel);
+  color: var(--hd-gold, var(--hd-accent));
+  text-decoration: none;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.hd-stats-duration-arrow:hover {
+  color: var(--hd-gold-light, var(--hd-link-hover));
+  border-color: var(--hd-accent-dim);
+  text-decoration: none;
+}
+
+.hd-stat-dense .value {
+  font-size: 1.45rem;
+}
+
+.hd-stat-lines {
+  line-height: 1.35;
+}
+
+.hd-stat-rank {
+  list-style: none;
+  padding: 0;
+  margin-top: 0.45rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.hd-stat-rank li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.12rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--hd-border) 70%, transparent);
+}
+
+.hd-stat-rank li:last-child {
+  border-bottom: none;
+}
+
+.hd-stat-rank-name {
+  font-weight: 560;
+  color: var(--hd-text, #e8ecf2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.hd-stat-rank-detail {
+  color: var(--hd-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .hd-panel {

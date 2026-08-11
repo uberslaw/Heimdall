@@ -7,7 +7,9 @@
     if (isPartial)
         Layout = null;
     var snap = Model.Snapshot;
-    var shortLabel = Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d";
+    var shortLabel = Model.UsesStatsDuration
+        ? Model.RangeLabel
+        : (Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d");
 }
 
 @if (!isPartial)
@@ -23,19 +25,38 @@
     <div class="row g-3 align-items-end">
         <div class="col-md-4 col-lg-3">
             <label class="form-label" for="util-range">Period</label>
-            <select class="form-select" name="range" id="util-range">
-                @foreach (var opt in IndexModel.RangeOptions)
-                {
-                    if (Model.Range == opt.Key)
+            @if (Model.UsesStatsDuration)
+            {
+                <select class="form-select" name="statsDuration" id="util-range">
+                    @foreach (var opt in MachineModel.StatsDurationOptions)
                     {
-                        <option value="@opt.Key" selected>@opt.Label</option>
+                        if (Model.StatsDuration == opt.Key)
+                        {
+                            <option value="@opt.Key" selected>@opt.Label</option>
+                        }
+                        else
+                        {
+                            <option value="@opt.Key">@opt.Label</option>
+                        }
                     }
-                    else
+                </select>
+            }
+            else
+            {
+                <select class="form-select" name="range" id="util-range">
+                    @foreach (var opt in IndexModel.RangeOptions)
                     {
-                        <option value="@opt.Key">@opt.Label</option>
+                        if (Model.Range == opt.Key)
+                        {
+                            <option value="@opt.Key" selected>@opt.Label</option>
+                        }
+                        else
+                        {
+                            <option value="@opt.Key">@opt.Label</option>
+                        }
                     }
-                }
-            </select>
+                </select>
+            }
         </div>
         <div class="col-md-4 col-lg-5">
             <div class="form-check">
@@ -51,6 +72,10 @@
             <button type="submit" class="btn btn-hd w-100">Apply</button>
         </div>
     </div>
+    @foreach (var h in Model.Hosts)
+    {
+        <input type="hidden" name="hosts" value="@h" />
+    }
 </form>
 
 @if (snap is null)
@@ -100,7 +125,14 @@ else
         else
         {
             <form method="get" id="machine-select-form">
-                <input type="hidden" name="range" value="@Model.Range" />
+                @if (Model.UsesStatsDuration)
+                {
+                    <input type="hidden" name="statsDuration" value="@Model.StatsDuration" />
+                }
+                else
+                {
+                    <input type="hidden" name="range" value="@Model.Range" />
+                }
                 @if (Model.HideSystem)
                 {
                     <input type="hidden" name="hideSystem" value="true" />
@@ -134,13 +166,21 @@ else
                             </td>
                             <td>
                                 @{
-                                    var sessionLink = Url.Page("/Sessions", new
-                                    {
-                                        range = Model.Range,
-                                        hosts = m.Hostname,
-                                        hideSystem = Model.HideSystem ? "true" : null,
-                                        onlyDisconnectedApps = Model.OnlyDisconnectedApps ? "true" : null
-                                    });
+                                    var sessionLink = Model.UsesStatsDuration
+                                        ? Url.Page("/Sessions", new
+                                        {
+                                            statsDuration = Model.StatsDuration,
+                                            hosts = m.Hostname,
+                                            hideSystem = Model.HideSystem ? "true" : null,
+                                            onlyDisconnectedApps = Model.OnlyDisconnectedApps ? "true" : null
+                                        })
+                                        : Url.Page("/Sessions", new
+                                        {
+                                            range = Model.Range,
+                                            hosts = m.Hostname,
+                                            hideSystem = Model.HideSystem ? "true" : null,
+                                            onlyDisconnectedApps = Model.OnlyDisconnectedApps ? "true" : null
+                                        });
                                 }
                                 <a href="@sessionLink">@m.Hostname</a>
                             </td>
@@ -173,6 +213,57 @@ else
 
     @if (snap.ShowSessionDetails)
     {
+        <div class="hd-panel mb-3" id="sessions-by-user">
+            <h2 class="hd-section-title mb-1">By user</h2>
+            <p class="text-secondary small mb-2">
+                Sessions per username · @Model.RangeLabel
+                @if (Model.Hosts.Count == 1)
+                {
+                    <span> · @Model.Hosts[0]</span>
+                }
+                else if (Model.Hosts.Count > 1)
+                {
+                    <span> · @Model.Hosts.Count machines</span>
+                }
+            </p>
+            @if (Model.UserSummaries.Count == 0)
+            {
+                <p class="text-secondary mb-0">No sessions match the current filters.</p>
+            }
+            else
+            {
+                <table class="hd-table hd-sortable" id="sessions-by-user-table">
+                    <thead>
+                        <tr>
+                            <th data-sort="text">User</th>
+                            <th data-sort="text">Team</th>
+                            <th data-sort="num" data-default-desc>Sessions</th>
+                            <th data-sort="num">Local</th>
+                            <th data-sort="num">RDP</th>
+                            <th data-sort="num">Open</th>
+                            <th data-sort="num">Active</th>
+                            <th data-sort="num">Disconnected</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var u in Model.UserSummaries)
+                    {
+                        <tr>
+                            <td data-sort-value="@u.DisplayName">@UsernameDisplay.FormatOrDash(u.Username, u.Domain)</td>
+                            <td>@(u.TeamName ?? "—")</td>
+                            <td>@u.SessionCount</td>
+                            <td>@u.LocalCount</td>
+                            <td>@u.RdpCount</td>
+                            <td>@u.OpenCount</td>
+                            <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
+                            <td data-sort-value="@u.DisconnectedSeconds">@DurationDisplay.Render(u.DisconnectedSeconds)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        </div>
+
         <div class="hd-panel" id="session-log">
             <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
                 <div>

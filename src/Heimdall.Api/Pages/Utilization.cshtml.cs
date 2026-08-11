@@ -148,20 +148,27 @@ public class UtilizationModel(HeimdallDbContext db) : PageModel
         Criteria = await EnsureCriteriaAsync(ct);
         BindFrom(Criteria);
 
-        var known = await db.KnownApps.AsNoTracking().OrderBy(a => a.DisplayName).ToListAsync(ct);
+        var catalogNames = (await db.ProcessCatalogEntries.AsNoTracking()
+                .Where(c => c.DisplayName != null && c.DisplayName != "")
+                .Select(c => new { c.ProcessName, c.DisplayName, c.LastSeenUtc })
+                .ToListAsync(ct))
+            .GroupBy(c => c.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(x => x.LastSeenUtc).First())
+            .OrderBy(c => c.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         var costs = await db.AppLicenseCosts.AsNoTracking().ToListAsync(ct);
         var costByProcess = costs.ToDictionary(c => c.ProcessName, StringComparer.OrdinalIgnoreCase);
 
         var rows = new List<AppLicenseRowVm>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var app in known)
+        foreach (var app in catalogNames)
         {
             costByProcess.TryGetValue(app.ProcessName, out var cost);
             rows.Add(new AppLicenseRowVm(
                 cost?.Id,
                 app.ProcessName,
-                app.DisplayName,
+                app.DisplayName ?? app.ProcessName,
                 cost?.LicenseCostPerYear));
             seen.Add(app.ProcessName);
         }

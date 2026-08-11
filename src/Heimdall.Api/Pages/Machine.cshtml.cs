@@ -27,6 +27,10 @@ public class MachineModel(
     [BindProperty(SupportsGet = true)]
     public string Range { get; set; } = "7d";
 
+    /// <summary>Period for the four session/stats cards under App lists. Default Last 7 Days.</summary>
+    [BindProperty(SupportsGet = true)]
+    public string StatsDuration { get; set; } = "7d";
+
     [BindProperty(SupportsGet = true)]
     public List<string> Apps { get; set; } = [];
 
@@ -52,9 +56,95 @@ public class MachineModel(
     public string? FriendlyNameInput { get; set; }
 
     public MachineDetailSnapshot? Detail { get; private set; }
+    public MachinePeriodStatsCards? PeriodStats { get; private set; }
     public bool HostNotFound { get; private set; }
     public string RangeLabel { get; private set; } = "7 day";
     public int RangeDays { get; private set; } = 7;
+    public string StatsDurationLabel { get; private set; } = "Last 7 Days";
+    public string PrevStatsDuration { get; private set; } = "week";
+    public string NextStatsDuration { get; private set; } = "month";
+
+    /// <summary>First agent sighting — shown on the 365d util card.</summary>
+    public DateTimeOffset? TrackingBeganUtc { get; private set; }
+
+    /// <summary>Utilisation over the trailing 365 days (wall-clock occupied %).</summary>
+    public double Utilisation365Pct { get; private set; }
+
+    /// <summary>Sessions Fleet tab range key closest to <see cref="StatsDuration"/>.</summary>
+    public string SessionsRangeKey { get; private set; } = "7d";
+
+    public static IReadOnlyList<(string Key, string Label)> StatsDurationOptions { get; } =
+    [
+        ("today", "Today"),
+        ("24h", "Last 24hr"),
+        ("week", "This week"),
+        ("7d", "Last 7 Days"),
+        ("month", "This Month"),
+        ("3m", "Last 3 Months"),
+        ("6m", "Last 6 Months"),
+        ("12m", "Last 12 months"),
+    ];
+
+    public static string NormalizeStatsDuration(string? key)
+    {
+        var k = (key ?? "7d").Trim().ToLowerInvariant();
+        return StatsDurationOptions.Any(o => o.Key == k) ? k : "7d";
+    }
+
+    public static string StatsDurationLabelFor(string? key) =>
+        StatsDurationOptions.First(o => o.Key == NormalizeStatsDuration(key)).Label;
+
+    public static string AdjacentStatsDuration(string? key, int delta)
+    {
+        var k = NormalizeStatsDuration(key);
+        var idx = StatsDurationOptions.ToList().FindIndex(o => o.Key == k);
+        var n = StatsDurationOptions.Count;
+        return StatsDurationOptions[(idx + delta % n + n) % n].Key;
+    }
+
+    /// <summary>Map machine Stats Duration onto Fleet/Sessions <see cref="IndexModel.RangeOptions"/> keys.</summary>
+    public static string MapStatsDurationToSessionsRange(string? statsDuration) =>
+        NormalizeStatsDuration(statsDuration) switch
+        {
+            "today" or "24h" => "1d",
+            "week" or "7d" => "7d",
+            "month" => "4w",
+            "3m" => "quarter",
+            "6m" => "6m",
+            "12m" => "year",
+            _ => "7d"
+        };
+
+    public static string FormatTrackingBegan(DateTimeOffset utc) =>
+        utc.ToLocalTime().ToString("dd/MM/yyyy");
+
+    /// <summary>UTC window for machine stats-duration cards.</summary>
+    public static (DateTimeOffset From, DateTimeOffset To) ResolveStatsDurationWindow(string? key, DateTimeOffset now)
+    {
+        var k = NormalizeStatsDuration(key);
+        var to = now;
+        DateTimeOffset from = k switch
+        {
+            "today" => new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero),
+            "24h" => now.AddHours(-24),
+            "week" => StartOfUtcWeek(now),
+            "7d" => now.AddDays(-7),
+            "month" => new DateTimeOffset(now.UtcDateTime.Year, now.UtcDateTime.Month, 1, 0, 0, 0, TimeSpan.Zero),
+            "3m" => now.AddMonths(-3),
+            "6m" => now.AddMonths(-6),
+            "12m" => now.AddMonths(-12),
+            _ => now.AddDays(-7)
+        };
+        return (from, to);
+    }
+
+    private static DateTimeOffset StartOfUtcWeek(DateTimeOffset now)
+    {
+        // Monday 00:00 UTC
+        var date = now.UtcDateTime.Date;
+        var offset = ((int)date.DayOfWeek + 6) % 7;
+        return new DateTimeOffset(date.AddDays(-offset), TimeSpan.Zero);
+    }
 
     public string? FriendlyName { get; private set; }
     public string? LastIp { get; private set; }
@@ -376,18 +466,33 @@ public class MachineModel(
         RangeLabel = label;
         RangeDays = days;
 
+        StatsDuration = NormalizeStatsDuration(StatsDuration);
+        StatsDurationLabel = StatsDurationLabelFor(StatsDuration);
+        PrevStatsDuration = AdjacentStatsDuration(StatsDuration, -1);
+        NextStatsDuration = AdjacentStatsDuration(StatsDuration, 1);
+        SessionsRangeKey = MapStatsDurationToSessionsRange(StatsDuration);
+
         if (string.IsNullOrWhiteSpace(Hostname))
             return;
 
         var host = Hostname.Trim();
-        var fromUtc = DateTimeOffset.UtcNow.AddDays(-days);
-        var toUtc = DateTimeOffset.UtcNow;
+        var now = DateTimeOffset.UtcNow;
+        var fromUtc = now.AddDays(-days);
+        var toUtc = now;
         var selectedApps = Apps.Count > 0 ? Apps : null;
 
         Detail = await stats.QueryMachineDetailAsync(host, fromUtc, toUtc, selectedApps, ct);
         HostNotFound = Detail is null;
         if (HostNotFound)
             return;
+
+        var (statsFrom, statsTo) = ResolveStatsDurationWindow(StatsDuration, now);
+        PeriodStats = await stats.QueryMachinePeriodStatsAsync(host, statsFrom, statsTo, ct);
+
+        if (RangeDays == 365)
+            Utilisation365Pct = Detail!.UtilisationPct;
+        else
+            Utilisation365Pct = await stats.QueryMachineUtilisationPctAsync(host, now.AddDays(-365), now, ct);
 
         TeamOptions = await Teams.TeamPageHelpers.LoadTeamOptionsAsync(db);
         AppListsView = await appLists.GetEffectiveForHostAsync(host, ct);
@@ -401,6 +506,9 @@ public class MachineModel(
             .FirstOrDefaultAsync(m => m.Hostname == host, ct);
         if (machine is not null)
         {
+            if (machine.FirstSeenUtc > DateTimeOffset.UnixEpoch)
+                TrackingBeganUtc = machine.FirstSeenUtc;
+
             FriendlyName = string.IsNullOrWhiteSpace(machine.FriendlyName) ? null : machine.FriendlyName.Trim();
             LastIp = string.IsNullOrWhiteSpace(machine.LastIp) ? null : machine.LastIp.Trim();
             MachineTeamId = machine.TeamId;
@@ -574,7 +682,7 @@ public class MachineModel(
     }
 
     private IActionResult RedirectToMachine(string? host) =>
-        RedirectToPage(new { hostname = host, range = Range });
+        RedirectToPage(new { hostname = host, range = Range, statsDuration = StatsDuration });
 }
 
 public sealed record MachineResourceGlance(

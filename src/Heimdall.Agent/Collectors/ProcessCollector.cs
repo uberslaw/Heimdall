@@ -16,9 +16,7 @@ public sealed class ProcessCollector
         Func<int, (string Username, string? Domain)?> sessionUserLookup)
     {
         var now = DateTimeOffset.UtcNow;
-        var include = new HashSet<string>(
-            config.IncludeProcesses.Concat(config.KnownApps.Where(a => a.Enabled).Select(a => a.ProcessName)),
-            StringComparer.OrdinalIgnoreCase);
+        var include = new HashSet<string>(config.IncludeProcesses, StringComparer.OrdinalIgnoreCase);
         var exclude = new HashSet<string>(config.ExcludeProcesses, StringComparer.OrdinalIgnoreCase);
 
         if (include.Count == 0)

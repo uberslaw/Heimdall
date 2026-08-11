@@ -532,12 +532,8 @@ public class ConfigService(HeimdallDbContext db)
             exclude = DeserializeList(primary.ExcludeProcessesJson);
         }
 
-        var knownApps = await db.KnownApps.AsNoTracking().Where(a => a.EnabledByDefault).ToListAsync(ct);
-        foreach (var app in knownApps)
-        {
-            if (!include.Contains(app.ProcessName, StringComparer.OrdinalIgnoreCase))
-                include.Add(app.ProcessName);
-        }
+        // KnownApps no longer feed agent include lists — App lists (assignments / team links /
+        // machine overrides) are the only supported apply/ignore tracking source for apps.
 
         // Merge processes from AppLists assigned to scopes matching this host.
         // Pending analysis proposals are NOT included until approved.
@@ -666,12 +662,7 @@ public class ConfigService(HeimdallDbContext db)
             MinCpuPercentToTrack = primary.MinCpuPercentToTrack,
             IncludeProcesses = include,
             ExcludeProcesses = exclude,
-            KnownApps = knownApps.Select(a => new KnownAppDto
-            {
-                DisplayName = a.DisplayName,
-                ProcessName = a.ProcessName,
-                Enabled = a.EnabledByDefault && !pausedIncludes.Contains(a.ProcessName)
-            }).ToList(),
+            KnownApps = [],
             MetricThresholds = thresholds,
             ProcessPauses = pauseDtos,
             PendingAppAnalysis = machine?.PendingAppAnalysis == true,

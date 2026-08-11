@@ -336,6 +336,64 @@ public sealed class ProcessCatalogService(HeimdallDbContext db, ProcessGroupServ
         return new UpsertSummary(totalNew, totalUpdated, allNewNames);
     }
 
+    /// <summary>
+    /// Admin/pre-install catalog row: path/exe/friendly/description without requiring a live sighting.
+    /// Bypasses discovery eligibility filters so software can be listed before it is installed.
+    /// </summary>
+    public async Task<ProcessCatalogEntry> EnsureManualEntryAsync(
+        string processName,
+        string? executablePath,
+        string? displayName,
+        string? description,
+        CancellationToken ct = default)
+    {
+        var name = ConfigService.NormalizeProcessName(processName);
+        if (name.Length == 0)
+            throw new ArgumentException("Process name is required.", nameof(processName));
+
+        var path = string.IsNullOrWhiteSpace(executablePath) ? "" : executablePath.Trim();
+        var now = DateTimeOffset.UtcNow;
+        var existing = await db.ProcessCatalogEntries
+            .FirstOrDefaultAsync(e =>
+                e.ProcessName == name
+                && e.ExecutablePath == path, ct);
+
+        if (existing is null && path.Length > 0)
+        {
+            existing = await db.ProcessCatalogEntries
+                .FirstOrDefaultAsync(e =>
+                    e.ProcessName == name
+                    && (e.ExecutablePath == null || e.ExecutablePath == ""), ct);
+        }
+
+        if (existing is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(displayName))
+                existing.DisplayName = displayName.Trim();
+            if (!string.IsNullOrWhiteSpace(description))
+                existing.Description = description.Trim();
+            if (path.Length > 0 && string.IsNullOrWhiteSpace(existing.ExecutablePath))
+                existing.ExecutablePath = path;
+            existing.LastSeenUtc = now;
+            await db.SaveChangesAsync(ct);
+            return existing;
+        }
+
+        var entry = new ProcessCatalogEntry
+        {
+            ProcessName = name,
+            ExecutablePath = path,
+            DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName.Trim(),
+            Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+            FirstSeenUtc = now,
+            LastSeenUtc = now,
+            SeenCount = 0
+        };
+        db.ProcessCatalogEntries.Add(entry);
+        await db.SaveChangesAsync(ct);
+        return entry;
+    }
+
     /// <summary>Insert/refresh catalog rows for a batch of observed processes; flags + logs newly-identified ones.</summary>
     public Task<UpsertSummary> UpsertAsync(
         IEnumerable<CatalogItem> items,

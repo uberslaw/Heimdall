@@ -1,0 +1,275 @@
+@model Heimdall.Api.Pages.AppListsModel
+@using System.Text.Json
+@{
+    var draft = new List<(string ProcessName, string? DisplayName)>();
+    try
+    {
+        using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(Model.DraftEntriesJson) ? "[]" : Model.DraftEntriesJson);
+        foreach (var el in doc.RootElement.EnumerateArray())
+        {
+            var proc = el.TryGetProperty("processName", out var p) ? p.GetString()
+                : el.TryGetProperty("ProcessName", out var p2) ? p2.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(proc)) continue;
+            string? display = null;
+            if (el.TryGetProperty("displayName", out var d) || el.TryGetProperty("DisplayName", out d))
+                display = d.ValueKind == JsonValueKind.Null ? null : d.GetString();
+            draft.Add((proc.Trim(), string.IsNullOrWhiteSpace(display) ? null : display.Trim()));
+        }
+    }
+    catch { /* ignore */ }
+}
+
+<div class="hd-panel mb-3">
+    <form method="post" asp-page-handler="SaveList" id="create-list-form">
+        <input type="hidden" asp-for="EditId" />
+        <input type="hidden" asp-for="DraftEntriesJson" id="draft-entries-json" />
+        <input type="hidden" name="Tab" value="create" />
+
+        <div class="row g-2 align-items-end mb-3" style="max-width:52rem">
+            <div class="col-md-4">
+                <label class="form-label" for="ListName">Name</label>
+                @if (Model.EditingIsSystem)
+                {
+                    <input class="form-control form-control-sm" asp-for="ListName" readonly />
+                }
+                else
+                {
+                    <input class="form-control form-control-sm" asp-for="ListName" placeholder="e.g. Flood Minions" />
+                }
+            </div>
+            <div class="col-md-3">
+                <label class="form-label" for="TeamId">Team (optional)</label>
+                <select class="form-select form-select-sm" asp-for="TeamId">
+                    <option value="">— none —</option>
+                    @foreach (var t in Model.Teams)
+                    {
+                        <option value="@t.Id">@t.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-5">
+                <label class="form-label" for="Notes">Notes</label>
+                <input class="form-control form-control-sm" asp-for="Notes" />
+            </div>
+        </div>
+        @if (Model.EditingIsSystem)
+        {
+            <p class="form-text small mb-2">System list name is locked. Entries re-sync from classifications on page load.</p>
+        }
+        else
+        {
+            <p class="form-text small mb-2">Team label only — apply/ignore lists on <a asp-page="/Teams">Teams</a> or the Apply tab.</p>
+        }
+
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+            <div>
+                <span class="text-secondary small">Draft apps:</span>
+                <span id="draft-count" class="small">@draft.Count</span>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                @if (Model.EditId is not null)
+                {
+                    <a class="hd-btn hd-btn-rose hd-btn-sm" asp-page="/AppLists" asp-route-tab="lists">Cancel</a>
+                }
+                <button type="submit" class="hd-btn hd-btn-gold hd-btn-sm" id="create-save-btn">Save</button>
+            </div>
+        </div>
+        <div id="draft-chips" class="d-flex flex-wrap gap-1 mb-3">
+            @foreach (var e in draft)
+            {
+                var label = e.DisplayName ?? e.ProcessName;
+                <span class="badge-pill badge-local" data-draft-proc="@e.ProcessName">
+                    @label
+                    <button type="button" class="btn btn-link btn-sm p-0 ms-1 text-secondary draft-remove" aria-label="Remove">&times;</button>
+                </span>
+            }
+        </div>
+    </form>
+</div>
+
+<div class="hd-panel mb-3">
+    <form method="post" asp-page-handler="AddCustomCatalog" class="row g-2 align-items-end">
+        <input type="hidden" name="Tab" value="create" />
+        <input type="hidden" asp-for="EditId" />
+        <input type="hidden" asp-for="ListName" />
+        <input type="hidden" asp-for="TeamId" />
+        <input type="hidden" asp-for="Notes" />
+        <input type="hidden" asp-for="DraftEntriesJson" />
+        <input type="hidden" asp-for="CreateSearch" />
+        <div class="col-12">
+            <h2 class="h6 mb-1">Add custom software to catalog</h2>
+            <p class="text-secondary small mb-2">Pre-install apps: add path / exe / friendly name / description, then Add to list below. Tracking starts once this list is applied.</p>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-0">Process name</label>
+            <input class="form-control form-control-sm" name="CustomProcessName" required placeholder="acad" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small mb-0">Path (optional)</label>
+            <input class="form-control form-control-sm" name="CustomExecutablePath" placeholder="C:\Program Files\…" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-0">Friendly name</label>
+            <input class="form-control form-control-sm" name="CustomDisplayName" placeholder="AutoCAD" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small mb-0">Description</label>
+            <input class="form-control form-control-sm" name="CustomDescription" />
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm w-100">Add to catalog</button>
+        </div>
+    </form>
+</div>
+
+<form method="get" class="hd-panel mb-3" id="create-catalog-filter">
+    <input type="hidden" name="tab" value="create" />
+    @if (Model.EditId is int eid)
+    {
+        <input type="hidden" name="edit" value="@eid" />
+    }
+    <div class="row g-2 align-items-end">
+        <div class="col-md-6 col-lg-4">
+            <label class="form-label" for="create-q">Search catalog</label>
+            <div class="input-group">
+                <input type="search" class="form-control" name="q" id="create-q" value="@Model.CreateSearch"
+                       placeholder="Name, path, category…" autocomplete="off" />
+                <button type="submit" class="hd-btn hd-btn-silver">Search</button>
+            </div>
+        </div>
+        <div class="col-auto">
+            <button type="button" class="hd-btn hd-btn-gold" id="add-selected-to-list">Add to list</button>
+        </div>
+    </div>
+</form>
+
+<div class="hd-panel mb-3">
+    <div class="table-responsive">
+        <table class="hd-table hd-sortable mb-0" id="create-catalog-table">
+            <thead>
+                <tr>
+                    <th style="width:2rem"><input type="checkbox" class="form-check-input" id="create-select-all" title="Select all" /></th>
+                    <th data-sort="text">Name &amp; location</th>
+                    <th data-sort="text">Version</th>
+                    <th data-sort="text">Category</th>
+                    <th data-sort="num">Installs</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+            @if (Model.CreateCatalogRows.Count == 0)
+            {
+                <tr><td colspan="6" class="text-secondary">No catalog rows@(string.IsNullOrWhiteSpace(Model.CreateSearch) ? "" : " matching search"). Add custom software above, or wait for Discovery ingest.</td></tr>
+            }
+            @foreach (var r in Model.CreateCatalogRows)
+            {
+                var label = string.IsNullOrWhiteSpace(r.DisplayName) ? r.ProcessName : r.DisplayName;
+                <tr data-proc="@r.ProcessName" data-display="@label">
+                    <td><input type="checkbox" class="form-check-input create-row-check" value="@r.Id" /></td>
+                    <td>
+                        <strong>@label</strong>
+                        @if (!string.Equals(label, r.ProcessName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            <div class="text-secondary small">@r.ProcessName</div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(r.ExecutablePath))
+                        {
+                            <div class="hd-process-path text-secondary small">@r.ExecutablePath</div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(r.Description))
+                        {
+                            <div class="text-secondary small mt-1">@r.Description</div>
+                        }
+                    </td>
+                    <td class="small text-secondary">@(r.Version ?? "—")</td>
+                    <td class="small">@(r.Category ?? "—")</td>
+                    <td data-sort-value="@r.HostCount">@r.HostCount</td>
+                    <td>
+                        <button type="button" class="hd-btn hd-btn-silver hd-btn-sm create-add-one"
+                                data-proc="@r.ProcessName" data-display="@label">Add to list</button>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+    <p class="text-secondary small mt-2 mb-0">Showing up to 200 catalog rows. Use search to narrow. Save requires a list name.</p>
+</div>
+
+<script>
+(() => {
+  const draftInput = document.getElementById('draft-entries-json');
+  const chips = document.getElementById('draft-chips');
+  const countEl = document.getElementById('draft-count');
+  const saveBtn = document.getElementById('create-save-btn');
+  const nameInput = document.getElementById('ListName');
+
+  function readDraft() {
+    try { return JSON.parse(draftInput.value || '[]') || []; }
+    catch { return []; }
+  }
+  function writeDraft(list) {
+    draftInput.value = JSON.stringify(list);
+    countEl.textContent = String(list.length);
+    chips.innerHTML = '';
+    for (const e of list) {
+      const label = e.displayName || e.DisplayName || e.processName || e.ProcessName;
+      const proc = e.processName || e.ProcessName;
+      const span = document.createElement('span');
+      span.className = 'badge-pill badge-local';
+      span.dataset.draftProc = proc;
+      span.innerHTML = `${label} <button type="button" class="btn btn-link btn-sm p-0 ms-1 text-secondary draft-remove" aria-label="Remove">&times;</button>`;
+      chips.appendChild(span);
+    }
+  }
+  function addEntries(items) {
+    const list = readDraft();
+    const seen = new Set(list.map(e => (e.processName || e.ProcessName || '').toLowerCase()));
+    for (const it of items) {
+      const proc = (it.processName || '').trim();
+      if (!proc || seen.has(proc.toLowerCase())) continue;
+      seen.add(proc.toLowerCase());
+      list.push({ processName: proc, displayName: it.displayName || null });
+    }
+    writeDraft(list);
+  }
+
+  chips?.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.draft-remove');
+    if (!btn) return;
+    const proc = btn.closest('[data-draft-proc]')?.dataset.draftProc;
+    if (!proc) return;
+    writeDraft(readDraft().filter(e => (e.processName || e.ProcessName || '').toLowerCase() !== proc.toLowerCase()));
+  });
+
+  document.getElementById('create-select-all')?.addEventListener('change', (e) => {
+    const on = e.target.checked;
+    document.querySelectorAll('.create-row-check').forEach(cb => { cb.checked = on; });
+  });
+
+  document.getElementById('add-selected-to-list')?.addEventListener('click', () => {
+    const items = [];
+    document.querySelectorAll('#create-catalog-table tbody tr').forEach(tr => {
+      const cb = tr.querySelector('.create-row-check');
+      if (cb?.checked) items.push({ processName: tr.dataset.proc, displayName: tr.dataset.display });
+    });
+    if (items.length === 0) { alert('Select one or more catalog rows first.'); return; }
+    addEntries(items);
+  });
+
+  document.querySelectorAll('.create-add-one').forEach(btn => {
+    btn.addEventListener('click', () => {
+      addEntries([{ processName: btn.dataset.proc, displayName: btn.dataset.display }]);
+    });
+  });
+
+  document.getElementById('create-list-form')?.addEventListener('submit', (ev) => {
+    if (!nameInput?.value?.trim()) {
+      ev.preventDefault();
+      alert('Enter a list name before Save.');
+      nameInput?.focus();
+    }
+  });
+})();
+</script>

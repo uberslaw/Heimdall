@@ -60,7 +60,7 @@ else if (d is not null)
                 @if (!Model.EditFriendly)
                 {
                     <a class="hd-btn hd-btn-silver hd-btn-sm py-0 px-2" style="font-size:0.7rem;line-height:1.4"
-                       asp-page="/Machine" asp-route-Hostname="@d.Hostname" asp-route-Range="@Model.Range" asp-route-EditFriendly="true">Edit</a>
+                       asp-page="/Machine" asp-route-Hostname="@d.Hostname" asp-route-Range="@Model.Range" asp-route-StatsDuration="@Model.StatsDuration" asp-route-EditFriendly="true">Edit</a>
                 }
             </div>
             @if (Model.EditFriendly)
@@ -68,11 +68,12 @@ else if (d is not null)
                 <form method="post" asp-page-handler="SaveFriendlyName" class="mt-1">
                     <input type="hidden" name="Hostname" value="@Model.Hostname" />
                     <input type="hidden" name="Range" value="@Model.Range" />
+                    <input type="hidden" name="StatsDuration" value="@Model.StatsDuration" />
                     <div class="d-flex flex-wrap gap-1 align-items-center">
                         <input class="form-control form-control-sm" name="FriendlyNameInput" value="@Model.FriendlyNameInput"
                                maxlength="80" placeholder="e.g. Revit workstation" style="min-width:10rem;max-width:14rem" />
                         <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Save</button>
-                        <a class="small" asp-page="/Machine" asp-route-Hostname="@d.Hostname" asp-route-Range="@Model.Range">Cancel</a>
+                        <a class="small" asp-page="/Machine" asp-route-Hostname="@d.Hostname" asp-route-Range="@Model.Range" asp-route-StatsDuration="@Model.StatsDuration">Cancel</a>
                     </div>
                 </form>
             }
@@ -84,6 +85,7 @@ else if (d is not null)
             <form method="post" asp-page-handler="SaveTeam" class="mt-2">
                 <input type="hidden" name="Hostname" value="@Model.Hostname" />
                 <input type="hidden" name="Range" value="@Model.Range" />
+                <input type="hidden" name="StatsDuration" value="@Model.StatsDuration" />
                 <label class="form-label small text-secondary mb-0" for="machine-team">Team</label>
                 <select class="form-select form-select-sm" id="machine-team" name="SelectedTeamId"
                         style="max-width:14rem" onchange="this.form.submit()"
@@ -128,6 +130,7 @@ else if (d is not null)
                     <span>Disk @glance.DiskLevel</span>
                     <span>Network @glance.NetworkLevel</span>
                 </div>
+                <div class="text-secondary small mt-1">@MachineModel.FormatLocalTimestamp(glance.SampledAtUtc)</div>
             }
             else
             {
@@ -135,7 +138,7 @@ else if (d is not null)
             }
         </div>
         <div class="hd-stat">
-            <div class="label">Last check-in</div>
+            <div class="label">Agent Check-in</div>
             <div class="value" style="font-size:1rem;margin-top:0.35rem">
                 @d.LastSeenUtc.ToLocalTime().ToString("g")
                 <br/><span class="text-secondary small">@IndexModel.FormatRelativeUtc(d.LastSeenUtc)</span>
@@ -160,8 +163,119 @@ else if (d is not null)
             </div>
         </div>
         <div class="hd-stat">
-            <div class="label">@shortLabel utilisation</div>
-            <div class="value">@d.UtilisationPct.ToString("0")%</div>
+            <div class="label">365d utilisation</div>
+            <div class="value">@Model.Utilisation365Pct.ToString("0")%</div>
+            <div class="text-secondary small mt-1">
+                @if (Model.TrackingBeganUtc is DateTimeOffset began)
+                {
+                    <span>Tracking began: @MachineModel.FormatTrackingBegan(began)</span>
+                }
+                else
+                {
+                    <span>Tracking began: —</span>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="hd-stats-duration mb-3" role="navigation" aria-label="Stats duration">
+        <a class="hd-stats-duration-arrow"
+           asp-page="/Machine"
+           asp-route-Hostname="@d.Hostname"
+           asp-route-Range="@Model.Range"
+           asp-route-StatsDuration="@Model.PrevStatsDuration"
+           title="Previous period"
+           aria-label="Previous stats duration">‹</a>
+        <span class="hd-stats-duration-label">Stats Duration: @Model.StatsDurationLabel</span>
+        <a class="hd-stats-duration-arrow"
+           asp-page="/Machine"
+           asp-route-Hostname="@d.Hostname"
+           asp-route-Range="@Model.Range"
+           asp-route-StatsDuration="@Model.NextStatsDuration"
+           title="Next period"
+           aria-label="Next stats duration">›</a>
+    </div>
+
+    var ps = Model.PeriodStats;
+    var sess = ps?.Sessions ?? d.Sessions;
+    <div class="hd-grid mb-3">
+        <a class="hd-stat hd-stat-dense hd-stat-link"
+           href="@Url.Page("/Sessions", new { hosts = d.Hostname, statsDuration = Model.StatsDuration, hideSystem = "true" })"
+           title="Open sessions for @d.Hostname · @Model.StatsDurationLabel">
+            <div class="label">Sessions</div>
+            <div class="value">@sess.TotalCount</div>
+            <div class="hd-stat-lines text-secondary small mt-1">
+                <div>Local @sess.LocalCount · Inbound RDP @sess.RdpCount</div>
+                <div>Open now @sess.OpenCount</div>
+            </div>
+        </a>
+        <div class="hd-stat hd-stat-dense">
+            <div class="label">Top users</div>
+            @if (ps is null || ps.TopUsers.Count == 0)
+            {
+                <div class="text-secondary small mt-2">No sessions in this period</div>
+            }
+            else
+            {
+                <ol class="hd-stat-rank mb-0">
+                    @foreach (var row in ps.TopUsers)
+                    {
+                        <li>
+                            <span class="hd-stat-rank-name" title="@row.Label">@TruncateName(row.Label, 18)</span>
+                            <span class="hd-stat-rank-detail">@row.Detail</span>
+                        </li>
+                    }
+                </ol>
+            }
+        </div>
+        <div class="hd-stat hd-stat-dense">
+            <div class="label">Top apps · CPU / GPU</div>
+            @if (ps is null || ps.TopComputeApps.Count == 0)
+            {
+                <div class="text-secondary small mt-2">No CPU/GPU samples yet</div>
+            }
+            else
+            {
+                <ol class="hd-stat-rank mb-0">
+                    @foreach (var row in ps.TopComputeApps)
+                    {
+                        <li>
+                            <span class="hd-stat-rank-name" title="@row.Label">@TruncateName(row.Label, 16)</span>
+                            <span class="hd-stat-rank-detail">@row.Detail</span>
+                        </li>
+                    }
+                </ol>
+            }
+        </div>
+        <div class="hd-stat hd-stat-dense">
+            <div class="label">Top apps · Disk / Net</div>
+            @if (ps is null || (ps.TopIoApps.Count == 0 && string.IsNullOrWhiteSpace(ps.NetworkSummary)))
+            {
+                <div class="text-secondary small mt-2">No disk/network samples yet</div>
+            }
+            else
+            {
+                if (ps.TopIoApps.Count > 0)
+                {
+                    <ol class="hd-stat-rank mb-0">
+                        @foreach (var row in ps.TopIoApps)
+                        {
+                            <li>
+                                <span class="hd-stat-rank-name" title="@row.Label">@TruncateName(row.Label, 16)</span>
+                                <span class="hd-stat-rank-detail">@row.Detail</span>
+                            </li>
+                        }
+                    </ol>
+                }
+                else
+                {
+                    <div class="text-secondary small mt-2">No per-app disk data</div>
+                }
+                if (!string.IsNullOrWhiteSpace(ps.NetworkSummary))
+                {
+                    <div class="hd-stat-lines text-secondary small mt-2">@ps.NetworkSummary</div>
+                }
+            }
         </div>
     </div>
 
@@ -259,6 +373,7 @@ else if (d is not null)
         <form method="post" asp-page-handler="RequestDiskUsageScan" class="row g-2 align-items-end mb-3">
             <input type="hidden" name="Hostname" value="@Model.Hostname" />
             <input type="hidden" name="Range" value="@Model.Range" />
+            <input type="hidden" name="StatsDuration" value="@Model.StatsDuration" />
             <div class="col-auto">
                 <label class="form-label small mb-0" for="disk-scan-root">Drive</label>
                 <select class="form-select form-select-sm" id="disk-scan-root" name="DiskScanRoot" style="min-width:6rem">
@@ -470,6 +585,7 @@ else if (d is not null)
                     <form method="post" asp-page-handler="RequestInventory" class="d-inline">
                         <input type="hidden" asp-for="Hostname" />
                         <input type="hidden" asp-for="Range" />
+                        <input type="hidden" asp-for="StatsDuration" />
                         <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm"
                                 @(Model.PendingInventory ? "disabled" : null)
                                 title="Ask the agent to upload all running processes (config ~5 min + upload ~1 min)">
@@ -511,6 +627,7 @@ else if (d is not null)
                                 <form method="post" asp-page-handler="RemoveAppList" class="d-inline ms-auto">
                                     <input type="hidden" asp-for="Hostname" />
                                     <input type="hidden" asp-for="Range" />
+                                    <input type="hidden" asp-for="StatsDuration" />
                                     <input type="hidden" name="RemoveAssignmentId" value="@a.AssignmentId" />
                                     <button type="submit" class="btn btn-ghost btn-sm" onclick="return confirm('Remove @a.Name from this machine?');">Remove</button>
                                 </form>
@@ -527,6 +644,7 @@ else if (d is not null)
             <form method="post" asp-page-handler="ApplyAppList" class="row g-2 align-items-end mb-3">
                 <input type="hidden" asp-for="Hostname" />
                 <input type="hidden" asp-for="Range" />
+                <input type="hidden" asp-for="StatsDuration" />
                 <div class="col-md-8 col-lg-6">
                     <label class="form-label" for="apply-applist">Apply app list to this machine</label>
                     <select class="form-select" asp-for="ApplyAppListId" id="apply-applist" required>
@@ -552,6 +670,7 @@ else if (d is not null)
                     <form method="post" asp-page-handler="SaveTrackingOverrides">
                         <input type="hidden" asp-for="Hostname" />
                         <input type="hidden" asp-for="Range" />
+                        <input type="hidden" asp-for="StatsDuration" />
                         <div class="hd-check-grid mb-2">
                             @foreach (var proc in appLists.MergedProcesses)
                             {
@@ -569,30 +688,12 @@ else if (d is not null)
         </div>
     }
 
-    <div class="hd-grid mb-3">
-        <div class="hd-stat">
-            <div class="label">Sessions (@shortLabel)</div>
-            <div class="value">@d.Sessions.TotalCount</div>
-        </div>
-        <div class="hd-stat">
-            <div class="label">Local</div>
-            <div class="value">@d.Sessions.LocalCount</div>
-        </div>
-        <div class="hd-stat">
-            <div class="label">Inbound RDP</div>
-            <div class="value">@d.Sessions.RdpCount</div>
-        </div>
-        <div class="hd-stat">
-            <div class="label">Open now</div>
-            <div class="value">@d.Sessions.OpenCount</div>
-        </div>
-    </div>
-
     <form method="get" class="hd-panel mb-3">
         <input type="hidden" name="hostname" value="@d.Hostname" />
+        <input type="hidden" name="statsDuration" value="@Model.StatsDuration" />
         <div class="row g-3 align-items-end">
             <div class="col-md-4 col-lg-3">
-                <label class="form-label" for="util-range">Tracking Time Range</label>
+                <label class="form-label" for="util-range">Applications table · time range</label>
                 <select class="form-select" name="range" id="util-range">
                     @foreach (var opt in IndexModel.RangeOptions)
                     {
@@ -615,24 +716,27 @@ else if (d is not null)
         @if (d.AppOptions.Count > 0)
         {
             <div class="mt-3">
-                <label class="form-label">Show Usage Data</label>
+                <label class="form-label">Filter applications table</label>
                 <div class="d-flex flex-wrap gap-2">
                     @foreach (var opt in d.AppOptions)
                     {
                         var checkedAttr = Model.Apps.Count == 0 || Model.Apps.Contains(opt.ProcessName, StringComparer.OrdinalIgnoreCase);
-                        <label class="badge-pill @(opt.IsTracked ? "badge-local" : "badge-ended")" style="cursor:pointer;">
+                        <label class="badge-pill @(opt.IsTracked ? "badge-local" : "badge-ended")" style="cursor:pointer;"
+                               title="@(opt.IsTracked ? "On this machine's track list" : "Not on track list")@(opt.HasData ? "" : " · no runs in selected time range")">
                             <input type="checkbox" name="apps" value="@opt.ProcessName" class="form-check-input me-1" @(checkedAttr ? "checked" : null) />
                             @opt.DisplayName
                             @if (!opt.HasData)
                             {
-                                <span class="text-secondary" title="No usage data in this period">*</span>
+                                <span class="text-secondary" title="No process runs in the selected time range">*</span>
                             }
                         </label>
                     }
                 </div>
                 <p class="text-secondary small mb-0 mt-2">
-                    Tracked apps from config plus any process seen on this machine in the period.
-                    Uncheck apps to hide them from the table below; leave all checked to show everything with data.
+                    Checkboxes only control which rows appear in the Applications table below — they do not change agent tracking.
+                    List = apps on this machine's track list (from App lists / config), plus any process that had runs in the time range.
+                    Blue = currently tracked · grey = not tracked · * = no runs recorded in this time range (so nothing to show in the table).
+                    To change what the agent tracks, use <strong>App lists</strong> above (or Customize tracked apps).
                 </p>
             </div>
         }

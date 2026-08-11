@@ -217,7 +217,7 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
 
         var ctx = await BuildContextAsync(ct);
         var assignments = await db.ProcessGroupAssignments.AsNoTracking().ToDictionaryAsync(a => a.ProcessName, StringComparer.OrdinalIgnoreCase, ct);
-        var knownApps = await db.KnownApps.AsNoTracking().ToDictionaryAsync(k => k.ProcessName, StringComparer.OrdinalIgnoreCase, ct);
+        var displayNames = await LoadCatalogDisplayNamesAsync(ct);
         var soeApps = await db.SoeApps.AsNoTracking().ToDictionaryAsync(s => s.ProcessName, StringComparer.OrdinalIgnoreCase, ct);
 
         var map = new Dictionary<string, (string? Path, string DisplayName)>(StringComparer.OrdinalIgnoreCase);
@@ -263,16 +263,16 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
         return map.Keys
             .OrderBy(n => ProcessClassification.GroupSortOrder(ProcessClassification.Classify(n, ctx).Group))
             .ThenBy(n => n, StringComparer.OrdinalIgnoreCase)
-            .Select(name => ToExportRow(name, map[name].Path, ctx, assignments, knownApps, soeApps))
+            .Select(name => ToExportRow(name, map[name].Path, ctx, assignments, displayNames, soeApps))
             .ToList();
     }
 
-    /// <summary>Export the global classification universe (catalogs + DB assignments + known apps + process runs).</summary>
+    /// <summary>Export the global classification universe (catalogs + DB assignments + process runs).</summary>
     public async Task<IReadOnlyList<CsvExportRow>> BuildGlobalExportRowsAsync(CancellationToken ct = default)
     {
         var ctx = await BuildContextAsync(ct);
         var assignments = await db.ProcessGroupAssignments.AsNoTracking().ToDictionaryAsync(a => a.ProcessName, StringComparer.OrdinalIgnoreCase, ct);
-        var knownApps = await db.KnownApps.AsNoTracking().ToDictionaryAsync(k => k.ProcessName, StringComparer.OrdinalIgnoreCase, ct);
+        var displayNames = await LoadCatalogDisplayNamesAsync(ct);
         var soeApps = await db.SoeApps.AsNoTracking().ToDictionaryAsync(s => s.ProcessName, StringComparer.OrdinalIgnoreCase, ct);
 
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -284,7 +284,7 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
             names.Add(s);
         foreach (var a in assignments.Keys)
             names.Add(a);
-        foreach (var k in knownApps.Keys)
+        foreach (var k in displayNames.Keys)
             names.Add(k);
 
         var pathRows = await db.ProcessRuns.AsNoTracking()
@@ -321,7 +321,7 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
             .Select(name =>
             {
                 pathMap.TryGetValue(name, out var path);
-                return ToExportRow(name, path, ctx, assignments, knownApps, soeApps);
+                return ToExportRow(name, path, ctx, assignments, displayNames, soeApps);
             })
             .ToList();
     }
@@ -333,7 +333,7 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
     {
         var ctx = await BuildContextAsync(ct);
         var assignments = await db.ProcessGroupAssignments.AsNoTracking().ToDictionaryAsync(a => a.ProcessName, StringComparer.OrdinalIgnoreCase, ct);
-        var knownApps = await db.KnownApps.AsNoTracking().ToDictionaryAsync(k => k.ProcessName, StringComparer.OrdinalIgnoreCase, ct);
+        var displayNames = await LoadCatalogDisplayNamesAsync(ct);
         var soeApps = await db.SoeApps.AsNoTracking().ToDictionaryAsync(s => s.ProcessName, StringComparer.OrdinalIgnoreCase, ct);
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -342,7 +342,7 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
         {
             var name = ConfigService.NormalizeProcessName(rawName);
             if (name.Length == 0 || !seen.Add(name)) continue;
-            var row = ToExportRow(name, path, ctx, assignments, knownApps, soeApps);
+            var row = ToExportRow(name, path, ctx, assignments, displayNames, soeApps);
             rows.Add(displayName is null ? row : row with { DisplayName = row.DisplayName == name ? displayName : row.DisplayName });
         }
 
@@ -527,20 +527,47 @@ public sealed class ProcessGroupService(HeimdallDbContext db)
         return Enum.TryParse(v, ignoreCase: true, out group);
     }
 
+    private async Task<Dictionary<string, string>> LoadCatalogDisplayNamesAsync(CancellationToken ct)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var catalog = await db.ProcessCatalogEntries.AsNoTracking()
+            .Where(c => c.DisplayName != null && c.DisplayName != "")
+            .Select(c => new { c.ProcessName, c.DisplayName, c.LastSeenUtc })
+            .ToListAsync(ct);
+        foreach (var row in catalog
+                     .GroupBy(c => c.ProcessName, StringComparer.OrdinalIgnoreCase)
+                     .Select(g => g.OrderByDescending(x => x.LastSeenUtc).First()))
+        {
+            if (!string.IsNullOrWhiteSpace(row.DisplayName))
+                map[row.ProcessName] = row.DisplayName!;
+        }
+
+        foreach (var e in await db.AppListEntries.AsNoTracking()
+                     .Where(e => e.DisplayName != null && e.DisplayName != "")
+                     .Select(e => new { e.ProcessName, e.DisplayName })
+                     .ToListAsync(ct))
+        {
+            if (!string.IsNullOrWhiteSpace(e.DisplayName) && !map.ContainsKey(e.ProcessName))
+                map[e.ProcessName] = e.DisplayName!;
+        }
+
+        return map;
+    }
+
     private static CsvExportRow ToExportRow(
         string processName,
         string? executablePath,
         ProcessClassificationContext ctx,
         IReadOnlyDictionary<string, ProcessGroupAssignment> assignments,
-        IReadOnlyDictionary<string, KnownApp> knownApps,
+        IReadOnlyDictionary<string, string> catalogDisplayNames,
         IReadOnlyDictionary<string, SoeApp> soeApps)
     {
         var classification = ProcessClassification.Classify(processName, ctx);
         assignments.TryGetValue(processName, out var assignment);
 
         var displayName = assignment?.DisplayName;
-        if (string.IsNullOrWhiteSpace(displayName) && knownApps.TryGetValue(processName, out var known))
-            displayName = known.DisplayName;
+        if (string.IsNullOrWhiteSpace(displayName) && catalogDisplayNames.TryGetValue(processName, out var catalogDn))
+            displayName = catalogDn;
         if (string.IsNullOrWhiteSpace(displayName) && soeApps.TryGetValue(processName, out var soe))
             displayName = soe.DisplayName;
         if (string.IsNullOrWhiteSpace(displayName))

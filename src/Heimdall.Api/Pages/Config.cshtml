@@ -336,19 +336,10 @@
         </div>
     </div>
 
-    <h2 class="h5 mb-3">Known applications (global defaults)</h2>
-    <div class="row mb-3">
-        @foreach (var app in Model.KnownApps)
-        {
-            <div class="col-md-4 mb-2">
-                <label class="form-check-label">
-                    <input class="form-check-input" type="checkbox" name="EnabledAppIds" value="@app.Id"
-                           @(Model.EnabledAppIds.Contains(app.Id) ? "checked" : null) />
-                    @app.DisplayName <span class="text-secondary">(@app.ProcessName)</span>
-                </label>
-            </div>
-        }
-    </div>
+    <p class="text-secondary small mb-3">
+        Process include lists on sampling configs are legacy. Prefer
+        <a asp-page="/AppLists">App lists</a> to choose what agents track (apply/ignore by scope or team).
+    </p>
 
     <button type="submit" class="btn btn-hd">@(editing ? "Save sampling config" : "Create sampling config(s)")</button>
 </form>
@@ -377,28 +368,6 @@
     <input type="hidden" name="EditingConfigId" value="@Model.EditingConfigId" />
     <input type="hidden" name="ListKind" id="unpause-list-kind" />
     <div id="unpause-selected"></div>
-</form>
-
-<form method="post" asp-page-handler="AddApp" class="hd-panel mb-4" id="add-app-form">
-    <h2 class="h5 mb-3">Add custom application</h2>
-    <p class="text-secondary small">Browse picks an .exe on the machine running this browser (POC limitation for remote admins).</p>
-    <div class="row g-3 align-items-end">
-        <div class="col-md-4">
-            <label class="form-label">Display name</label>
-            <input class="form-control" asp-for="NewAppDisplayName" id="new-app-display" placeholder="e.g. Speckle" />
-        </div>
-        <div class="col-md-4">
-            <label class="form-label">Process name</label>
-            <div class="input-group">
-                <input class="form-control" asp-for="NewAppProcessName" id="new-app-process" placeholder="e.g. Speckle" />
-                <button type="button" class="btn btn-ghost" id="browse-new-app">Browse…</button>
-                <input type="file" id="browse-new-app-file" accept=".exe,.EXE,application/x-msdownload" hidden />
-            </div>
-        </div>
-        <div class="col-md-4">
-            <button type="submit" class="btn btn-ghost">Add</button>
-        </div>
-    </div>
 </form>
 
 <div class="hd-panel mb-4">

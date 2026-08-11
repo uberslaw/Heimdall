@@ -106,7 +106,7 @@ public sealed class Worker(
                         await TryProcessClientUpdateAsync(remote.PendingClientUpdate, stoppingToken);
                     }
                     logger.LogInformation("Config refreshed v{Version}; tracking {Count} processes{Inventory}{Commands}",
-                        _config.ConfigVersion, _config.IncludeProcesses.Count + _config.KnownApps.Count(a => a.Enabled),
+                        _config.ConfigVersion, _config.IncludeProcesses.Count,
                         remote.PendingAppAnalysis ? "; inventory requested" : "",
                         remote.PendingCommands.Count > 0 ? $"; pending commands: {string.Join(", ", remote.PendingCommands)}" : "");
                 }
@@ -867,16 +867,10 @@ public sealed class Worker(
         SampleIntervalSeconds = 30,
         UploadIntervalSeconds = 60,
         ConfigRefreshSeconds = 300,
-        IncludeProcesses = ["Revit", "acad", "EXCEL", "chrome", "msedge"],
+        // Offline fallback: empty include until API config arrives (App lists drive tracking).
+        IncludeProcesses = [],
         ExcludeProcesses = ["Idle", "System", "svchost"],
-        KnownApps =
-        [
-            new KnownAppDto { DisplayName = "Revit", ProcessName = "Revit" },
-            new KnownAppDto { DisplayName = "AutoCAD", ProcessName = "acad" },
-            new KnownAppDto { DisplayName = "Remote Desktop (mstsc)", ProcessName = "mstsc" },
-            new KnownAppDto { DisplayName = "Remote Desktop (msrdc)", ProcessName = "msrdc" },
-            new KnownAppDto { DisplayName = "Remote Desktop (msrdcw)", ProcessName = "msrdcw" }
-        ]
+        KnownApps = []
     };
 }
 

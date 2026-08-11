@@ -4,20 +4,35 @@
 @using Heimdall.Api.Services
 @using Heimdall.Shared.Contracts
 @{
-    ViewData["Title"] = "App lists";
+    ViewData["Title"] = "Application Lists and Tracking";
+    var active = Model.ActiveTabKey;
 }
 
-<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
-    <div>
-        <h1 class="hd-title mb-1">App lists</h1>
-        <p class="hd-sub mb-0">Named process schemas · apply anywhere · analyze machines · approve before tracking</p>
+<div class="hd-fleet-header mb-3">
+    <div class="hd-fleet-header-main">
+        <h1 class="hd-title hd-fleet-title mb-0">
+            <span class="hd-fleet-title-fleet">Application Lists and Tracking</span>
+        </h1>
+        <ul class="nav nav-tabs hd-ops-tabs mb-0" role="tablist">
+            @foreach (var t in AppListsModel.Tabs)
+            {
+                var isActive = t.Key == active;
+                <li class="nav-item" role="presentation">
+                    <a class="nav-link @(isActive ? "active" : null)"
+                       asp-page="/AppLists"
+                       asp-route-tab="@t.Key"
+                       asp-route-host="@(t.Key == "analyze" ? Model.FocusHostname : null)"
+                       role="tab"
+                       aria-selected="@(isActive ? "true" : "false")">@t.Label</a>
+                </li>
+            }
+        </ul>
     </div>
-    <div class="d-flex gap-2">
-        <a class="hd-btn hd-btn-black" asp-page="/Discovery" title="Classify processes and review suggestions">Discovery &amp; Classification</a>
-        <a class="hd-btn hd-btn-black" asp-page="/TrackSoftware">Track Software</a>
-        <a class="hd-btn hd-btn-black" asp-page="/Apps">Application Usage</a>
-        <a class="hd-btn hd-btn-black" asp-page="/AppListChangelog">View Changelog</a>
-        <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="app-lists" title="How App lists works">Help</a>
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+        <a class="hd-btn hd-btn-black hd-btn-sm" asp-page="/Discovery">Discovery</a>
+        <a class="hd-btn hd-btn-black hd-btn-sm" asp-page="/Apps">Usage</a>
+        <a class="hd-btn hd-btn-black hd-btn-sm" asp-page="/AppListChangelog">Changelog</a>
+        <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="app-lists">Help</a>
     </div>
 </div>
 
@@ -38,53 +53,13 @@
     }
 </div>
 
-
-<details class="hd-panel mb-4 hd-collapsible" data-key="create-list">
-            <summary class="h5 mb-3">@(Model.EditId is null ? "Create app list" : $"Edit list #{Model.EditId}")</summary>
-            <form method="post" asp-page-handler="SaveList">
-                <input type="hidden" asp-for="EditId" />
-                <div class="mb-3">
-                    <label class="form-label">Name</label>
-                    @if (Model.EditingIsSystem)
-                    {
-                        <input class="form-control" asp-for="ListName" readonly />
-                        <div class="form-text">System list name is locked. Entries, team, and notes remain editable. Entries re-sync from classifications on page load.</div>
-                    }
-                    else
-                    {
-                        <input class="form-control" asp-for="ListName" required placeholder="e.g. Structural – APAC" />
-                    }
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Team (optional)</label>
-                    <select class="form-select" asp-for="TeamId">
-                        <option value="">— none —</option>
-                        @foreach (var t in Model.Teams)
-                        {
-                            <option value="@t.Id">@t.Name</option>
-                        }
-                    </select>
-                    <div class="form-text">Primary team label only. To track or ignore a list on one or more teams, use <a asp-page="/Teams">Teams → App lists by team</a>.</div>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Notes</label>
-                    <input class="form-control" asp-for="Notes" />
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Processes (one per line; optional <code>DisplayName,ProcessName</code>)</label>
-                    <textarea class="form-control font-monospace" asp-for="ProcessesText" rows="8" placeholder="Revit&#10;acad&#10;Speckle Connector,Speckle"></textarea>
-                </div>
-                <div class="d-flex flex-wrap gap-2">
-                    <button type="submit" class="hd-btn hd-btn-silver">@(Model.EditId is null ? "Create List" : "Save List")</button>
-                    @if (Model.EditId is not null)
-                    {
-                        <a class="hd-btn hd-btn-rose" asp-page="/AppLists">Cancel</a>
-                    }
-                </div>
-            </form>
-        </details>
-
-<details class="hd-panel mb-4 hd-collapsible" data-key="existing-lists">
+@if (active == "create")
+{
+    <partial name="_AppListsCreate" model="Model" />
+}
+else if (active == "lists")
+{
+<details class="hd-panel mb-4 hd-collapsible" data-key="existing-lists" open>
             <summary class="h5 mb-3">Existing lists <span class="text-secondary small">(@Model.Lists.Count)</span></summary>
             @if (Model.Lists.Count == 0)
             {
@@ -173,8 +148,8 @@
             }
         </details>
 
-<details class="hd-panel mb-4 hd-collapsible" data-key="apply-scope">
-            <summary class="h5 mb-3">Apply list to scope</summary>
+<details class="hd-panel mb-4 hd-collapsible" data-key="apply-scope" open>
+            <summary class="h5 mb-3">Track Software</summary>
             <form method="post" asp-page-handler="Apply" id="apply-form">
                 <div class="mb-3">
                     <label class="form-label">App list</label>
@@ -200,13 +175,17 @@
             </form>
         </details>
 
+}
+else if (active == "analyze")
+{
+
 <details class="hd-panel mb-4 hd-collapsible" data-key="machine-focus" id="machine-focus" open="@(Model.Lookup is not null)">
             <summary class="h5 mb-3">Machine lookup &amp; analysis</summary>
             <form method="post" class="row g-2 align-items-end mb-3" id="machine-lookup-form">
                 <div class="col-md-8">
                     <label class="form-label">Machine</label>
                     <select class="form-select font-monospace hd-machine-lookup-select" asp-for="LookupHostname" required
-                            onchange="if(this.value){ window.location.href = '@Url.Page("/AppLists")?host=' + encodeURIComponent(this.value) + '#machine-focus'; }">
+                            onchange="if(this.value){ window.location.href = '@Url.Page("/AppLists")?tab=analyze&host=' + encodeURIComponent(this.value); }">
                         <option value="">— hostname · friendly name · IP —</option>
                         @foreach (var m in Model.AllMachines)
                         {
@@ -246,7 +225,7 @@
                 <h3 class="h6">Active app lists</h3>
                 @if (Model.Lookup.ActiveLists.Count == 0)
                 {
-                    <p class="text-secondary small">No app lists assigned to this host yet. Pre-approval tracking still uses Config / known defaults.</p>
+                    <p class="text-secondary small">No app lists assigned to this host yet. Tracking uses App lists applied to this machine (or its team/region/office).</p>
                 }
                 else
                 {
@@ -741,6 +720,7 @@
 
 @section Scripts {
 <script src="~/js/machine-tree.js" asp-append-version="true"></script>
+}
 <script src="~/js/hd-table.js" asp-append-version="true"></script>
 <script>
 (() => {
@@ -869,3 +849,4 @@
 })();
 </script>
 }
+

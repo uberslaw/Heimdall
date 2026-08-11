@@ -12,7 +12,6 @@ public class ConfigModel(HeimdallDbContext db) : PageModel
 {
     public List<TrackingConfig> TrackingConfigs { get; private set; } = [];
     public TrackingConfig? EditingConfig { get; private set; }
-    public List<KnownApp> KnownApps { get; private set; } = [];
     public List<MetricPolicy> Policies { get; private set; } = [];
     public IReadOnlyList<MachineHierarchy.RegionNode> Tree { get; private set; } = [];
     public List<string> Countries { get; private set; } = [];
@@ -45,15 +44,6 @@ public class ConfigModel(HeimdallDbContext db) : PageModel
 
     [BindProperty]
     public string ExcludeProcessesJson { get; set; } = "[]";
-
-    [BindProperty]
-    public string? NewAppDisplayName { get; set; }
-
-    [BindProperty]
-    public string? NewAppProcessName { get; set; }
-
-    [BindProperty]
-    public List<int> EnabledAppIds { get; set; } = [];
 
     [BindProperty]
     public List<string> SelectedRegions { get; set; } = [];
@@ -166,8 +156,6 @@ public class ConfigModel(HeimdallDbContext db) : PageModel
             BindSamplingForm();
         }
 
-        EnabledAppIds = KnownApps.Where(a => a.EnabledByDefault).Select(a => a.Id).ToList();
-
         if (editPolicy is int pid)
         {
             var p = Policies.FirstOrDefault(x => x.Id == pid);
@@ -199,9 +187,6 @@ public class ConfigModel(HeimdallDbContext db) : PageModel
         var minCpu = Math.Clamp(MinCpuPercentToTrack, 0, 100);
         var includes = Deserialize(IncludeProcessesJson);
         var excludes = Deserialize(ExcludeProcessesJson);
-
-        foreach (var app in KnownApps)
-            app.EnabledByDefault = EnabledAppIds.Contains(app.Id);
 
         if (EditingConfigId is int id)
         {
@@ -528,27 +513,6 @@ public class ConfigModel(HeimdallDbContext db) : PageModel
         return RedirectToPage(null, new { edit = id });
     }
 
-    public async Task<IActionResult> OnPostAddAppAsync()
-    {
-        if (!string.IsNullOrWhiteSpace(NewAppProcessName) && !string.IsNullOrWhiteSpace(NewAppDisplayName))
-        {
-            var process = ConfigService.NormalizeProcessName(NewAppProcessName);
-            if (!await db.KnownApps.AnyAsync(a => a.ProcessName == process))
-            {
-                db.KnownApps.Add(new KnownApp
-                {
-                    DisplayName = NewAppDisplayName.Trim(),
-                    ProcessName = process,
-                    EnabledByDefault = true
-                });
-                await db.SaveChangesAsync();
-                TempData["Message"] = $"Added {NewAppDisplayName.Trim()}.";
-            }
-        }
-
-        return RedirectToPage(null, EditingConfigId is int id ? new { edit = id } : null);
-    }
-
     public async Task<IActionResult> OnPostSavePolicyAsync()
     {
         ResolvePolicyScopeFromTree();
@@ -803,7 +767,6 @@ public class ConfigModel(HeimdallDbContext db) : PageModel
             .ThenBy(c => c.Name)
             .ToListAsync();
 
-        KnownApps = await db.KnownApps.OrderBy(a => a.DisplayName).ToListAsync();
         Policies = await db.MetricPolicies.AsNoTracking().OrderBy(p => p.MetricType).ThenBy(p => p.Name).ToListAsync();
 
         var soeApps = await db.SoeApps.AsNoTracking().ToListAsync();

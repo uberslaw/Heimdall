@@ -75,6 +75,31 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
         );
     }
 
+    /// <summary>Session-occupied % of wall clock for one host in [fromUtc, toUtc].</summary>
+    public async Task<double> QueryMachineUtilisationPctAsync(
+        string hostname,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc,
+        CancellationToken ct = default)
+    {
+        var host = hostname.Trim();
+        var machine = await db.Machines.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Hostname == host, ct);
+        if (machine is null)
+            return 0;
+
+        var now = DateTimeOffset.UtcNow;
+        var sessions = (await db.Sessions.AsNoTracking().ToListAsync(ct))
+            .Where(s => s.MachineId == machine.Id
+                        && s.StartedAtUtc < toUtc
+                        && (s.EndedAtUtc ?? s.LastObservedUtc) >= fromUtc)
+            .ToList();
+
+        var windowSeconds = Math.Max(1, (toUtc - fromUtc).TotalSeconds);
+        var occupied = sessions.Sum(s => SessionOverlapSeconds(s, fromUtc, toUtc, now));
+        return Math.Clamp(occupied / windowSeconds * 100.0, 0, 100);
+    }
+
     public async Task<MachineDetailSnapshot?> QueryMachineDetailAsync(
         string hostname,
         DateTimeOffset fromUtc,
@@ -702,10 +727,33 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
 
     private async Task<Dictionary<string, string>> BuildDisplayNameMapAsync(CancellationToken ct)
     {
-        var known = await db.KnownApps.AsNoTracking().ToListAsync(ct);
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var app in known)
-            map[app.ProcessName] = app.DisplayName;
+
+        var catalog = await db.ProcessCatalogEntries.AsNoTracking()
+            .Where(c => c.DisplayName != null && c.DisplayName != "")
+            .Select(c => new { c.ProcessName, c.DisplayName, c.LastSeenUtc })
+            .ToListAsync(ct);
+        foreach (var row in catalog
+                     .GroupBy(c => c.ProcessName, StringComparer.OrdinalIgnoreCase)
+                     .Select(g => g.OrderByDescending(x => x.LastSeenUtc).First()))
+        {
+            if (!string.IsNullOrWhiteSpace(row.DisplayName))
+                map[row.ProcessName] = row.DisplayName!;
+        }
+
+        var listEntries = await db.AppListEntries.AsNoTracking()
+            .Where(e => e.DisplayName != null && e.DisplayName != "")
+            .Select(e => new { e.ProcessName, e.DisplayName })
+            .ToListAsync(ct);
+        foreach (var e in listEntries)
+        {
+            if (string.IsNullOrWhiteSpace(e.DisplayName))
+                continue;
+            // Catalog wins when already set; otherwise App list entry.
+            if (!map.ContainsKey(e.ProcessName))
+                map[e.ProcessName] = e.DisplayName!;
+        }
+
         return map;
     }
 
@@ -716,6 +764,185 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
         if (username.Contains('\\') || string.IsNullOrWhiteSpace(domain))
             return username.Trim();
         return $"{domain.Trim()}\\{username.Trim()}";
+    }
+
+    /// <summary>
+    /// Period cards on Machine page: session mix, top users, top CPU/GPU apps, top disk apps + machine net.
+    /// </summary>
+    public async Task<MachinePeriodStatsCards?> QueryMachinePeriodStatsAsync(
+        string hostname,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(hostname))
+            return null;
+
+        var host = hostname.Trim();
+        var machine = await db.Machines.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Hostname == host, ct);
+        if (machine is null)
+            return null;
+
+        var sessions = (await db.Sessions.AsNoTracking()
+                .Where(s => s.MachineId == machine.Id)
+                .ToListAsync(ct))
+            .Where(s => s.StartedAtUtc < toUtc && (s.EndedAtUtc ?? s.LastObservedUtc) >= fromUtc)
+            .ToList();
+
+        var sessionSummary = new MachineSessionSummary(
+            sessions.Count,
+            sessions.Count(s => s.SessionType == SessionType.Local),
+            sessions.Count(s => s.SessionType == SessionType.Rdp),
+            sessions.Count(s => s.State != SessionState.Ended));
+
+        var topUsers = sessions
+            .GroupBy(s => NormalizeUser(s.Username, s.Domain), StringComparer.OrdinalIgnoreCase)
+            .Select(g => new MachineStatsRankRow(
+                Label: Heimdall.Shared.UsernameDisplay.Format(g.Key),
+                Detail: g.Count() == 1 ? "1 session" : $"{g.Count()} sessions",
+                SortValue: g.Count()))
+            .OrderByDescending(r => r.SortValue)
+            .ThenBy(r => r.Label, StringComparer.OrdinalIgnoreCase)
+            .Take(3)
+            .ToList();
+
+        var displayNames = await BuildDisplayNameMapAsync(ct);
+        var snaps = await FleetSnapshotQuery.LoadForMachinesAsync(db, [machine.Id], fromUtc, toUtc, ct);
+        snaps = snaps.OrderBy(s => s.SampledAtUtc).ToList();
+
+        var cpuGpuWeights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        var diskWeights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        double netRxBytes = 0;
+        double netTxBytes = 0;
+        var hasFleetProcess = false;
+
+        for (var i = 0; i < snaps.Count; i++)
+        {
+            var s = snaps[i];
+            if (s.SampledAtUtc < fromUtc || s.SampledAtUtc >= toUtc)
+                continue;
+
+            var dtSec = FleetSampleDtSeconds(snaps, i);
+            var dtH = dtSec / 3600.0;
+            netRxBytes += (s.NetworkInMBps ?? 0) * dtSec * 1024 * 1024;
+            netTxBytes += (s.NetworkOutMBps ?? 0) * dtSec * 1024 * 1024;
+
+            foreach (var p in DeserializeTopProcesses(s.TopCpuProcessesJson))
+            {
+                var piece = Math.Max(0, p.Value) / 100.0 * dtH;
+                if (piece <= 0) continue;
+                hasFleetProcess = true;
+                cpuGpuWeights[p.ProcessName] = cpuGpuWeights.GetValueOrDefault(p.ProcessName) + piece;
+            }
+
+            foreach (var p in DeserializeTopProcesses(s.TopGpuProcessesJson))
+            {
+                var piece = Math.Max(0, p.Value) / 100.0 * dtH;
+                if (piece <= 0) continue;
+                hasFleetProcess = true;
+                cpuGpuWeights[p.ProcessName] = cpuGpuWeights.GetValueOrDefault(p.ProcessName) + piece;
+            }
+
+            foreach (var p in DeserializeTopProcesses(s.TopDiskReadProcessesJson)
+                         .Concat(DeserializeTopProcesses(s.TopDiskWriteProcessesJson)))
+            {
+                var piece = Math.Max(0, p.Value) * dtSec; // Value = bytes/sec
+                if (piece <= 0) continue;
+                hasFleetProcess = true;
+                diskWeights[p.ProcessName] = diskWeights.GetValueOrDefault(p.ProcessName) + piece;
+            }
+        }
+
+        if (!hasFleetProcess)
+        {
+            var runs = FilterRunsInWindow(
+                await db.ProcessRuns.AsNoTracking().Where(r => r.MachineId == machine.Id).ToListAsync(ct),
+                fromUtc,
+                toUtc);
+
+            foreach (var g in runs.GroupBy(r => r.ProcessName, StringComparer.OrdinalIgnoreCase))
+            {
+                var group = g.ToList();
+                var openSec = ProcessRunMetrics.UnionDurationSeconds(group, fromUtc, toUtc);
+                var peakCpu = group.Where(r => r.PeakCpuPercent.HasValue).Select(r => r.PeakCpuPercent!.Value).DefaultIfEmpty(0).Max();
+                var peakGpu = group.Where(r => r.PeakGpuPercent.HasValue).Select(r => r.PeakGpuPercent!.Value).DefaultIfEmpty(0).Max();
+                var computeH = Math.Max(peakCpu, peakGpu) / 100.0 * (openSec / 3600.0);
+                if (computeH > 0)
+                    cpuGpuWeights[g.Key] = computeH;
+
+                var disk = group.Sum(r => (r.DiskReadBytes ?? 0) + (r.DiskWriteBytes ?? 0));
+                if (disk > 0)
+                    diskWeights[g.Key] = disk;
+            }
+        }
+
+        string AppLabel(string processName) =>
+            displayNames.TryGetValue(processName, out var dn) && !string.IsNullOrWhiteSpace(dn)
+                ? dn
+                : processName;
+
+        var topCompute = cpuGpuWeights
+            .OrderByDescending(kv => kv.Value)
+            .Take(3)
+            .Select(kv => new MachineStatsRankRow(
+                Label: AppLabel(kv.Key),
+                Detail: MachineUtilisationService.FormatHoursCompact(kv.Value) + "h CPU/GPU",
+                SortValue: kv.Value))
+            .ToList();
+
+        var topDisk = diskWeights
+            .OrderByDescending(kv => kv.Value)
+            .Take(3)
+            .Select(kv => new MachineStatsRankRow(
+                Label: AppLabel(kv.Key),
+                Detail: MachineUtilisationService.FormatBytesCompact(kv.Value) + " disk",
+                SortValue: kv.Value))
+            .ToList();
+
+        var netDetail = (netRxBytes > 0 || netTxBytes > 0)
+            ? $"Net Rx {MachineUtilisationService.FormatBytesCompact(netRxBytes)} · Tx {MachineUtilisationService.FormatBytesCompact(netTxBytes)}"
+            : null;
+
+        return new MachinePeriodStatsCards(
+            Sessions: sessionSummary,
+            TopUsers: topUsers,
+            TopComputeApps: topCompute,
+            TopIoApps: topDisk,
+            NetworkSummary: netDetail);
+    }
+
+    private static double FleetSampleDtSeconds(IReadOnlyList<FleetMetricSnapshot> snaps, int i)
+    {
+        var interval = MachineUtilisationService.SampleInterval.TotalSeconds;
+        double dt = interval;
+        if (i + 1 < snaps.Count)
+        {
+            dt = (snaps[i + 1].SampledAtUtc - snaps[i].SampledAtUtc).TotalSeconds;
+            if (dt <= 0 || dt > interval * 4)
+                dt = interval;
+        }
+
+        return dt;
+    }
+
+    private static readonly System.Text.Json.JsonSerializerOptions TopProcessJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private static List<TopProcessSampleDto> DeserializeTopProcesses(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json == "[]")
+            return [];
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<List<TopProcessSampleDto>>(json, TopProcessJsonOptions) ?? [];
+        }
+        catch
+        {
+            return [];
+        }
     }
 }
 
@@ -795,6 +1022,18 @@ public sealed record MachineSessionSummary(
     int LocalCount,
     int RdpCount,
     int OpenCount);
+
+public sealed record MachineStatsRankRow(
+    string Label,
+    string Detail,
+    double SortValue);
+
+public sealed record MachinePeriodStatsCards(
+    MachineSessionSummary Sessions,
+    IReadOnlyList<MachineStatsRankRow> TopUsers,
+    IReadOnlyList<MachineStatsRankRow> TopComputeApps,
+    IReadOnlyList<MachineStatsRankRow> TopIoApps,
+    string? NetworkSummary);
 
 public sealed record AppFilterOption(
     string ProcessName,

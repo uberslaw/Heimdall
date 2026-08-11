@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Heimdall.Api.Data;
 using Heimdall.Api.Services;
 using Heimdall.Shared.Contracts;
@@ -43,6 +44,48 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     [BindProperty] public int? TeamId { get; set; }
     [BindProperty] public string? Notes { get; set; }
     [BindProperty] public string ProcessesText { get; set; } = "";
+    /// <summary>JSON array of {processName, displayName?} for Create-tab draft entries.</summary>
+    [BindProperty] public string DraftEntriesJson { get; set; } = "[]";
+
+    [BindProperty(SupportsGet = true)]
+    public string Tab { get; set; } = "lists";
+
+    [BindProperty] public string? CreateSearch { get; set; }
+    [BindProperty] public List<int> SelectedCatalogIds { get; set; } = [];
+    [BindProperty] public string? CustomProcessName { get; set; }
+    [BindProperty] public string? CustomExecutablePath { get; set; }
+    [BindProperty] public string? CustomDisplayName { get; set; }
+    [BindProperty] public string? CustomDescription { get; set; }
+
+    public IReadOnlyList<CreateCatalogRow> CreateCatalogRows { get; private set; } = [];
+
+    public static IReadOnlyList<(string Key, string Label)> Tabs { get; } =
+    [
+        ("lists", "Software Lists"),
+        ("create", "Create"),
+        ("analyze", "Analyze PC"),
+    ];
+
+    public string ActiveTabKey => NormalizeTab(Tab);
+
+    public static string NormalizeTab(string? tab)
+    {
+        var key = (tab ?? "lists").Trim().ToLowerInvariant();
+        // Legacy Apply tab folded into Software Lists.
+        if (key is "apply" or "apply-scope")
+            key = "lists";
+        return Tabs.Any(t => t.Key == key) ? key : "lists";
+    }
+
+    public sealed record CreateCatalogRow(
+        int Id,
+        string ProcessName,
+        string? DisplayName,
+        string ExecutablePath,
+        string? Version,
+        string? Category,
+        string? Description,
+        int HostCount);
 
     [BindProperty] public int ApplyAppListId { get; set; }
     [BindProperty] public List<string> SelectedRegions { get; set; } = [];
@@ -68,13 +111,68 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     /// <summary>True while editing a system classification list (name locked).</summary>
     public bool EditingIsSystem { get; private set; }
 
-    public async Task OnGetAsync(string? host = null, string? section = null)
+    public async Task OnGetAsync(string? host = null, string? section = null, string? tab = null, string? q = null, int? edit = null)
     {
-        // Discovery-gap scan walks ProcessRuns + inventories — only when the CSV/catalog panel needs it,
-        // or on a bare landing (no host/section). Machine-focus and lists/apply redirects skip it.
-        var scanGap = string.Equals(section, "csv-classifications", StringComparison.OrdinalIgnoreCase)
-            || (string.IsNullOrWhiteSpace(host) && string.IsNullOrWhiteSpace(section));
+        // Legacy section= redirects → tab=
+        if (!string.IsNullOrWhiteSpace(section) && string.IsNullOrWhiteSpace(tab))
+        {
+            tab = section.Trim().ToLowerInvariant() switch
+            {
+                "lists" or "existing-lists" or "apply" or "apply-scope" => "lists",
+                "create" or "create-list" => "create",
+                "machine-focus" or "analyze" or "csv-classifications" => "analyze",
+                _ => null
+            };
+        }
+
+        if (edit is int editId)
+        {
+            Tab = "create";
+            await LoadAsync(scanDiscoveryGap: false);
+            var list = await db.AppLists.AsNoTracking().Include(a => a.Entries).FirstOrDefaultAsync(a => a.Id == editId);
+            if (list is null)
+            {
+                TempData["Error"] = "List not found.";
+                Tab = "lists";
+                await LoadListsAsync();
+                return;
+            }
+
+            EditId = list.Id;
+            ListName = list.Name;
+            TeamId = list.TeamId;
+            Notes = list.Notes;
+            var draft = list.Entries.Select(e => new DraftEntryDto(
+                e.ProcessName,
+                string.IsNullOrWhiteSpace(e.DisplayName) ? null : e.DisplayName)).ToList();
+            DraftEntriesJson = JsonSerializer.Serialize(draft, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
+            ProcessesText = string.Join(Environment.NewLine,
+                list.Entries.Select(e => string.IsNullOrWhiteSpace(e.DisplayName)
+                    ? e.ProcessName
+                    : $"{e.DisplayName},{e.ProcessName}"));
+            EditingIsSystem = list.IsSystem;
+            CreateSearch = q;
+            await LoadCreateCatalogAsync();
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(host))
+            Tab = "analyze";
+        else if (!string.IsNullOrWhiteSpace(tab))
+            Tab = tab;
+        Tab = NormalizeTab(Tab);
+        CreateSearch = q;
+
+        // Discovery-gap scan walks ProcessRuns + inventories — only when the CSV/catalog panel needs it.
+        var scanGap = Tab == "analyze"
+            || (string.IsNullOrWhiteSpace(host) && Tab == "lists");
         await LoadAsync(scanDiscoveryGap: scanGap);
+        if (Tab == "create")
+            await LoadCreateCatalogAsync();
+
         if (!string.IsNullOrWhiteSpace(host))
         {
             FocusHostname = host.Trim();
@@ -94,15 +192,45 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     {
         if (string.IsNullOrWhiteSpace(ListName))
         {
-            TempData["Error"] = "List name is required.";
-            await LoadAsync();
+            TempData["Error"] = "List name is required to save.";
+            Tab = "create";
+            await LoadAsync(scanDiscoveryGap: false);
+            await LoadCreateCatalogAsync();
             return Page();
         }
 
-        var entries = ParseProcessesText(ProcessesText);
+        var entries = ParseDraftEntries(DraftEntriesJson);
+        if (entries.Count == 0)
+            entries = ParseProcessesText(ProcessesText);
+
         await appLists.CreateOrUpdateListAsync(EditId, ListName, TeamId, Notes, entries, HttpContext.RequestAborted);
         TempData["Message"] = EditId is null ? $"Created app list “{ListName}”." : $"Updated app list “{ListName}”.";
-        return RedirectToPage(new { section = "lists" });
+        return RedirectToPage(new { tab = "lists" });
+    }
+
+    public async Task<IActionResult> OnPostAddCustomCatalogAsync()
+    {
+        var proc = ConfigService.NormalizeProcessName(CustomProcessName ?? "");
+        if (proc.Length == 0)
+        {
+            TempData["Error"] = "Process name is required for custom software.";
+            return RedirectToPage(new { tab = "create", q = CreateSearch });
+        }
+
+        await catalog.EnsureManualEntryAsync(
+            proc,
+            CustomExecutablePath,
+            CustomDisplayName,
+            CustomDescription,
+            HttpContext.RequestAborted);
+
+        TempData["Message"] = $"Added “{(string.IsNullOrWhiteSpace(CustomDisplayName) ? proc : CustomDisplayName.Trim())}” to the apps catalog.";
+        return RedirectToPage(new
+        {
+            tab = "create",
+            q = CreateSearch,
+            edit = EditId
+        });
     }
 
     public async Task<IActionResult> OnPostDeleteListAsync(int id)
@@ -116,7 +244,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         {
             TempData["Error"] = ex.Message;
         }
-        return RedirectToPage(new { section = "lists" });
+        return RedirectToPage(new { tab = "lists" });
     }
 
     public async Task<IActionResult> OnPostUploadAsync()
@@ -135,7 +263,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
             : await appLists.UploadCsvAsync(stream, DefaultUploadTeamId, HttpContext.RequestAborted);
 
         TempData["Message"] = $"Upload complete: {lists} list(s), {entries} entr(y/ies). CSV format: ProcessName or DisplayName,ProcessName[,Team][,ListName].";
-        return RedirectToPage(new { section = "lists" });
+        return RedirectToPage(new { tab = "lists" });
     }
 
     public async Task<IActionResult> OnPostApplyAsync()
@@ -143,6 +271,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         if (ApplyAppListId <= 0)
         {
             TempData["Error"] = "Pick an app list to apply.";
+            Tab = "lists";
             await LoadAsync();
             return Page();
         }
@@ -153,6 +282,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         if (scopes.Count == 0)
         {
             TempData["Error"] = "Select Global and/or at least one region, office, or machine.";
+            Tab = "lists";
             await LoadCatalogStatusAsync();
             await LoadListsAsync();
             return Page();
@@ -160,14 +290,14 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
         await appLists.AssignAsync(ApplyAppListId, scopes, HttpContext.RequestAborted);
         TempData["Message"] = $"Applied app list to {scopes.Count} scope(s).";
-        return RedirectToPage(new { section = "apply" });
+        return RedirectToPage(new { tab = "lists" });
     }
 
     public async Task<IActionResult> OnPostUnassignAsync(int assignmentId)
     {
         await appLists.UnassignAsync(assignmentId, HttpContext.RequestAborted);
         TempData["Message"] = "Assignment removed.";
-        return RedirectToPage(new { section = "apply" });
+        return RedirectToPage(new { tab = "lists" });
     }
 
     public async Task<IActionResult> OnPostAnalyzeAsync()
@@ -374,7 +504,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         TempData["Message"] = n == 0
             ? "No Specialization classifications removed (selection may not have been Spec)."
             : $"Removed {n} app(s) from Specialization.";
-        return RedirectToPage(string.IsNullOrWhiteSpace(host) ? null : new { host });
+        return RedirectToPage(string.IsNullOrWhiteSpace(host) ? new { tab = "analyze" } : new { tab = "analyze", host = host });
     }
 
     public async Task<IActionResult> OnPostIgnoreCatalogAsync()
@@ -390,7 +520,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         TempData["Message"] = n == 0
             ? "Nothing new to ignore (already ignored or not in catalog)."
             : $"Ignored {n} catalog process(es) — hidden from Discovery by default.";
-        return RedirectToPage(string.IsNullOrWhiteSpace(host) ? null : new { host });
+        return RedirectToPage(string.IsNullOrWhiteSpace(host) ? new { tab = "analyze" } : new { tab = "analyze", host = host });
     }
 
     public async Task<IActionResult> OnPostMoveToCoreWindowsAsync()
@@ -479,7 +609,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
                 ? $"Catalog backfill complete: {result.UpdatedCount} existing entries refreshed (none newly added)."
                 : $"Catalog backfill complete: {result.NewCount} newly added, {result.UpdatedCount} existing refreshed.";
         var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
-        return RedirectToPage(string.IsNullOrWhiteSpace(host) ? new { section = "csv-classifications" } : new { host, section = "csv-classifications" });
+        return RedirectToPage(string.IsNullOrWhiteSpace(host) ? new { tab = "analyze" } : new { tab = "analyze", host });
     }
 
     private static string CsvCell(string value)
@@ -542,7 +672,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         if (SelectedListIds.Count == 0)
         {
             TempData["Error"] = "Select at least one app list to export.";
-            return RedirectToPage(new { section = "lists" });
+            return RedirectToPage(new { tab = "lists" });
         }
 
         var lists = await db.AppLists.AsNoTracking().Include(l => l.Entries)
@@ -551,7 +681,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         if (lists.Count == 0)
         {
             TempData["Error"] = "Selected app lists not found.";
-            return RedirectToPage(new { section = "lists" });
+            return RedirectToPage(new { tab = "lists" });
         }
 
         var rows = lists.SelectMany(l => l.Entries.Select(e => (ListName: l.Name, e.ProcessName, e.DisplayName))).ToList();
@@ -599,7 +729,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         {
             TempData["Error"] = "Choose a classification CSV file.";
             var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
-            return RedirectToPage(string.IsNullOrWhiteSpace(host) ? null : new { host });
+            return RedirectToPage(string.IsNullOrWhiteSpace(host) ? new { tab = "analyze" } : new { tab = "analyze", host = host });
         }
 
         const long maxBytes = 10 * 1024 * 1024;
@@ -607,7 +737,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         {
             TempData["Error"] = "CSV file is too large (max 10 MB). Split into smaller files.";
             var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
-            return RedirectToPage(string.IsNullOrWhiteSpace(host) ? null : new { host });
+            return RedirectToPage(string.IsNullOrWhiteSpace(host) ? new { tab = "analyze" } : new { tab = "analyze", host = host });
         }
 
         await using var stream = ClassificationCsvFile.OpenReadStream();
@@ -620,7 +750,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         {
             TempData["Error"] = $"Import failed: {ex.Message}";
             var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
-            return RedirectToPage(string.IsNullOrWhiteSpace(host) ? null : new { host });
+            return RedirectToPage(string.IsNullOrWhiteSpace(host) ? new { tab = "analyze" } : new { tab = "analyze", host = host });
         }
 
         var newCatalogCount = 0;
@@ -650,7 +780,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         TempData["Message"] = summary;
 
         var redirectHost = (AnalyzeHostname ?? LookupHostname)?.Trim();
-        return RedirectToPage(string.IsNullOrWhiteSpace(redirectHost) ? null : new { host = redirectHost });
+        return RedirectToPage(string.IsNullOrWhiteSpace(redirectHost) ? new { tab = "analyze" } : new { tab = "analyze", host = redirectHost });
     }
 
     private async Task<IActionResult> MoveSelectedGroupsAsync(AppGroup targetGroup)
@@ -658,7 +788,7 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         if (SelectedGroupProcesses.Count == 0)
         {
             TempData["Error"] = "Select at least one process in the inventory table.";
-            return RedirectToPage(new { host = FocusHostname ?? LookupHostname });
+            return RedirectToPage(new { tab = "analyze", host = FocusHostname ?? LookupHostname });
         }
 
         var count = await processGroups.AssignGroupsAsync(SelectedGroupProcesses, targetGroup, HttpContext.RequestAborted);
@@ -668,29 +798,83 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         TempData["Message"] = $"Moved {count} process(es) to {label}. Re-run Analyze to refresh pending proposals.";
 
         var host = (AnalyzeHostname ?? LookupHostname)?.Trim();
-        return RedirectToPage(string.IsNullOrWhiteSpace(host) ? null : new { host });
+        return RedirectToPage(string.IsNullOrWhiteSpace(host) ? new { tab = "analyze" } : new { tab = "analyze", host = host });
     }
 
-    public async Task<IActionResult> OnGetEditAsync(int id)
+    public async Task<IActionResult> OnGetEditAsync(int id) =>
+        RedirectToPage(new { tab = "create", edit = id });
+
+    private async Task LoadCreateCatalogAsync()
     {
-        await LoadAsync();
-        var list = await db.AppLists.AsNoTracking().Include(a => a.Entries).FirstOrDefaultAsync(a => a.Id == id);
-        if (list is null)
+        var q = (CreateSearch ?? "").Trim();
+        IQueryable<ProcessCatalogEntry> query = db.ProcessCatalogEntries.AsNoTracking();
+        if (q.Length > 0)
         {
-            TempData["Error"] = "List not found.";
-            return RedirectToPage();
+            query = query.Where(c =>
+                c.ProcessName.Contains(q)
+                || (c.DisplayName != null && c.DisplayName.Contains(q))
+                || c.ExecutablePath.Contains(q)
+                || (c.Category != null && c.Category.Contains(q))
+                || (c.Description != null && c.Description.Contains(q)));
         }
-        EditId = list.Id;
-        ListName = list.Name;
-        TeamId = list.TeamId;
-        Notes = list.Notes;
-        ProcessesText = string.Join(Environment.NewLine,
-            list.Entries.Select(e => string.IsNullOrWhiteSpace(e.DisplayName)
-                ? e.ProcessName
-                : $"{e.DisplayName},{e.ProcessName}"));
-        EditingIsSystem = list.IsSystem;
-        return Page();
+
+        var rows = await query
+            .OrderBy(c => c.DisplayName ?? c.ProcessName)
+            .Take(200)
+            .ToListAsync(HttpContext.RequestAborted);
+
+        CreateCatalogRows = rows.Select(c =>
+        {
+            var hosts = 0;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(c.SeenHostnamesJson) && c.SeenHostnamesJson != "[]")
+                {
+                    using var doc = JsonDocument.Parse(c.SeenHostnamesJson);
+                    if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                        hosts = doc.RootElement.EnumerateObject().Count();
+                    else if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                        hosts = doc.RootElement.GetArrayLength();
+                }
+            }
+            catch { /* ignore */ }
+
+            return new CreateCatalogRow(
+                c.Id,
+                c.ProcessName,
+                c.DisplayName,
+                c.ExecutablePath,
+                c.FileVersion ?? c.ProductVersion,
+                c.Category,
+                c.Description,
+                hosts);
+        }).ToList();
     }
+
+    private static List<(string ProcessName, string? DisplayName)> ParseDraftEntries(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json == "[]")
+            return [];
+        try
+        {
+            var items = JsonSerializer.Deserialize<List<DraftEntryDto>>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            }) ?? [];
+            return items
+                .Select(i => (ConfigService.NormalizeProcessName(i.ProcessName), string.IsNullOrWhiteSpace(i.DisplayName) ? null : i.DisplayName!.Trim()))
+                .Where(i => i.Item1.Length > 0)
+                .GroupBy(i => i.Item1, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList<(string ProcessName, string? DisplayName)>();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private sealed record DraftEntryDto(string ProcessName, string? DisplayName);
 
     private async Task LoadFocusAsync(string hostname)
     {
@@ -893,3 +1077,4 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         _ => "Excluded"
     };
 }
+

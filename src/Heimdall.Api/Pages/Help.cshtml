@@ -16,7 +16,6 @@
         <a class="btn btn-ghost btn-sm" href="#app-lists">App lists</a>
         <a class="btn btn-ghost btn-sm" href="#app-list-changelog">App list changelog</a>
         <a class="btn btn-ghost btn-sm" href="#discovery">Discovery &amp; Classification</a>
-        <a class="btn btn-ghost btn-sm" href="#track-software">Track Software</a>
         <a class="btn btn-ghost btn-sm" href="#socratize">Socratize</a>
         <a class="btn btn-ghost btn-sm" href="#sessions">Sessions</a>
         <a class="btn btn-ghost btn-sm" href="#remote-machines">Online Status</a>
@@ -87,58 +86,17 @@
 <section id="app-lists" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">App lists</h2>
     <p class="text-secondary small mb-2">
-        <strong>Purpose:</strong> named schemas of processes (e.g. a team's toolset). Discovering apps on a machine never auto-tracks them — you approve first.
+        <strong>Purpose:</strong> the only place to build and apply lists of processes agents should track.
+        Tabs (Fleet-style): <strong>Software Lists</strong>, <strong>Create</strong>, <strong>Analyze PC</strong>.
     </p>
     <ol class="small">
-        <li><strong>Create app list</strong> — name it, optionally link a team, and paste process names (one per line, or <code>DisplayName,ProcessName</code>). <em>Create List</em> / <em>Save List</em> (silver); <em>Cancel</em> (rose).</li>
-        <li><strong>Existing lists</strong> (full width) — browse, edit, or select several and <em>Export Selected</em> (App list CSV/JSON, or Classification CSV for the AI workflow below).
-            Three <strong>System</strong> lists (<em>Core Windows</em>, <em>SOE</em>, <em>Specialization</em>) sync from approved classifications on page load — editable and applicable to scopes, but not deletable. Other lists show <em>Delete</em> (rose).</li>
-        <li><strong>Apply list to scope</strong> — pick a list, optionally tick <em>Global</em>, or select regions/offices/machines in the tree, then <em>Apply List</em>.</li>
-        <li>
-            <strong>Machine lookup &amp; analysis</strong> — pick a machine, then:
-            <ul>
-                <li><em>Analyze Apps</em> (gold) — classifies everything already seen and proposes Specialization apps for approval.</li>
-                <li><em>Request Inventory</em> (silver) — agent uploads every running process on its next cycle (~5 min + ~1 min upload).</li>
-                <li>Selecting a different machine reloads this section automatically.</li>
-                <li>Inventory moves: <em>Move Core</em> / <em>Move SOE</em> / <em>Move Spec</em>; <em>Export Selected</em> for checked rows.</li>
-                <li>
-                    <strong>Team apps</strong> (after a host is selected) — machine-centric Specialization / team hunting:
-                    <ul>
-                        <li><em>Specialization on this machine</em> — every entry on the global Spec system list; rows not found on this host are greyed out.</li>
-                        <li><em>On machine — Spec or unlisted</em> — inventory that is Specialization or not in any app list (good place to find team tools).</li>
-                        <li>Search filters both tables by process name or path.</li>
-                        <li>Select rows, pick a target (non-system) list, then <em>Add to list</em> (optional apply-to-machine checkbox) or <em>Track</em> (always applies to this machine; if no list is selected, creates/reuses <code>Team – {hostname}</code>). Track skips Spec rows not present on the host; those grey rows can still be used with Remove Spec / Ignore.</li>
-                        <li><em>Remove Spec</em> clears Specialization classification (and re-syncs the Spec system list). <em>Ignore</em> marks the process Ignored in the Discovery catalog so it drops out of pending noise.</li>
-                    </ul>
-                </li>
-                <li>Proposals: <em>Approve All</em> / <em>Approve Selected</em> (gold), <em>Dismiss All</em> (rose).</li>
-                <li><em>Clear Noise</em> (rose) strips Core Windows &amp; SOE from an auto-discovered list.</li>
-            </ul>
-        </li>
-        <li>
-            <strong>Bulk Update Software Classifications</strong> and <strong>Upload CSV / JSON</strong> sit side by side on the last row.
-            Bulk Update: <em>Export Classified</em>, <em>Export All</em> (full catalog including unclassified), or <em>Export Machine</em>;
-            fill <code>Category</code>/<code>Subcategory</code>/<code>Group</code>/<code>Description</code> in AI, then <em>Import CSV</em> (gold).
-            Header: <code>ProcessName,ExecutablePath,Group,Description,DisplayName,Category,Subcategory</code>.
-            Import proposes pending suggestions on the catalog (does not commit groups until Approve/Set).
-            Upload: <em>Choose File</em> then <em>Upload File</em>; same shape as Export Selected for round-tripping lists.
-            Catalog identity is <strong>ProcessName + ExecutablePath</strong> (empty path = unknown location). Volatile segments (DriverStore hashes, WindowsApps package versions, version folders) are normalized on upsert so the same app does not spawn endless rows.
-            Rows missing a path can be filled by <em>Request Inventory</em> on App lists (agent WMI + file version scan) or by importing a CSV with <code>ExecutablePath</code> set.
-            See <a asp-page="/Discovery" asp-fragment="discovery">Discovery &amp; Classification</a> to Approve or Set groups.
-        </li>
-        <li>
-            <strong>Backfill Discovered</strong> — manual rose button when the catalog is behind discovery sources; also runs <strong>automatically once per day</strong> (default shortly after API start, then daily at 00:00 UTC — configurable under <code>Heimdall:CatalogBackfill</code>).
-            Idempotent: Upsert skips existing keys and merges blank-path / volatile-folder duplicates where safe (no re-import of duplicates).
-        </li>
-        <li>
-            <strong>Import CSV</strong> stamps Category/Subcategory/Description and a pending <code>SuggestedGroup</code> onto matching catalog rows (name+path resolution, including blank-path coalesce).
-            Groups: <code>CoreWindows</code>, <code>Soe</code>, <code>Specialization</code>. Commit with Approve/Set on Discovery, or Move Core/SOE/Spec on App lists.
-        </li>
-        <li><strong>Buttons</strong> — Gold = primary/big; Silver = secondary (Choose File, Edit, Apply, Save, Export); Black = nav only; Rose = Cancel / clear / dismiss / remove.</li>
-        <li><strong>View Changelog</strong> (black nav) opens the full <a asp-page="/AppListChangelog" asp-fragment="app-list-changelog">App list changelog</a> page — paginated audit of create/upload/approve/import actions.</li>
-        <li>Toasts on App lists auto-dismiss after ~5s.</li>
+        <li><strong>Software Lists</strong> — browse/edit/export existing lists, plus <em>Track Software</em> (apply a list to Global / regions / offices / machines). Team apply/ignore also lives under <a asp-page="/Teams">Teams</a>.</li>
+        <li><strong>Create</strong> — compact Name / optional Team / Notes. Pick apps from the catalog table (Discovery-style) with <em>Add to list</em>, then <em>Save</em> (requires a name). Use <em>Add custom software to catalog</em> for path/exe/friendly name/description before the app is installed anywhere.</li>
+        <li><strong>Analyze PC</strong> — machine lookup, inventory, team-apps hunting, bulk classification import/export.</li>
+        <li>Agents only track processes that appear on an applied App list (plus any leftover legacy Tracking Config includes). There is no separate Known Apps track list.</li>
+        <li><strong>Buttons</strong> — Gold = primary; Silver = secondary; Black = nav; Rose = cancel/remove.</li>
+        <li><strong>Changelog</strong> opens the full <a asp-page="/AppListChangelog">App list changelog</a>.</li>
     </ol>
-    <p class="small text-secondary mb-0">All cards on this page are collapsible and start collapsed — click a heading to expand it; your open/closed choices are remembered for the browser session.</p>
 </section>
 
 <section id="app-list-changelog" class="hd-panel mb-4 hd-help-section">
@@ -168,16 +126,6 @@
         <li><strong>Missing path</strong> — catalog rows with an empty ExecutablePath (shown as “missing path”). Use <strong>Find missing paths</strong> (or per-row <strong>Find path</strong>) to reuse paths from process samples / machine inventories; remaining gaps can trigger Request Inventory on those hosts. Or request inventory manually on App Lists.</li>
         <li><strong>Show classified</strong> — expand the list beyond unclassified / pending suggestions. <strong>Descriptions</strong> toggle shows description sub-rows.</li>
         <li>Import classifications from <a asp-page="/AppLists" asp-fragment="csv-classifications">App lists → Bulk Update</a>; they appear here as pending until Approve/Set.</li>
-    </ol>
-</section>
-
-<section id="track-software" class="hd-panel mb-4 hd-help-section">
-    <h2 class="h5">Track Software</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> a fast path to start tracking one specific process name without building a full app list.</p>
-    <ol class="small mb-0">
-        <li>Enter the process name (and an optional friendly title).</li>
-        <li>Choose the scope — all machines, or specific regions/offices/machines.</li>
-        <li>Submit; the process is added to Config's include list for that scope so usage starts appearing in Applications/Stats.</li>
     </ol>
 </section>
 
@@ -276,11 +224,11 @@
 
 <section id="tracking-config" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Tracking config</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> the underlying scoped rules for sampling, include/exclude process lists, known apps, and metric thresholds that everything else builds on.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> sampling intervals, exclude lists, pauses, and metric thresholds for agents. What to <em>track</em> is owned by <a asp-page="/AppLists">App lists</a>.</p>
     <ol class="small mb-0">
         <li>Configs are scoped (All / Region / Office / Group / Machine) with priority — more specific scopes win.</li>
-        <li>Include/exclude lists control which processes the agent samples at all; <a asp-page="/AppLists" asp-fragment="app-lists">App lists</a> and <a asp-page="/TrackSoftware" asp-fragment="track-software">Track Software</a> both write into this.</li>
-        <li>Sample/upload/refresh intervals here control agent chattiness — raise them on constrained networks.</li>
+        <li>Exclude lists and pauses still live here. Prefer App lists (Create → Save → Apply) for includes. Legacy Tracking Config include JSON may still apply until cleared.</li>
+        <li>Sample/upload/refresh intervals control agent chattiness — raise them on constrained networks.</li>
         <li>See <a asp-page="/Utilization" asp-fragment="utilization">Utilization criteria</a> for the scoring weights that consume this data.</li>
     </ol>
 </section>

@@ -51,8 +51,26 @@ public class AppsModel(HeimdallDbContext db) : PageModel
                         && (r.EndedAtUtc ?? r.LastSeenAtUtc) >= fromUtc)
             .ToList();
 
-        var displayNames = await db.KnownApps.AsNoTracking()
-            .ToDictionaryAsync(a => a.ProcessName, a => a.DisplayName, StringComparer.OrdinalIgnoreCase);
+        var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var g in (await db.ProcessCatalogEntries.AsNoTracking()
+                     .Where(c => c.DisplayName != null && c.DisplayName != "")
+                     .Select(c => new { c.ProcessName, c.DisplayName, c.LastSeenUtc })
+                     .ToListAsync())
+                     .GroupBy(c => c.ProcessName, StringComparer.OrdinalIgnoreCase))
+        {
+            var pick = g.OrderByDescending(x => x.LastSeenUtc).First();
+            if (!string.IsNullOrWhiteSpace(pick.DisplayName))
+                displayNames[g.Key] = pick.DisplayName!;
+        }
+
+        foreach (var e in await db.AppListEntries.AsNoTracking()
+                     .Where(e => e.DisplayName != null && e.DisplayName != "")
+                     .Select(e => new { e.ProcessName, e.DisplayName })
+                     .ToListAsync())
+        {
+            if (!string.IsNullOrWhiteSpace(e.DisplayName) && !displayNames.ContainsKey(e.ProcessName))
+                displayNames[e.ProcessName] = e.DisplayName!;
+        }
 
         Apps = runs
             .GroupBy(r => r.ProcessName, StringComparer.OrdinalIgnoreCase)
