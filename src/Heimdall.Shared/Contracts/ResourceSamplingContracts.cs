@@ -98,8 +98,49 @@ public static class DiskActivityLevel
             return Low;
 
         var mbps = bytesPerSec.Value / (1024.0 * 1024.0);
-        if (mbps < LowMaxMBps) return Low;
-        if (mbps < MedMaxMBps) return Med;
+        return ClassifyMBps(mbps);
+    }
+
+    /// <summary>Classify already-converted MB/s (e.g. fleet snapshots).</summary>
+    public static string ClassifyMBps(double? mbps)
+    {
+        if (mbps is null || mbps.Value <= 0)
+            return Low;
+        if (mbps.Value < LowMaxMBps) return Low;
+        if (mbps.Value < MedMaxMBps) return Med;
         return High;
     }
+
+    public static string ClassifyCombinedMBps(double? readMBps, double? writeMBps) =>
+        ClassifyMBps((readMBps ?? 0) + (writeMBps ?? 0));
+}
+
+/// <summary>
+/// Network activity Low/Med/High — same coarse style as <see cref="DiskActivityLevel"/>.
+/// There is no industry-standard L/M/H for workstation NIC utilisation (depends on link speed and workload);
+/// these are POC absolute MB/s bands on combined send+receive, tunable in one place.
+/// </summary>
+public static class NetworkActivityLevel
+{
+    public const string Low = "Low";
+    public const string Med = "Med";
+    public const string High = "High";
+
+    /// <summary>Below this combined MB/s is Low — idle / light sync on a typical office link.</summary>
+    public const double LowMaxMBps = 2.0;
+
+    /// <summary>Below this is Med; at/above is High (sustained transfers, large sync, etc.).</summary>
+    public const double MedMaxMBps = 25.0;
+
+    public static string ClassifyMBps(double? mbps)
+    {
+        if (mbps is null || mbps.Value <= 0)
+            return Low;
+        if (mbps.Value < LowMaxMBps) return Low;
+        if (mbps.Value < MedMaxMBps) return Med;
+        return High;
+    }
+
+    public static string ClassifyCombinedMBps(double? inMBps, double? outMBps) =>
+        ClassifyMBps((inMBps ?? 0) + (outMBps ?? 0));
 }

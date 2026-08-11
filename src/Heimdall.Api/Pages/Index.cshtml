@@ -6,6 +6,124 @@
     var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
     if (isPartial)
         Layout = null;
+
+    async Task RenderColumnHeaders()
+    {
+        <tr>
+            <th class="hd-col-name" data-sort="text" scope="col" title="Friendly name (or hostname) with last known IP underneath. Hover the name for hostname and serial.">Name</th>
+            <th class="hd-col-status" data-sort="text" scope="col" title="From the latest agent check-in (5‑minute window): Active = online with a non-disconnected session; Idle = online, no active session; Off = no recent check-in.">Status</th>
+            <th class="hd-col-user" data-sort="text" scope="col" title="Username from the preferred session: Active first, then most recently observed, then highest ActiveSeconds.">Last user</th>
+            <th class="hd-col-pct" data-sort="num" scope="col" title="Share of the selected period spent in non-disconnected sessions (session overlap with the window). Click a value for people, dates, and overlapping tracked processes. Example: 40% over 7d ≈ ~67h of active session time.">Active</th>
+            <th class="hd-col-pct" data-sort="num" scope="col" title="Best-effort: ~30s fleet sample intervals where a disconnected session overlaps and CPU or GPU &gt; 5%. Click for people, dates, and top processes on those ticks. Shows — until samples exist.">Passive</th>
+            <th class="hd-col-pct" data-sort="num" scope="col" title="Remainder of the calendar window after Active and Passive (Passive counted as 0% if unknown). Free% ≈ 100 − Active% − Passive%. Click for context (not process-attributed).">Free</th>
+            <th class="hd-col-hw" data-sort="num" scope="col" title="GPU-hours from always-on ~30s fleet samples: Σ (GPU% ÷ 100 × Δt hours). Click for processes, people, and days. Shows — until samples arrive.">GPU h</th>
+            <th class="hd-col-hw" data-sort="num" scope="col" title="CPU-hours from always-on ~30s fleet samples: Σ (CPU% ÷ 100 × Δt hours). Click for processes, people, and days. Shows — until samples arrive.">CPU h</th>
+            <th class="hd-col-io" data-sort="num" scope="col" title="Disk read volume integrated from sample rates (MBps × Δt). Click for top read processes, people, and days. Shows — until samples arrive.">Dr</th>
+            <th class="hd-col-io" data-sort="num" scope="col" title="Disk write volume integrated from sample rates (MBps × Δt). Click for top write processes, people, and days. Shows — until samples arrive.">Dw</th>
+            <th class="hd-col-io" data-sort="num" scope="col" title="Network transmit (outbound) volume from sample rates. Click for people and days (no per-process network counters). Shows — until samples arrive.">NTx</th>
+            <th class="hd-col-io" data-sort="num" scope="col" title="Network receive (inbound) volume from sample rates. Click for people and days (no per-process network counters). Shows — until samples arrive.">NRx</th>
+        </tr>
+    }
+
+    async Task RenderMachineRow(IndexModel.MachineRow m, string groupName)
+    {
+        var u = m.Util;
+        <tr class="hd-machine-row"
+            data-machine-id="@m.MachineId"
+            data-hostname="@m.Hostname"
+            data-status="@m.Status"
+            data-period="@u.PeriodKey"
+            data-group="@groupName">
+            <td class="hd-col-name" data-sort-value="@m.DisplayName" title="@m.Tooltip">
+                <a class="hd-machine-name" asp-page="/Machine" asp-route-hostname="@m.Hostname" asp-route-range="@(u.PeriodKey is "today" or "24h" ? "1d" : u.PeriodKey is "5d" or "7d" ? "7d" : u.PeriodKey is "30d" ? "4w" : "year")">@m.DisplayName</a>
+                @if (m.ShowHostnameUnder)
+                {
+                    <div class="hd-machine-host text-secondary">@m.Hostname</div>
+                }
+                <div class="text-secondary small">@(string.IsNullOrWhiteSpace(m.LastIp) ? "—" : m.LastIp.Trim())</div>
+            </td>
+            <td class="hd-col-status" data-sort-value="@m.Status">
+                <span class="hd-status-text hd-status-@m.Status.ToString().ToLowerInvariant()" title="@m.Status">@m.Status</span>
+            </td>
+            <td class="hd-col-user" data-sort-value="@UsernameDisplay.Format(m.LastUser)" title="@UsernameDisplay.Format(m.LastUser)">@UsernameDisplay.FormatOrDash(m.LastUser)</td>
+            <td class="hd-col-pct" data-sort-value="@u.ActivePct">
+                <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="active" title="Open Active breakdown">@MachineUtilisationService.FormatPct(u.ActivePct)</a>
+            </td>
+            <td class="hd-col-pct" data-sort-value="@(u.PassivePct ?? -1)">
+                @if (u.PassivePct is null)
+                {
+                    <span>—</span>
+                }
+                else
+                {
+                    <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="passive" title="Open Passive breakdown">@MachineUtilisationService.FormatPct(u.PassivePct)</a>
+                }
+            </td>
+            <td class="hd-col-pct" data-sort-value="@u.FreePct">
+                <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="free" title="Open Free context">@MachineUtilisationService.FormatPct(u.FreePct)</a>
+            </td>
+            <td class="hd-col-hw" data-sort-value="@(u.GpuHours ?? -1)">
+                @if (u.GpuHours is null)
+                {
+                    <span>—</span>
+                }
+                else
+                {
+                    <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="gpu" title="Open GPU h breakdown">@MachineUtilisationService.FormatHoursCompact(u.GpuHours)</a>
+                }
+            </td>
+            <td class="hd-col-hw" data-sort-value="@(u.CpuHours ?? -1)">
+                @if (u.CpuHours is null)
+                {
+                    <span>—</span>
+                }
+                else
+                {
+                    <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="cpu" title="Open CPU h breakdown">@MachineUtilisationService.FormatHoursCompact(u.CpuHours)</a>
+                }
+            </td>
+            <td class="hd-col-io" data-sort-value="@(u.DiskReadBytes ?? -1)">
+                @if (u.DiskReadBytes is null)
+                {
+                    <span>—</span>
+                }
+                else
+                {
+                    <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="dr" title="Open disk read breakdown">@MachineUtilisationService.FormatBytesCompact(u.DiskReadBytes)</a>
+                }
+            </td>
+            <td class="hd-col-io" data-sort-value="@(u.DiskWriteBytes ?? -1)">
+                @if (u.DiskWriteBytes is null)
+                {
+                    <span>—</span>
+                }
+                else
+                {
+                    <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="dw" title="Open disk write breakdown">@MachineUtilisationService.FormatBytesCompact(u.DiskWriteBytes)</a>
+                }
+            </td>
+            <td class="hd-col-io" data-sort-value="@(u.NetTxBytes ?? -1)">
+                @if (u.NetTxBytes is null)
+                {
+                    <span>—</span>
+                }
+                else
+                {
+                    <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="ntx" title="Open network transmit breakdown">@MachineUtilisationService.FormatBytesCompact(u.NetTxBytes)</a>
+                }
+            </td>
+            <td class="hd-col-io" data-sort-value="@(u.NetRxBytes ?? -1)">
+                @if (u.NetRxBytes is null)
+                {
+                    <span>—</span>
+                }
+                else
+                {
+                    <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="nrx" title="Open network receive breakdown">@MachineUtilisationService.FormatBytesCompact(u.NetRxBytes)</a>
+                }
+            </td>
+        </tr>
+    }
 }
 
 @if (!isPartial)
@@ -18,245 +136,225 @@
 
 <form method="get" class="hd-panel mb-3 hd-machines-period-card" id="machines-filter-form">
     <div class="hd-machines-period-row">
-        <div class="hd-machines-period-controls">
-            <label class="form-label" for="util-period">Period</label>
-            <select class="form-select form-select-sm" name="period" id="util-period" onchange="this.form.requestSubmit()">
-                @foreach (var opt in MachineUtilisationService.PeriodOptions)
-                {
-                    if (Model.Period == opt.Key)
+        <div class="hd-machines-period-controls d-flex flex-wrap gap-3 align-items-end">
+            <div>
+                <label class="form-label" for="util-period">Period</label>
+                <select class="form-select form-select-sm" name="period" id="util-period" onchange="this.form.requestSubmit()">
+                    @foreach (var opt in MachineUtilisationService.PeriodOptions)
                     {
-                        <option value="@opt.Key" selected>@opt.Label</option>
+                        if (Model.Period == opt.Key)
+                        {
+                            <option value="@opt.Key" selected>@opt.Label</option>
+                        }
+                        else
+                        {
+                            <option value="@opt.Key">@opt.Label</option>
+                        }
                     }
-                    else
+                </select>
+            </div>
+            <div>
+                <label class="form-label" for="machines-view-mode">View</label>
+                <select class="form-select form-select-sm" id="machines-view-mode" style="min-width:10rem">
+                    <option value="by-group" selected>By Group</option>
+                    <option value="ungrouped">Ungrouped</option>
+                    @foreach (var teamSec in Model.Sections)
                     {
-                        <option value="@opt.Key">@opt.Label</option>
+                        <option value="group:@(teamSec.TeamName)">@(teamSec.TeamName)</option>
                     }
-                }
-            </select>
+                </select>
+            </div>
         </div>
         <div class="hd-machines-summary" role="group" aria-label="Computer counts">
-            <div class="hd-machines-stat">
+            <button type="button" class="hd-machines-stat hd-machines-stat-filter is-active" data-status-filter=""
+                    id="machines-filter-all" title="Show all machines" aria-pressed="true">
                 <div class="hd-machines-stat-label">Computers</div>
                 <div class="hd-machines-stat-value">@Model.MachineCount</div>
-            </div>
-            <div class="hd-machines-stat">
+            </button>
+            <button type="button" class="hd-machines-stat hd-machines-stat-filter" data-status-filter="Active"
+                    title="Show Active machines only" aria-pressed="false">
                 <div class="hd-machines-stat-label hd-status-active">Active</div>
                 <div class="hd-machines-stat-value">@Model.ActiveCount</div>
-            </div>
-            <div class="hd-machines-stat">
+            </button>
+            <button type="button" class="hd-machines-stat hd-machines-stat-filter" data-status-filter="Idle"
+                    title="Show Idle machines only" aria-pressed="false">
                 <div class="hd-machines-stat-label hd-status-idle">Idle</div>
                 <div class="hd-machines-stat-value">@Model.IdleCount</div>
-            </div>
-            <div class="hd-machines-stat">
+            </button>
+            <button type="button" class="hd-machines-stat hd-machines-stat-filter" data-status-filter="Off"
+                    title="Show Off machines only" aria-pressed="false">
                 <div class="hd-machines-stat-label hd-status-off">Off</div>
                 <div class="hd-machines-stat-value">@Model.OffCount</div>
-            </div>
+            </button>
         </div>
     </div>
 </form>
 
-<div class="hd-panel hd-machines-panel">
 @if (Model.Sections.Count == 0)
 {
-    <p class="text-secondary mb-0">
-        No agents reporting yet. Install the Heimdall agent and point it at this API.
-    </p>
+    <div class="hd-panel hd-machines-panel">
+        <p class="text-secondary mb-0">
+            No agents reporting yet. Install the Heimdall agent and point it at this API.
+        </p>
+    </div>
 }
 else
 {
-    <table class="hd-table hd-machines-table hd-sortable" id="machines-table" data-period="@Model.Period">
-        <thead>
-            <tr>
-                <th class="hd-col-name" data-sort="text" scope="col" title="Friendly name (or hostname) with last known IP underneath. Hover the name for hostname and serial.">Name</th>
-                <th class="hd-col-status" data-sort="text" scope="col" title="From the latest agent check-in (5‑minute window): Active = online with a non-disconnected session; Idle = online, no active session; Off = no recent check-in.">Status</th>
-                <th class="hd-col-user" data-sort="text" scope="col" title="Username from the preferred session: Active first, then most recently observed, then highest ActiveSeconds.">Last user</th>
-                <th class="hd-col-pct" data-sort="num" scope="col" title="Share of the selected period spent in non-disconnected sessions (session overlap with the window). Click a value for people, dates, and overlapping tracked processes. Example: 40% over 7d ≈ ~67h of active session time.">Active</th>
-                <th class="hd-col-pct" data-sort="num" scope="col" title="Best-effort: ~30s fleet sample intervals where a disconnected session overlaps and CPU or GPU &gt; 5%. Click for people, dates, and top processes on those ticks. Shows — until samples exist.">Passive</th>
-                <th class="hd-col-pct" data-sort="num" scope="col" title="Remainder of the calendar window after Active and Passive (Passive counted as 0% if unknown). Free% ≈ 100 − Active% − Passive%. Click for context (not process-attributed).">Free</th>
-                <th class="hd-col-hw" data-sort="num" scope="col" title="GPU-hours from always-on ~30s fleet samples: Σ (GPU% ÷ 100 × Δt hours). Click for processes, people, and days. Shows — until samples arrive.">GPU h</th>
-                <th class="hd-col-hw" data-sort="num" scope="col" title="CPU-hours from always-on ~30s fleet samples: Σ (CPU% ÷ 100 × Δt hours). Click for processes, people, and days. Shows — until samples arrive.">CPU h</th>
-                <th class="hd-col-io" data-sort="num" scope="col" title="Disk read volume integrated from sample rates (MBps × Δt). Click for top read processes, people, and days. Shows — until samples arrive.">Dr</th>
-                <th class="hd-col-io" data-sort="num" scope="col" title="Disk write volume integrated from sample rates (MBps × Δt). Click for top write processes, people, and days. Shows — until samples arrive.">Dw</th>
-                <th class="hd-col-io" data-sort="num" scope="col" title="Network transmit (outbound) volume from sample rates. Click for people and days (no per-process network counters). Shows — until samples arrive.">NTx</th>
-                <th class="hd-col-io" data-sort="num" scope="col" title="Network receive (inbound) volume from sample rates. Click for people and days (no per-process network counters). Shows — until samples arrive.">NRx</th>
-            </tr>
-        </thead>
-        <tbody>
+    <div id="machines-by-group" class="hd-machines-groups">
         @foreach (var teamSection in Model.Sections)
         {
-            <tr class="hd-team-section" data-team-section="@teamSection.TeamName">
-                <td colspan="12">
-                    <span class="hd-team-name">@teamSection.TeamName</span>
-                    @if (!string.IsNullOrWhiteSpace(teamSection.AppsShort))
-                    {
-                        <span class="hd-team-apps" title="@teamSection.AppsFull">@teamSection.AppsShort</span>
-                    }
-                </td>
-            </tr>
-            @foreach (var m in teamSection.Machines)
-            {
-                var u = m.Util;
-                <tr class="hd-machine-row"
-                    data-machine-id="@m.MachineId"
-                    data-hostname="@m.Hostname"
-                    data-period="@u.PeriodKey"
-                    data-sort-section="@teamSection.TeamName">
-                    <td class="hd-col-name" data-sort-value="@m.DisplayName" title="@m.Tooltip">
-                        <a class="hd-machine-name" asp-page="/Machine" asp-route-hostname="@m.Hostname" asp-route-range="@(u.PeriodKey is "today" or "24h" ? "1d" : u.PeriodKey is "5d" or "7d" ? "7d" : u.PeriodKey is "30d" ? "4w" : "year")">@m.DisplayName</a>
-                        @if (m.ShowHostnameUnder)
-                        {
-                            <div class="hd-machine-host text-secondary">@m.Hostname</div>
-                        }
-                        <div class="text-secondary small">@(string.IsNullOrWhiteSpace(m.LastIp) ? "—" : m.LastIp.Trim())</div>
-                    </td>
-                    <td class="hd-col-status" data-sort-value="@m.Status">
-                        <span class="hd-status-text hd-status-@m.Status.ToString().ToLowerInvariant()" title="@m.Status">@m.Status</span>
-                    </td>
-                    <td class="hd-col-user" data-sort-value="@UsernameDisplay.Format(m.LastUser)" title="@UsernameDisplay.Format(m.LastUser)">@UsernameDisplay.FormatOrDash(m.LastUser)</td>
-                    <td class="hd-col-pct" data-sort-value="@u.ActivePct">
-                        <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="active" title="Open Active breakdown">@MachineUtilisationService.FormatPct(u.ActivePct)</a>
-                    </td>
-                    <td class="hd-col-pct" data-sort-value="@(u.PassivePct ?? -1)">
-                        @if (u.PassivePct is null)
-                        {
-                            <span>—</span>
-                        }
-                        else
-                        {
-                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="passive" title="Open Passive breakdown">@MachineUtilisationService.FormatPct(u.PassivePct)</a>
-                        }
-                    </td>
-                    <td class="hd-col-pct" data-sort-value="@u.FreePct">
-                        <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="free" title="Open Free context">@MachineUtilisationService.FormatPct(u.FreePct)</a>
-                    </td>
-                    <td class="hd-col-hw" data-sort-value="@(u.GpuHours ?? -1)">
-                        @if (u.GpuHours is null)
-                        {
-                            <span>—</span>
-                        }
-                        else
-                        {
-                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="gpu" title="Open GPU h breakdown">@MachineUtilisationService.FormatHoursCompact(u.GpuHours)</a>
-                        }
-                    </td>
-                    <td class="hd-col-hw" data-sort-value="@(u.CpuHours ?? -1)">
-                        @if (u.CpuHours is null)
-                        {
-                            <span>—</span>
-                        }
-                        else
-                        {
-                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="cpu" title="Open CPU h breakdown">@MachineUtilisationService.FormatHoursCompact(u.CpuHours)</a>
-                        }
-                    </td>
-                    <td class="hd-col-io" data-sort-value="@(u.DiskReadBytes ?? -1)">
-                        @if (u.DiskReadBytes is null)
-                        {
-                            <span>—</span>
-                        }
-                        else
-                        {
-                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="dr" title="Open disk read breakdown">@MachineUtilisationService.FormatBytesCompact(u.DiskReadBytes)</a>
-                        }
-                    </td>
-                    <td class="hd-col-io" data-sort-value="@(u.DiskWriteBytes ?? -1)">
-                        @if (u.DiskWriteBytes is null)
-                        {
-                            <span>—</span>
-                        }
-                        else
-                        {
-                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="dw" title="Open disk write breakdown">@MachineUtilisationService.FormatBytesCompact(u.DiskWriteBytes)</a>
-                        }
-                    </td>
-                    <td class="hd-col-io" data-sort-value="@(u.NetTxBytes ?? -1)">
-                        @if (u.NetTxBytes is null)
-                        {
-                            <span>—</span>
-                        }
-                        else
-                        {
-                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="ntx" title="Open network transmit breakdown">@MachineUtilisationService.FormatBytesCompact(u.NetTxBytes)</a>
-                        }
-                    </td>
-                    <td class="hd-col-io" data-sort-value="@(u.NetRxBytes ?? -1)">
-                        @if (u.NetRxBytes is null)
-                        {
-                            <span>—</span>
-                        }
-                        else
-                        {
-                            <a class="hd-util-link" asp-page="/MachineUtilDrilldown" asp-route-hostname="@m.Hostname" asp-route-period="@u.PeriodKey" asp-route-metric="nrx" title="Open network receive breakdown">@MachineUtilisationService.FormatBytesCompact(u.NetRxBytes)</a>
-                        }
-                    </td>
-
-                </tr>
-            }
+            <section class="hd-panel hd-machines-group mb-3" data-machines-group="@teamSection.TeamName">
+                <h2 class="hd-team-name">@teamSection.TeamName</h2>
+                <div class="hd-machines-panel">
+                    <table class="hd-table hd-machines-table hd-sortable" data-machines-table data-period="@Model.Period">
+                        <thead>
+                            @{ await RenderColumnHeaders(); }
+                        </thead>
+                        <tbody>
+                            @foreach (var m in teamSection.Machines)
+                            {
+                                await RenderMachineRow(m, teamSection.TeamName);
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
         }
-        </tbody>
-    </table>
-}
-</div>
+    </div>
 
-@* Inline (not @section) so Fleet partial fetch still runs team-section-aware sort. *@
+    <div id="machines-ungrouped" class="hd-panel hd-machines-panel d-none">
+        <table class="hd-table hd-machines-table hd-sortable" data-machines-table data-period="@Model.Period">
+            <thead>
+                @{ await RenderColumnHeaders(); }
+            </thead>
+            <tbody>
+                @foreach (var teamSection in Model.Sections)
+                {
+                    foreach (var m in teamSection.Machines)
+                    {
+                        await RenderMachineRow(m, teamSection.TeamName);
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@* Inline (not @section) so Fleet partial fetch still runs sort / filters / view mode. *@
 <script>
 (() => {
-  const table = document.getElementById('machines-table');
-  if (!table) return;
-  const headers = [...table.querySelectorAll('thead th[data-sort]')];
-  headers.forEach((th, colIdx) => {
-    if (th.dataset.sortBound === 'true') return;
-    th.dataset.sortBound = 'true';
-    th.style.cursor = 'pointer';
-    th.addEventListener('click', () => {
-      const type = th.dataset.sort;
-      const tbody = table.tBodies[0];
-      if (!tbody) return;
-      const sectionHeaders = new Map();
-      tbody.querySelectorAll('tr.hd-team-section').forEach((tr) => {
-        sectionHeaders.set(tr.dataset.teamSection || '', tr);
-      });
-      const machineRows = [...tbody.querySelectorAll('tr.hd-machine-row')];
-      // First click / empty dir → descending; then toggle asc ↔ desc.
-      const asc = th.dataset.dir === 'desc';
-      headers.forEach((h) => {
-        h.dataset.dir = '';
-        h.classList.remove('sorted-asc', 'sorted-desc');
-      });
-      th.dataset.dir = asc ? 'asc' : 'desc';
-      th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
+  const byGroup = document.getElementById('machines-by-group');
+  const ungrouped = document.getElementById('machines-ungrouped');
+  const viewSelect = document.getElementById('machines-view-mode');
+  if (!byGroup && !ungrouped) return;
 
-      const cellVal = (row) => {
-        const cell = row.children[colIdx];
-        let v = cell?.dataset.sortValue ?? cell?.textContent ?? '';
-        if (type === 'num' || type === 'date') {
-          v = parseFloat(v);
-          return Number.isNaN(v) ? -Infinity : v;
-        }
-        return String(v).toLowerCase();
-      };
-      machineRows.sort((a, b) => {
-        const va = cellVal(a);
-        const vb = cellVal(b);
-        if (typeof va === 'number' && typeof vb === 'number')
-          return asc ? va - vb : vb - va;
-        return asc
-          ? String(va).localeCompare(String(vb))
-          : String(vb).localeCompare(String(va));
-      });
+  let currentStatusFilter = '';
+  let currentView = 'by-group';
 
-      tbody.replaceChildren();
-      const written = new Set();
-      machineRows.forEach((row) => {
-        const section = row.dataset.sortSection || '';
-        if (!written.has(section)) {
-          written.add(section);
-          const header = sectionHeaders.get(section);
-          if (header) tbody.appendChild(header);
-        }
-        tbody.appendChild(row);
+  function bindTableSort(table) {
+    const headers = [...table.querySelectorAll('thead th[data-sort]')];
+    headers.forEach((th, colIdx) => {
+      if (th.dataset.sortBound === 'true') return;
+      th.dataset.sortBound = 'true';
+      th.style.cursor = 'pointer';
+      th.addEventListener('click', () => {
+        const type = th.dataset.sort;
+        const tbody = table.tBodies[0];
+        if (!tbody) return;
+        const machineRows = [...tbody.querySelectorAll('tr.hd-machine-row')];
+        const asc = th.dataset.dir === 'desc';
+        headers.forEach((h) => {
+          h.dataset.dir = '';
+          h.classList.remove('sorted-asc', 'sorted-desc');
+        });
+        th.dataset.dir = asc ? 'asc' : 'desc';
+        th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
+
+        const cellVal = (row) => {
+          const cell = row.children[colIdx];
+          let v = cell?.dataset.sortValue ?? cell?.textContent ?? '';
+          if (type === 'num' || type === 'date') {
+            v = parseFloat(v);
+            return Number.isNaN(v) ? -Infinity : v;
+          }
+          return String(v).toLowerCase();
+        };
+        machineRows.sort((a, b) => {
+          const va = cellVal(a);
+          const vb = cellVal(b);
+          if (typeof va === 'number' && typeof vb === 'number')
+            return asc ? va - vb : vb - va;
+          return asc
+            ? String(va).localeCompare(String(vb))
+            : String(vb).localeCompare(String(va));
+        });
+        machineRows.forEach((row) => tbody.appendChild(row));
+        applyStatusFilter(currentStatusFilter);
       });
     });
+  }
+
+  document.querySelectorAll('table[data-machines-table]').forEach(bindTableSort);
+
+  const filterBtns = [...document.querySelectorAll('.hd-machines-stat-filter[data-status-filter]')];
+
+  function applyStatusFilter(status) {
+    currentStatusFilter = status || '';
+    document.querySelectorAll('table[data-machines-table] tr.hd-machine-row').forEach((row) => {
+      const match = !currentStatusFilter
+        || String(row.dataset.status || '').toLowerCase() === currentStatusFilter.toLowerCase();
+      row.hidden = !match;
+    });
+
+    if (byGroup) {
+      const wantGroup = currentView.startsWith('group:') ? currentView.slice('group:'.length) : null;
+      byGroup.querySelectorAll('[data-machines-group]').forEach((section) => {
+        const name = section.getAttribute('data-machines-group') || '';
+        if (wantGroup && name !== wantGroup) {
+          section.classList.add('d-none');
+          return;
+        }
+        const anyVisible = [...section.querySelectorAll('tr.hd-machine-row')].some((r) => !r.hidden);
+        section.classList.toggle('d-none', !anyVisible);
+      });
+    }
+
+    filterBtns.forEach((btn) => {
+      const key = btn.dataset.statusFilter || '';
+      const on = currentStatusFilter
+        ? key.toLowerCase() === currentStatusFilter.toLowerCase()
+        : key === '';
+      btn.classList.toggle('is-active', !!on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+
+  function applyView(mode) {
+    currentView = mode || 'by-group';
+    if (viewSelect && viewSelect.value !== currentView)
+      viewSelect.value = currentView;
+
+    if (currentView === 'ungrouped') {
+      byGroup?.classList.add('d-none');
+      ungrouped?.classList.remove('d-none');
+    } else {
+      ungrouped?.classList.add('d-none');
+      byGroup?.classList.remove('d-none');
+    }
+    applyStatusFilter(currentStatusFilter);
+  }
+
+  filterBtns.forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      applyStatusFilter(btn.dataset.statusFilter || '');
+    });
   });
+
+  if (viewSelect) {
+    viewSelect.addEventListener('change', () => applyView(viewSelect.value));
+  }
+
+  applyView('by-group');
 })();
 </script>

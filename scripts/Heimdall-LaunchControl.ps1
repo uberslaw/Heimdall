@@ -2421,15 +2421,52 @@ function Start-RedeployApi {
     }
     Update-UiStep 0 "[OK] 1. Script: $ps1"
 
-    Write-HeimdallLog "Launching elevated republish (excludes appsettings.json)..." -Level STEP
-    Update-UiStep 1 "[...] 2. Elevated republish"
-    $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$ps1`""
-    $p = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $arg -PassThru
-    $exit = Wait-ProcessWithUiPump -Process $p -StatusText "Redeploying API (accept UAC; preserves config)..."
+    $republishLogDir = Join-Path $env:ProgramData "Heimdall\logs"
+    $republishLogHint = Join-Path $republishLogDir "republish-api-deploy.log"
+    $logMarker = Get-Date
+    $psArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $ps1)
+    $alreadyAdmin = Test-IsAdministrator
+    try {
+        if ($alreadyAdmin) {
+            Write-HeimdallLog "Launching republish in elevated session (excludes appsettings.json; progress window + ETA)..." -Level STEP
+            Update-UiStep 1 "[...] 2. Republish (already admin)"
+            Set-UiStatus "Redeploying API — watch progress window"
+            $p = Start-Process -FilePath "powershell.exe" -ArgumentList $psArgs -WorkingDirectory (Split-Path -Parent $ps1) -PassThru
+        }
+        else {
+            Write-HeimdallLog "Launching elevated republish (excludes appsettings.json; progress window + ETA)..." -Level STEP
+            Update-UiStep 1 "[...] 2. Elevated republish"
+            Set-UiStatus "Redeploying API — accept UAC; watch progress window"
+            $p = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $psArgs -WorkingDirectory (Split-Path -Parent $ps1) -PassThru
+        }
+    }
+    catch {
+        Update-UiStep 1 "[X] 2. Could not start republish"
+        $msg = $_.Exception.Message
+        if ($msg -match 'canceled|cancelled') {
+            Write-HeimdallLog "Redeploy API cancelled at UAC prompt: $msg" -Level ERROR
+            Set-UiStatus "Redeploy cancelled — accept UAC and try again"
+        }
+        else {
+            Write-HeimdallLog "Redeploy API failed to start: $msg" -Level ERROR
+            Set-UiStatus "Redeploy failed to start — see log"
+        }
+        return
+    }
+    $exit = Wait-ProcessWithUiPump -Process $p -StatusText $(if ($alreadyAdmin) { "Redeploying API (watch progress window)..." } else { "Redeploying API (accept UAC; watch progress window)..." })
+    if ($null -eq $exit) { $exit = -1 }
     if ($exit -ne 0) {
         Update-UiStep 1 "[X] 2. Republish failed (exit $exit)"
-        $republishLogHint = Join-Path $env:ProgramData "Heimdall\logs\republish-api-deploy.log"
-        Write-HeimdallLog "Redeploy API exited with code $exit (see $republishLogHint and latest republish-api-*.log)" -Level ERROR
+        $latest = Get-ChildItem -LiteralPath $republishLogDir -Filter "republish-api-*.log" -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -ge $logMarker.AddSeconds(-2) } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+        if ($latest) {
+            Write-HeimdallLog "Redeploy API exited with code $exit (see $($latest.FullName) and $republishLogHint)" -Level ERROR
+        }
+        else {
+            Write-HeimdallLog "Redeploy API exited with code $exit with no new republish-api-*.log — script never ran (parse/encoding error, or UAC denied). Try: powershell -NoProfile -File `"$ps1`" and check the console. See $republishLogHint" -Level ERROR
+        }
         Set-UiStatus "Redeploy API failed (exit $exit) — check ProgramData\Heimdall\logs\republish-api*"
         return
     }
@@ -2659,7 +2696,10 @@ function Start-GuidedPack {
     Write-HeimdallLog "Running pack (console window; no pause when launched from Setup)..." -Level STEP
     Update-UiStep 1 "[...] 2. Publishing..."
     $prevNoPause = $env:HEIMDALL_NOPAUSE
+    $prevForceVer = $env:HEIMDALL_CLIENT_PRODUCT_VERSION
     $env:HEIMDALL_NOPAUSE = "1"
+    # Pack always resolves N+1; clear any leftover ForceVersion pin from the machine/session.
+    Remove-Item env:HEIMDALL_CLIENT_PRODUCT_VERSION -ErrorAction SilentlyContinue
     try {
         $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$cmd`"" -WorkingDirectory $script:ScriptDir -PassThru
         $exit = Wait-ProcessWithUiPump -Process $p -StatusText "Creating client pack (watch console window)..."
@@ -2671,6 +2711,12 @@ function Start-GuidedPack {
         }
         else {
             $env:HEIMDALL_NOPAUSE = $prevNoPause
+        }
+        if ($null -eq $prevForceVer) {
+            Remove-Item env:HEIMDALL_CLIENT_PRODUCT_VERSION -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:HEIMDALL_CLIENT_PRODUCT_VERSION = $prevForceVer
         }
     }
 

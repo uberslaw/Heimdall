@@ -41,6 +41,24 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
                 machine.Hostname, "agent ingest", ct);
         }
 
+        if (batch.DiskUsageScanProgress is not null)
+        {
+            machine ??= batch.Heartbeat is not null
+                ? await db.Machines.FirstOrDefaultAsync(m => m.Hostname == batch.Heartbeat.Hostname, ct)
+                : null;
+            if (machine is not null)
+                await ApplyDiskUsageScanProgressCoreAsync(machine, batch.DiskUsageScanProgress, ct);
+        }
+
+        if (batch.DiskUsageScan is not null)
+        {
+            machine ??= batch.Heartbeat is not null
+                ? await db.Machines.FirstOrDefaultAsync(m => m.Hostname == batch.Heartbeat.Hostname, ct)
+                : null;
+            if (machine is not null)
+                await ApplyDiskUsageScanAsync(machine, batch.DiskUsageScan, ct);
+        }
+
         if (batch.DiscoveredProcesses.Count > 0)
         {
             machine ??= batch.Heartbeat is not null
@@ -263,6 +281,67 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
 
     private static string? NullIfEmpty(string? s) =>
         string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    public async Task ApplyDiskUsageScanProgressAsync(string hostname, DiskUsageScanProgressDto progress, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(hostname) || string.IsNullOrWhiteSpace(progress.ScanId))
+            return;
+
+        var machine = await db.Machines.FirstOrDefaultAsync(m => m.Hostname == hostname, ct);
+        if (machine is null)
+            return;
+
+        await ApplyDiskUsageScanProgressCoreAsync(machine, progress, ct);
+    }
+
+    private async Task ApplyDiskUsageScanProgressCoreAsync(Machine machine, DiskUsageScanProgressDto progress, CancellationToken ct)
+    {
+        // Ignore progress for a scan that is no longer pending (stale agent).
+        if (!string.IsNullOrWhiteSpace(machine.PendingDiskUsageScanJson))
+        {
+            try
+            {
+                var pending = JsonSerializer.Deserialize<DiskUsageScanRequestDto>(machine.PendingDiskUsageScanJson);
+                if (pending is not null
+                    && !string.Equals(pending.ScanId, progress.ScanId, StringComparison.OrdinalIgnoreCase))
+                    return;
+            }
+            catch
+            {
+                /* still store progress */
+            }
+        }
+
+        machine.DiskUsageScanProgressJson = JsonSerializer.Serialize(progress);
+        await db.SaveChangesAsync(ct);
+    }
+
+    private async Task ApplyDiskUsageScanAsync(Machine machine, DiskUsageScanResultDto scan, CancellationToken ct)
+    {
+        machine.DiskUsageScanJson = JsonSerializer.Serialize(scan);
+        machine.DiskUsageScanUtc = scan.CompletedUtc == default ? DateTimeOffset.UtcNow : scan.CompletedUtc;
+        machine.DiskUsageScanProgressJson = null;
+
+        // Clear matching pending request so the agent stops re-queuing.
+        if (!string.IsNullOrWhiteSpace(machine.PendingDiskUsageScanJson))
+        {
+            try
+            {
+                var pending = JsonSerializer.Deserialize<DiskUsageScanRequestDto>(machine.PendingDiskUsageScanJson);
+                if (pending is not null
+                    && string.Equals(pending.ScanId, scan.ScanId, StringComparison.OrdinalIgnoreCase))
+                {
+                    machine.PendingDiskUsageScanJson = null;
+                }
+            }
+            catch
+            {
+                machine.PendingDiskUsageScanJson = null;
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
 
     private async Task<Machine> EnsureMachineAsync(string hostname, CancellationToken ct)
     {
@@ -579,7 +658,8 @@ public class ConfigService(HeimdallDbContext db)
         return new AgentConfigDto
         {
             ConfigVersion = primary.Id * 1000 + primary.SampleIntervalSeconds + include.Count + thresholds.Count + pauseDtos.Count
-                + (fleetSamplingEnabled ? 17 : 0),
+                + (fleetSamplingEnabled ? 17 : 0)
+                + (machine?.PendingDiskUsageScanJson is { Length: > 0 } ? 23 : 0),
             SampleIntervalSeconds = primary.SampleIntervalSeconds,
             UploadIntervalSeconds = primary.UploadIntervalSeconds,
             ConfigRefreshSeconds = primary.ConfigRefreshSeconds,
@@ -598,9 +678,24 @@ public class ConfigService(HeimdallDbContext db)
             PendingCommands = RemoteMachineService.DeserializeCommands(machine?.PendingCommandsJson),
             PendingTuflowStart = TuflowRunService.DeserializeStartRequest(machine?.PendingTuflowStartJson),
             PendingClientUpdate = ClientUpdateService.DeserializeRequest(machine?.PendingClientUpdateJson),
+            PendingDiskUsageScan = DeserializeDiskUsageScanRequest(machine?.PendingDiskUsageScanJson),
             FleetSamplingEnabled = fleetSamplingEnabled,
             FleetProcessNames = ["tuflow"]
         };
+    }
+
+    private static DiskUsageScanRequestDto? DeserializeDiskUsageScanRequest(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<DiskUsageScanRequestDto>(json);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private sealed class PauseKeyComparer : IEqualityComparer<(string ProcessName, ProcessListKind ListKind)>
@@ -1533,6 +1628,10 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN InventoryCollectedUtc TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN DiskVolumesJson TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN DiskVolumesUtc TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingDiskUsageScanJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN DiskUsageScanJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN DiskUsageScanUtc TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN DiskUsageScanProgressJson TEXT NULL");
         await TryExec(db, "ALTER TABLE AppLists ADD COLUMN IsTeamExcluded INTEGER NOT NULL DEFAULT 0");
         await TryExec(db, "ALTER TABLE AppLists ADD COLUMN IsSystem INTEGER NOT NULL DEFAULT 0");
         await TryExec(db, "ALTER TABLE AppLists ADD COLUMN SystemKey TEXT NULL");

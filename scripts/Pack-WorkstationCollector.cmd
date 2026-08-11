@@ -75,14 +75,44 @@ REM Resolve next simple integer productVersion BEFORE wiping OUT (reads prior VE
 REM Bump is independent of source fingerprint — every pack advances N+1 unless ForceVersion is set.
 REM Override: set HEIMDALL_CLIENT_PRODUCT_VERSION=N. Floor: HEIMDALL_PUBLISHED_CLIENT_VERSION from API.
 set "CLIENT_VER="
-if defined HEIMDALL_CLIENT_PRODUCT_VERSION if not "%HEIMDALL_CLIENT_PRODUCT_VERSION%"=="" (
-  set "CLIENT_VER=%HEIMDALL_CLIENT_PRODUCT_VERSION%"
-  echo [*] Using HEIMDALL_CLIENT_PRODUCT_VERSION=%CLIENT_VER%
-) else (
-  for /f "usebackq delims=" %%V in (`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\Resolve-ClientPackVersion.ps1" -RepoRoot "%ROOT%" -PackFolder "%OUT%"`) do set "CLIENT_VER=%%V"
+set "PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PS%" set "PS=powershell.exe"
+set "VER_FILE=%TEMP%\heimdall-client-ver.txt"
+if exist "%VER_FILE%" del /F /Q "%VER_FILE%" >nul 2>&1
+
+if defined HEIMDALL_CLIENT_PRODUCT_VERSION (
+  if not "%HEIMDALL_CLIENT_PRODUCT_VERSION%"=="" (
+    set "CLIENT_VER=%HEIMDALL_CLIENT_PRODUCT_VERSION%"
+    echo [*] Using HEIMDALL_CLIENT_PRODUCT_VERSION=%CLIENT_VER%
+    goto have_client_ver
+  )
 )
+
+echo [*] Resolving next productVersion via Resolve-ClientPackVersion.ps1...
+"%PS%" -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\Resolve-ClientPackVersion.ps1" -RepoRoot "%ROOT%" -PackFolder "%OUT%" >"%VER_FILE%" 2>"%VER_FILE%.err"
+if errorlevel 1 (
+  echo [ERROR] Resolve-ClientPackVersion.ps1 failed.
+  echo        PS=%PS%
+  echo        Repo=%ROOT%
+  if exist "%VER_FILE%.err" type "%VER_FILE%.err"
+  goto fail
+)
+if not exist "%VER_FILE%" (
+  echo [ERROR] Version file not written: %VER_FILE%
+  goto fail
+)
+set /p CLIENT_VER=<"%VER_FILE%"
+del /F /Q "%VER_FILE%" >nul 2>&1
+if exist "%VER_FILE%.err" del /F /Q "%VER_FILE%.err" >nul 2>&1
+
+:have_client_ver
 if not defined CLIENT_VER (
   echo [ERROR] Could not resolve client productVersion
+  goto fail
+)
+for /f "tokens=* delims= " %%A in ("%CLIENT_VER%") do set "CLIENT_VER=%%A"
+if "%CLIENT_VER%"=="" (
+  echo [ERROR] Could not resolve client productVersion ^(empty^)
   goto fail
 )
 echo [*] Client productVersion for this pack: %CLIENT_VER%
@@ -167,15 +197,15 @@ copy /Y "%ROOT%\docs\portable-client\FILES.md" "%OUT%\FILES.md" >nul
 if exist "%ROOT%\assets\heimdall.ico" (
   copy /Y "%ROOT%\assets\heimdall.ico" "%OUT%\heimdall.ico" >nul
   echo [*] Creating helmet-icon shortcuts in package...
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Install.lnk" -TargetPath "%OUT%\Install.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Install Heimdall Agent on this PC"
+  "%PS%" -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Install.lnk" -TargetPath "%OUT%\Install.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Install Heimdall Agent on this PC"
   if errorlevel 1 (
     echo [WARN] Could not create Install.lnk — use Install.cmd instead.
   )
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Heimdall-Setup.lnk" -TargetPath "%OUT%\Heimdall-Setup.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Heimdall Setup (advanced)"
+  "%PS%" -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Heimdall-Setup.lnk" -TargetPath "%OUT%\Heimdall-Setup.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Heimdall Setup (advanced)"
   if errorlevel 1 (
     echo [WARN] Could not create Heimdall-Setup.lnk — use Heimdall-Setup.cmd instead.
   )
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Heimdall-LaunchControl.lnk" -TargetPath "%OUT%\Heimdall-Setup.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Heimdall Setup (advanced)"
+  "%PS%" -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Heimdall-LaunchControl.lnk" -TargetPath "%OUT%\Heimdall-Setup.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Heimdall Setup (advanced)"
 ) else (
   echo [WARN] assets\heimdall.ico missing — pack will not include helmet icon shortcuts.
 )
@@ -207,7 +237,7 @@ echo [*] Writing VERSION.json + PACKED.txt (productVersion=%CLIENT_VER%)...
 ) > "%OUT%\PACKED.txt"
 
 echo [*] Writing MANIFEST.sha256 + sourceFingerprint...
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\Write-ClientPackManifest.ps1" -RepoRoot "%ROOT%" -PackFolder "%OUT%"
+"%PS%" -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\Write-ClientPackManifest.ps1" -RepoRoot "%ROOT%" -PackFolder "%OUT%"
 if errorlevel 1 (
   echo [ERROR] Write-ClientPackManifest.ps1 failed
   goto fail

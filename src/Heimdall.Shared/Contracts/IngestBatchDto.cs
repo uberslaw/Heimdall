@@ -7,6 +7,10 @@ public sealed class IngestBatchDto
     public List<ProcessRunDto> ProcessRuns { get; init; } = [];
     /// <summary>One-shot inventory of processes seen on the host (for app analysis).</summary>
     public List<DiscoveredProcessDto> DiscoveredProcesses { get; init; } = [];
+    /// <summary>Optional on-demand disk usage scan result (top folders + large files).</summary>
+    public DiskUsageScanResultDto? DiskUsageScan { get; init; }
+    /// <summary>Optional mid-scan progress (also accepted via dedicated POST).</summary>
+    public DiskUsageScanProgressDto? DiskUsageScanProgress { get; init; }
 }
 
 public sealed class DiscoveredProcessDto

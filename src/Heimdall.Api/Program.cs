@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using Heimdall.Api.Data;
 using Heimdall.Api.Services;
 using Heimdall.Shared.Contracts;
@@ -216,6 +217,43 @@ app.MapGet("/api/tuflow/{hostname}/pending", async (string hostname, TuflowRunSe
 
     var dto = await runs.GetPendingAsync(hostname, request.HttpContext.RequestAborted);
     return Results.Ok(dto);
+});
+
+// Fast disk-usage poll (~20s) — independent of ConfigRefreshSeconds so Scan is not stuck behind a 5 min refresh.
+app.MapGet("/api/disk-usage/{hostname}/pending", async (string hostname, HeimdallDbContext db, HttpRequest request) =>
+{
+    if (!IsAuthorized(request))
+        return Results.Unauthorized();
+
+    var machine = await db.Machines.AsNoTracking()
+        .FirstOrDefaultAsync(m => m.Hostname == hostname, request.HttpContext.RequestAborted);
+    DiskUsageScanRequestDto? pending = null;
+    if (!string.IsNullOrWhiteSpace(machine?.PendingDiskUsageScanJson))
+    {
+        try
+        {
+            pending = JsonSerializer.Deserialize<DiskUsageScanRequestDto>(machine.PendingDiskUsageScanJson);
+        }
+        catch
+        {
+            /* ignore corrupt queue */
+        }
+    }
+
+    return Results.Ok(new DiskUsagePendingDto { PendingDiskUsageScan = pending });
+});
+
+app.MapPost("/api/disk-usage/{hostname}/progress", async (
+    string hostname,
+    DiskUsageScanProgressDto dto,
+    IngestService ingest,
+    HttpRequest request) =>
+{
+    if (!IsAuthorized(request))
+        return Results.Unauthorized();
+
+    await ingest.ApplyDiskUsageScanProgressAsync(hostname, dto, request.HttpContext.RequestAborted);
+    return Results.Accepted();
 });
 
 // --- Published client version (Client Version page baseline; set by Launch Control "Create client pack" — best-effort —

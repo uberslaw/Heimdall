@@ -29,7 +29,10 @@ public class RemoteMachineService(HeimdallDbContext db, ConfigService config, IL
             .OrderBy(m => m.Hostname)
             .ToListAsync(ct);
 
-        return machines.Select(m => ToRow(m, onlineCutoff, now)).ToList();
+        return machines
+            .Select(m => ToRow(m, onlineCutoff, now))
+            .OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     /// <summary>Rows for a specific set of hostnames (e.g. a Staff Access group's assigned machines), in the given order.</summary>
@@ -499,6 +502,7 @@ public class RemoteMachineService(HeimdallDbContext db, ConfigService config, IL
 
         return new RemoteMachineRow(
             m.Hostname,
+            string.IsNullOrWhiteSpace(m.FriendlyName) ? null : m.FriendlyName.Trim(),
             m.LastIp,
             m.LastSeenUtc,
             isOnline,
@@ -532,6 +536,7 @@ public class RemoteMachineService(HeimdallDbContext db, ConfigService config, IL
 
     public sealed record RemoteMachineRow(
         string Hostname,
+        string? FriendlyName,
         string? LastIp,
         DateTimeOffset LastSeenUtc,
         bool IsOnline,
@@ -547,7 +552,11 @@ public class RemoteMachineService(HeimdallDbContext db, ConfigService config, IL
         RestartRdsProgress? RestartProgress,
         bool ShowCountdown,
         DateTimeOffset? CountdownUntilUtc,
-        bool CountdownExpired);
+        bool CountdownExpired)
+    {
+        public string DisplayName =>
+            string.IsNullOrWhiteSpace(FriendlyName) ? Hostname : FriendlyName!;
+    }
 
     public sealed record PingResult(
         string Hostname,

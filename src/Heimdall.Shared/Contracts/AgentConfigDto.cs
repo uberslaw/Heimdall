@@ -41,6 +41,9 @@ public sealed class AgentConfigDto
     /// Process name substrings used to detect TUFLOW (case-insensitive contains). Default: ["tuflow"].
     /// </summary>
     public List<string> FleetProcessNames { get; init; } = ["tuflow"];
+
+    /// <summary>On-demand disk usage scan (top folders + large files). Cleared when the agent reports a matching ScanId.</summary>
+    public DiskUsageScanRequestDto? PendingDiskUsageScan { get; init; }
 }
 
 public sealed class KnownAppDto

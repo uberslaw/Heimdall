@@ -64,9 +64,9 @@ public class AssignMachinesModel(HeimdallDbContext db) : PageModel
     {
         Machines = await db.Machines.AsNoTracking()
             .OrderBy(m => m.Hostname)
-            .Select(m => new MachinePick(m.Id, m.Hostname, m.FriendlyName, m.TeamId))
+            .Select(m => new MachinePick(m.Id, m.Hostname, m.LastIp, m.FriendlyName, m.TeamId))
             .ToListAsync();
     }
 
-    public sealed record MachinePick(int Id, string Hostname, string? FriendlyName, int? TeamId);
+    public sealed record MachinePick(int Id, string Hostname, string? LastIp, string? FriendlyName, int? TeamId);
 }

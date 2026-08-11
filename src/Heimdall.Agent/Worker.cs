@@ -28,6 +28,11 @@ public sealed class Worker(
     private WeeklyInventoryState? _weeklyInventory;
     private string? _weeklyInventoryPath;
     private DateTimeOffset _nextWeeklyInventoryCheck = DateTimeOffset.MinValue;
+    private DiskUsageScanRequestDto? _pendingDiskScan;
+    private Task<DiskUsageScanResultDto>? _diskScanTask;
+    private DiskUsageScanResultDto? _diskScanResultReady;
+    private DiskUsageScanProgressDto? _diskScanProgressReady;
+    private readonly object _diskScanGate = new();
     private readonly HashSet<string> _executedPendingCommands = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _commandsToAck = [];
     private readonly List<CommandExecutionReportDto> _commandReports = [];
@@ -52,6 +57,10 @@ public sealed class Worker(
     // fleet sampling above (no "someone is viewing a page" gate the way live resource sampling has).
     private DateTimeOffset _nextTuflowPoll = DateTimeOffset.MinValue;
     private static readonly TimeSpan TuflowPollInterval = TimeSpan.FromSeconds(20);
+
+    // Fast disk-usage scan poll — same cadence as TUFLOW so Scan is not stuck behind config refresh.
+    private DateTimeOffset _nextDiskUsagePoll = DateTimeOffset.MinValue;
+    private static readonly TimeSpan DiskUsagePollInterval = TimeSpan.FromSeconds(20);
 
     [SupportedOSPlatform("windows")]
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -86,6 +95,8 @@ public sealed class Worker(
                     _config = remote;
                     if (remote.PendingAppAnalysis)
                         _sendInventoryNextUpload = true;
+                    if (remote.PendingDiskUsageScan is not null)
+                        QueueDiskUsageScan(hostname, remote.PendingDiskUsageScan);
                     ProcessPendingCommands(remote.PendingCommands);
                     TuflowRunHelper.TryStartIfRequested(remote.PendingTuflowStart, logger);
                     if (remote.PendingClientUpdate is not null
@@ -137,9 +148,79 @@ public sealed class Worker(
             await RunResourceSamplingTickAsync(hostname, now, stoppingToken);
             await RunFleetSamplingTickAsync(hostname, now, stoppingToken);
             await RunTuflowPollTickAsync(hostname, now, stoppingToken);
+            await RunDiskUsagePollTickAsync(hostname, now, stoppingToken);
             TryScheduleWeeklyInventory(now);
 
             await Task.Delay(1000, stoppingToken);
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private void QueueDiskUsageScan(string hostname, DiskUsageScanRequestDto request)
+    {
+        lock (_diskScanGate)
+        {
+            if (_pendingDiskScan is not null
+                && string.Equals(_pendingDiskScan.ScanId, request.ScanId, StringComparison.OrdinalIgnoreCase))
+                return;
+            if (_diskScanTask is { IsCompleted: false })
+            {
+                // Already scanning something else — keep latest request for after.
+                _pendingDiskScan = request;
+                return;
+            }
+
+            _pendingDiskScan = request;
+            var scanReq = request;
+            var host = hostname;
+            logger.LogInformation(
+                "Disk usage scan queued: {Root} (min file {MinMb} MB, top {Top}, max {MaxSec}s)",
+                scanReq.RootPath, scanReq.MinFileMb, scanReq.TopFolderCount, scanReq.MaxSeconds);
+
+            void OnProgress(DiskUsageScanProgressDto progress)
+            {
+                lock (_diskScanGate)
+                    _diskScanProgressReady = progress;
+                _ = api.ReportDiskUsageProgressAsync(host, progress, CancellationToken.None);
+            }
+
+            _diskScanTask = Task.Run(() =>
+            {
+                try
+                {
+                    return DiskUsageScanner.Scan(scanReq, OnProgress);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Disk usage scan failed");
+                    return new DiskUsageScanResultDto
+                    {
+                        ScanId = scanReq.ScanId,
+                        RootPath = scanReq.RootPath,
+                        CompletedUtc = DateTimeOffset.UtcNow,
+                        ElapsedSeconds = 0,
+                        Error = ex.Message
+                    };
+                }
+            });
+
+            _ = _diskScanTask.ContinueWith(t =>
+            {
+                DiskUsageScanResultDto? result = null;
+                if (t.Status == TaskStatus.RanToCompletion)
+                    result = t.Result;
+                lock (_diskScanGate)
+                {
+                    if (result is not null)
+                        _diskScanResultReady = result;
+                    if (_pendingDiskScan is not null
+                        && string.Equals(_pendingDiskScan.ScanId, scanReq.ScanId, StringComparison.OrdinalIgnoreCase))
+                        _pendingDiskScan = null;
+                }
+                logger.LogInformation(
+                    "Disk usage scan finished: folders={Folders} files={Files} truncated={Truncated} err={Error}",
+                    result?.TopFolders.Count, result?.LargeFiles.Count, result?.Truncated, result?.Error);
+            }, TaskScheduler.Default);
         }
     }
 
@@ -286,6 +367,22 @@ public sealed class Worker(
             reports = _commandReports.ToList();
         }
 
+        DiskUsageScanResultDto? diskScan = null;
+        DiskUsageScanProgressDto? diskProgress = null;
+        lock (_diskScanGate)
+        {
+            if (_diskScanResultReady is not null)
+            {
+                diskScan = _diskScanResultReady;
+                _diskScanResultReady = null;
+            }
+            if (_diskScanProgressReady is not null && diskScan is null)
+            {
+                diskProgress = _diskScanProgressReady;
+                // Keep latest until result ships; next upload can refresh.
+            }
+        }
+
         var batch = new IngestBatchDto
         {
             Heartbeat = new HeartbeatDto
@@ -325,7 +422,9 @@ public sealed class Worker(
             },
             Sessions = sessions,
             ProcessRuns = processes,
-            DiscoveredProcesses = discovered
+            DiscoveredProcesses = discovered,
+            DiskUsageScan = diskScan,
+            DiskUsageScanProgress = diskProgress
         };
 
         var ok = await api.UploadAsync(batch, ct);
@@ -628,6 +727,20 @@ public sealed class Worker(
 
         if (pending.StopRequested)
             TryExecuteTuflowStopFastPath();
+    }
+
+    private async Task RunDiskUsagePollTickAsync(string hostname, DateTimeOffset now, CancellationToken ct)
+    {
+        if (now < _nextDiskUsagePoll)
+            return;
+
+        _nextDiskUsagePoll = now.Add(DiskUsagePollInterval);
+
+        var pending = await api.GetDiskUsagePendingAsync(hostname, ct);
+        if (pending?.PendingDiskUsageScan is null)
+            return;
+
+        QueueDiskUsageScan(hostname, pending.PendingDiskUsageScan);
     }
 
     /// <summary>

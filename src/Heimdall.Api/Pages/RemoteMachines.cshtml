@@ -109,8 +109,12 @@
                         </span>
                     }
                 </td>
-                <td class="hd-remote-machine">
-                    <a asp-page="/Machine" asp-route-hostname="@r.Hostname"><strong>@r.Hostname</strong></a>
+                <td class="hd-remote-machine" data-sort-value="@r.DisplayName">
+                    <a asp-page="/Machine" asp-route-hostname="@r.Hostname" title="@r.Hostname"><strong>@r.DisplayName</strong></a>
+                    @if (!string.IsNullOrWhiteSpace(r.FriendlyName))
+                    {
+                        <div class="text-secondary small">@r.Hostname</div>
+                    }
                     @if (RemoteMachinesModel.ShowRestartProgress(r))
                     {
                         <div class="hd-restart-progress">
@@ -214,8 +218,7 @@
     </table>
 </div>
 
-@section Scripts {
-    <script src="~/js/remote-machines.js" asp-append-version="true"></script>
-    <script src="~/js/restart-countdown.js" asp-append-version="true"></script>
-}
+@* Inline (not @section) so Fleet partial fetch still runs AJAX ping / RDP / countdown. *@
+<script src="~/js/remote-machines.js" asp-append-version="true"></script>
+<script src="~/js/restart-countdown.js" asp-append-version="true"></script>
 

@@ -33,6 +33,7 @@
                     <tr>
                         <th style="width: 2.5rem;"></th>
                         <th data-sort="text">Hostname</th>
+                        <th data-sort="text">IP address</th>
                         <th data-sort="text">Friendly name</th>
                         <th data-sort="text">Current team</th>
                     </tr>
@@ -47,6 +48,7 @@
                                    @(checkedAttr ? "checked" : null) />
                         </td>
                         <td><code>@m.Hostname</code></td>
+                        <td>@(string.IsNullOrWhiteSpace(m.LastIp) ? "—" : m.LastIp)</td>
                         <td>@(m.FriendlyName ?? "—")</td>
                         <td>
                             @if (m.TeamId == Model.TeamId)

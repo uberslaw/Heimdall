@@ -74,6 +74,38 @@ public sealed class HeimdallApiClient(HttpClient http, IConfiguration config, IL
         }
     }
 
+    /// <summary>Fast poll for a queued disk-usage scan (~20s), same pattern as TUFLOW pending.</summary>
+    public async Task<DiskUsagePendingDto?> GetDiskUsagePendingAsync(string hostname, CancellationToken ct)
+    {
+        try
+        {
+            ApplyKey();
+            return await http.GetFromJsonAsync<DiskUsagePendingDto>(
+                $"/api/disk-usage/{Uri.EscapeDataString(hostname)}/pending", ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Disk usage pending poll failed");
+            return null;
+        }
+    }
+
+    /// <summary>Mid-scan progress — dropped on failure; next tick supersedes.</summary>
+    public async Task ReportDiskUsageProgressAsync(string hostname, DiskUsageScanProgressDto dto, CancellationToken ct)
+    {
+        try
+        {
+            ApplyKey();
+            using var response = await http.PostAsJsonAsync(
+                $"/api/disk-usage/{Uri.EscapeDataString(hostname)}/progress", dto, ct);
+            _ = response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Disk usage progress report failed (dropped)");
+        }
+    }
+
     /// <summary>
     /// Live metric samples are near-real-time only — unlike UploadAsync, a failed report is dropped, not
     /// queued offline. A stale queued "point in time" reading would just show wrong data later; better to

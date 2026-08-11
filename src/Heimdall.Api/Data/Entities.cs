@@ -40,6 +40,15 @@ public class Machine
     /// <summary>When DiskVolumesJson was last refreshed (UTC).</summary>
     public DateTimeOffset? DiskVolumesUtc { get; set; }
 
+    /// <summary>Queued <see cref="Heimdall.Shared.Contracts.DiskUsageScanRequestDto"/> JSON for the agent.</summary>
+    public string? PendingDiskUsageScanJson { get; set; }
+    /// <summary>Last <see cref="Heimdall.Shared.Contracts.DiskUsageScanResultDto"/> JSON from the agent.</summary>
+    public string? DiskUsageScanJson { get; set; }
+    /// <summary>When DiskUsageScanJson was last written (UTC).</summary>
+    public DateTimeOffset? DiskUsageScanUtc { get; set; }
+    /// <summary>Latest <see cref="Heimdall.Shared.Contracts.DiskUsageScanProgressDto"/> JSON while a scan is in flight.</summary>
+    public string? DiskUsageScanProgressJson { get; set; }
+
     // --- Cost / hardware inventory (manual + optional agent enrich) ---
     public decimal? PurchaseCost { get; set; }
     /// <summary>ISO-ish currency code; default AUD when purchase cost is set.</summary>

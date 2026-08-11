@@ -55,8 +55,53 @@ else if (d is not null)
 
     <div class="hd-grid mb-3">
         <div class="hd-stat">
-            <div class="label">Group</div>
-            <div class="value" style="font-size:1.1rem;">@(d.Group ?? "—")</div>
+            <div class="label d-flex align-items-center justify-content-between gap-2">
+                <span>Friendly name</span>
+                @if (!Model.EditFriendly)
+                {
+                    <a class="hd-btn hd-btn-silver hd-btn-sm py-0 px-2" style="font-size:0.7rem;line-height:1.4"
+                       asp-page="/Machine" asp-route-Hostname="@d.Hostname" asp-route-Range="@Model.Range" asp-route-EditFriendly="true">Edit</a>
+                }
+            </div>
+            @if (Model.EditFriendly)
+            {
+                <form method="post" asp-page-handler="SaveFriendlyName" class="mt-1">
+                    <input type="hidden" name="Hostname" value="@Model.Hostname" />
+                    <input type="hidden" name="Range" value="@Model.Range" />
+                    <div class="d-flex flex-wrap gap-1 align-items-center">
+                        <input class="form-control form-control-sm" name="FriendlyNameInput" value="@Model.FriendlyNameInput"
+                               maxlength="80" placeholder="e.g. Revit workstation" style="min-width:10rem;max-width:14rem" />
+                        <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Save</button>
+                        <a class="small" asp-page="/Machine" asp-route-Hostname="@d.Hostname" asp-route-Range="@Model.Range">Cancel</a>
+                    </div>
+                </form>
+            }
+            else
+            {
+                <div class="value" style="font-size:1.1rem;">@(string.IsNullOrWhiteSpace(Model.FriendlyName) ? "—" : Model.FriendlyName)</div>
+            }
+            <div class="text-secondary small mt-1">@(string.IsNullOrWhiteSpace(Model.LastIp) ? "No IP yet" : Model.LastIp)</div>
+            <form method="post" asp-page-handler="SaveTeam" class="mt-2">
+                <input type="hidden" name="Hostname" value="@Model.Hostname" />
+                <input type="hidden" name="Range" value="@Model.Range" />
+                <label class="form-label small text-secondary mb-0" for="machine-team">Team</label>
+                <select class="form-select form-select-sm" id="machine-team" name="SelectedTeamId"
+                        style="max-width:14rem" onchange="this.form.submit()"
+                        title="Same teams as Admin → Teams">
+                    <option value="0">— No team —</option>
+                    @foreach (var t in Model.TeamOptions)
+                    {
+                        if (t.Id == Model.SelectedTeamId)
+                        {
+                            <option value="@t.Id" selected>@t.Label</option>
+                        }
+                        else
+                        {
+                            <option value="@t.Id">@t.Label</option>
+                        }
+                    }
+                </select>
+            </form>
         </div>
         <div class="hd-stat">
             <div class="label">Status</div>
@@ -74,6 +119,20 @@ else if (d is not null)
                     <span class="badge-pill badge-ended">Offline</span>
                 }
             </div>
+            @if (Model.ResourceGlance is { } glance)
+            {
+                <div class="hd-resource-glance text-secondary small mt-1 font-monospace"
+                     title="Latest agent sample @MachineModel.FormatLocalTimestamp(glance.SampledAtUtc) (@glance.Source). Disk/network bands are POC MB/s thresholds, not industry standards.">
+                    <span>CPU @MachineModel.FormatGlancePct(glance.CpuPercent)</span>
+                    <span>GPU @MachineModel.FormatGlancePct(glance.GpuPercent)</span>
+                    <span>Disk @glance.DiskLevel</span>
+                    <span>Network @glance.NetworkLevel</span>
+                </div>
+            }
+            else
+            {
+                <div class="text-secondary small mt-1">No resource sample yet</div>
+            }
         </div>
         <div class="hd-stat">
             <div class="label">Last check-in</div>
@@ -144,6 +203,140 @@ else if (d is not null)
                         </div>
                     </div>
                 }
+            </div>
+        }
+
+        <hr class="my-3" />
+        <h3 class="h6 mb-2">Disk usage scan</h3>
+        <p class="text-secondary small mb-2">
+            On-demand agent scan: largest folders under the drive root, plus files at or above the size threshold.
+            Requires an updated agent. Pickup is usually within ~20s; scan itself is throttled (≤ ~3 minutes).
+            Leaving this page does not cancel a queued or running scan.
+        </p>
+        <div id="disk-usage-status"
+             class="@(Model.PendingDiskUsageScan ? "" : "d-none")"
+             data-pending="@(Model.PendingDiskUsageScan ? "1" : "0")"
+             data-hostname="@Model.Hostname"
+             data-requested-utc="@(Model.PendingDiskScanRequestedUtc?.ToString("o") ?? "")"
+             data-max-seconds="@Model.PendingDiskScanMaxSeconds"
+             aria-live="polite">
+            <div class="hd-panel border-0 bg-transparent p-0 mb-2">
+                <p class="small mb-1" id="disk-usage-requested-line">
+                    @if (Model.PendingDiskScanRequestedUtc is { } reqUtc)
+                    {
+                        <text>Requested @MachineModel.FormatLocalTimestamp(reqUtc)</text>
+                        @if (!string.IsNullOrWhiteSpace(Model.PendingDiskScanRoot))
+                        {
+                            <text> · @Model.PendingDiskScanRoot</text>
+                        }
+                    }
+                    else if (Model.PendingDiskUsageScan)
+                    {
+                        <text>Scan queued@(string.IsNullOrWhiteSpace(Model.PendingDiskScanRoot) ? "" : $" for {Model.PendingDiskScanRoot}") — waiting for agent.</text>
+                    }
+                </p>
+                <p class="small mb-1" id="disk-usage-elapsed-line"></p>
+                <p class="small mb-0" id="disk-usage-progress-line">
+                    @if (Model.DiskUsageProgress is { } prog)
+                    {
+                        <span class="text-warning">@prog.Status</span>
+                        @if (!string.IsNullOrWhiteSpace(prog.Message))
+                        {
+                            <text> — @prog.Message</text>
+                        }
+                        @if (prog.FilesSeen > 0 || prog.BytesScanned > 0)
+                        {
+                            <text> · @prog.FilesSeen.ToString("N0") files · @MachineModel.FormatBytes(prog.BytesScanned)</text>
+                        }
+                    }
+                    else if (Model.PendingDiskUsageScan)
+                    {
+                        <span class="text-warning">Queued</span><text> - waiting for agent (usually within about 20s)</text>
+                    }
+                </p>
+            </div>
+        </div>
+        <form method="post" asp-page-handler="RequestDiskUsageScan" class="row g-2 align-items-end mb-3">
+            <input type="hidden" name="Hostname" value="@Model.Hostname" />
+            <input type="hidden" name="Range" value="@Model.Range" />
+            <div class="col-auto">
+                <label class="form-label small mb-0" for="disk-scan-root">Drive</label>
+                <select class="form-select form-select-sm" id="disk-scan-root" name="DiskScanRoot" style="min-width:6rem">
+                    @{
+                        var roots = Model.DiskVolumes.Select(v => v.Name.TrimEnd('\\') + @"\").ToList();
+                        if (roots.Count == 0) { roots.Add(@"C:\"); }
+                        var selectedRoot = Model.PendingDiskScanRoot ?? roots[0];
+                    }
+                    @foreach (var r in roots)
+                    {
+                        if (string.Equals(r, selectedRoot, StringComparison.OrdinalIgnoreCase))
+                        {
+                            <option value="@r" selected>@r</option>
+                        }
+                        else
+                        {
+                            <option value="@r">@r</option>
+                        }
+                    }
+                </select>
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-0" for="disk-scan-min">Min file size (MB)</label>
+                <input class="form-control form-control-sm" type="number" id="disk-scan-min" name="DiskScanMinFileMb"
+                       value="@Model.DiskScanMinFileMb" min="10" max="10240" step="10" style="width:7rem" />
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm" @(Model.PendingDiskUsageScan ? "disabled" : null)>
+                    Scan disk usage
+                </button>
+            </div>
+        </form>
+
+        @if (Model.DiskUsageScan is { } scan)
+        {
+            <div class="small text-secondary mb-2">
+                Last scan @MachineModel.FormatLocalTimestamp(Model.DiskUsageScanUtc ?? scan.CompletedUtc)
+                · @scan.RootPath
+                · @scan.ElapsedSeconds.ToString("0.#")s
+                · @scan.FilesSeen.ToString("N0") files
+                · @MachineModel.FormatBytes(scan.BytesScanned) seen
+                @if (scan.Truncated)
+                {
+                    <span class="text-warning"> · truncated (time budget)</span>
+                }
+                @if (!string.IsNullOrWhiteSpace(scan.Error))
+                {
+                    <span class="text-danger"> · @scan.Error</span>
+                }
+            </div>
+
+            <div class="row g-3">
+                <div class="col-lg-6">
+                    <h4 class="h6">Top folders</h4>
+                    @if (scan.TopFolders.Count == 0)
+                    {
+                        <p class="text-secondary small mb-0">No folders reported.</p>
+                    }
+                    else
+                    {
+                        <pre class="hd-disk-usage-tree small mb-0">@foreach (var f in scan.TopFolders)
+{<text>@MachineModel.FormatBytes(f.SizeBytes).PadLeft(10)  @f.Path
+</text>}</pre>
+                    }
+                </div>
+                <div class="col-lg-6">
+                    <h4 class="h6">Large files (≥ threshold)</h4>
+                    @if (scan.LargeFiles.Count == 0)
+                    {
+                        <p class="text-secondary small mb-0">None at or above the threshold.</p>
+                    }
+                    else
+                    {
+                        <pre class="hd-disk-usage-tree small mb-0">@foreach (var f in scan.LargeFiles)
+{<text>@MachineModel.FormatBytes(f.SizeBytes).PadLeft(10)  @f.Path
+</text>}</pre>
+                    }
+                </div>
             </div>
         }
     </div>
@@ -590,6 +783,90 @@ else if (d is not null)
       });
       if (th.dataset.defaultDesc !== undefined) th.click();
     });
+  }
+
+  const statusEl = document.getElementById('disk-usage-status');
+  if (statusEl && statusEl.dataset.pending === '1') {
+    const hostname = statusEl.dataset.hostname || '';
+    const elapsedLine = document.getElementById('disk-usage-elapsed-line');
+    const progressLine = document.getElementById('disk-usage-progress-line');
+    const requestedLine = document.getElementById('disk-usage-requested-line');
+    let requestedMs = Date.parse(statusEl.dataset.requestedUtc || '');
+    let maxSeconds = parseInt(statusEl.dataset.maxSeconds || '180', 10) || 180;
+    let stopped = false;
+
+    const fmtBytes = (n) => {
+      if (n == null || n < 1024) return (n || 0) + ' B';
+      let v = n, u = ['KB', 'MB', 'GB', 'TB'], i = -1;
+      do { v /= 1024; i++; } while (v >= 1024 && i < u.length - 1);
+      return v.toFixed(2).replace(/\.?0+$/, '') + ' ' + u[i];
+    };
+    const fmtElapsed = (sec) => {
+      sec = Math.max(0, Math.floor(sec));
+      const m = Math.floor(sec / 60), s = sec % 60;
+      return m > 0 ? `${m}m ${s}s` : `${s}s`;
+    };
+    const tickElapsed = () => {
+      if (!elapsedLine || !Number.isFinite(requestedMs)) return;
+      const elapsed = (Date.now() - requestedMs) / 1000;
+      const budget = maxSeconds + 30;
+      const remain = Math.max(0, budget - elapsed);
+      elapsedLine.textContent = Number.isFinite(requestedMs)
+        ? `Elapsed ${fmtElapsed(elapsed)} · rough remaining ≤ ${fmtElapsed(remain)} (pickup + scan budget)`
+        : '';
+    };
+
+    const renderProgress = (p) => {
+      if (!progressLine || !p) return;
+      let html = `<span class="text-warning">${p.status || 'Queued'}</span>`;
+      if (p.message) html += ` — ${p.message}`;
+      if ((p.filesSeen | 0) > 0 || (p.bytesScanned | 0) > 0) {
+        html += ` · ${Number(p.filesSeen || 0).toLocaleString()} files · ${fmtBytes(p.bytesScanned || 0)}`;
+      }
+      if (typeof p.elapsedSeconds === 'number' && p.elapsedSeconds > 0) {
+        html += ` · agent ${fmtElapsed(p.elapsedSeconds)}`;
+      }
+      progressLine.innerHTML = html;
+    };
+
+    const poll = async () => {
+      if (stopped || !hostname) return;
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('handler', 'DiskUsageStatus');
+        url.searchParams.set('Hostname', hostname);
+        const res = await fetch(url.toString(), { credentials: 'same-origin', headers: { 'Accept': 'application/json' } });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.ok) return;
+        if (data.requestedUtc) {
+          const ms = Date.parse(data.requestedUtc);
+          if (Number.isFinite(ms)) {
+            requestedMs = ms;
+            statusEl.dataset.requestedUtc = data.requestedUtc;
+            if (requestedLine && data.rootPath) {
+              const when = new Date(ms).toLocaleString();
+              requestedLine.textContent = `Requested ${when} · ${data.rootPath}`;
+            }
+          }
+        }
+        if (data.maxSeconds) maxSeconds = data.maxSeconds;
+        if (data.progress) renderProgress(data.progress);
+        tickElapsed();
+        if (data.complete || data.pending === false) {
+          stopped = true;
+          if (progressLine) {
+            progressLine.innerHTML = '<span class="text-success">Ready</span> — refreshing…';
+          }
+          window.location.reload();
+        }
+      } catch (_) { /* next tick */ }
+    };
+
+    tickElapsed();
+    setInterval(tickElapsed, 1000);
+    poll();
+    setInterval(poll, 3000);
   }
 })();
 </script>

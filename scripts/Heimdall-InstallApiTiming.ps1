@@ -30,6 +30,7 @@ $script:InstallApiProgressStepName = ""
 $script:InstallApiProgressStatusLine = ""
 $script:InstallApiProgressPublishActions = 0
 $script:InstallApiProgressWinFormsLoaded = $false
+$script:InstallApiProgressWindowTitle = "Heimdall API install"
 
 function Get-InstallApiLogDurations {
     $results = @()
@@ -318,7 +319,9 @@ function Update-InstallApiProgressDisplay {
     try {
         $hostUi = $Host.UI
         if ($hostUi -and $hostUi.RawUI -and $finishAt) {
-            $hostUi.RawUI.WindowTitle = (Format-InstallApiCountdownStatus -FinishAt $finishAt -Prefix "Heimdall API install")
+            $prefix = $script:InstallApiProgressWindowTitle
+            if (-not $prefix) { $prefix = "Heimdall API install" }
+            $hostUi.RawUI.WindowTitle = (Format-InstallApiCountdownStatus -FinishAt $finishAt -Prefix $prefix)
         }
     }
     catch {
@@ -330,7 +333,8 @@ function Start-InstallApiProgressWindow {
         [Parameter(Mandatory = $true)][datetime]$FinishAt,
         [Parameter(Mandatory = $true)][int]$TotalSteps,
         [string]$LogPath = $null,
-        [string]$InitialStepName = "Starting"
+        [string]$InitialStepName = "Starting",
+        [string]$WindowTitle = "Heimdall API install"
     )
 
     Stop-InstallApiProgressWindow
@@ -340,11 +344,12 @@ function Start-InstallApiProgressWindow {
     $script:InstallApiProgressStepIndex = 1
     $script:InstallApiProgressStepTotal = $TotalSteps
     $script:InstallApiProgressStepName = $InitialStepName
-    $script:InstallApiProgressStatusLine = "Install started"
+    $script:InstallApiProgressStatusLine = "Started"
     $script:InstallApiProgressPublishActions = 0
+    $script:InstallApiProgressWindowTitle = if ([string]::IsNullOrWhiteSpace($WindowTitle)) { "Heimdall API install" } else { $WindowTitle }
 
     if (-not (Ensure-InstallApiWinFormsLoaded)) {
-        Write-Host "Heimdall API install progress (WinForms unavailable; see log file)." -ForegroundColor Yellow
+        Write-Host "$($script:InstallApiProgressWindowTitle) progress (WinForms unavailable; see log file)." -ForegroundColor Yellow
         if ($LogPath) {
             Write-Host "  Log: $LogPath" -ForegroundColor DarkGray
         }
@@ -353,7 +358,7 @@ function Start-InstallApiProgressWindow {
     }
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Heimdall API install"
+    $form.Text = $script:InstallApiProgressWindowTitle
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
     $form.MaximizeBox = $false
     $form.MinimizeBox = $false
@@ -363,7 +368,7 @@ function Start-InstallApiProgressWindow {
 
     $y = 12
     $lblTitle = New-Object System.Windows.Forms.Label
-    $lblTitle.Text = "Heimdall API install"
+    $lblTitle.Text = $script:InstallApiProgressWindowTitle
     $lblTitle.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
     $lblTitle.AutoSize = $true
     $lblTitle.Location = New-Object System.Drawing.Point(16, $y)
@@ -462,10 +467,10 @@ function Stop-InstallApiProgressWindow {
 
     if ($KeepWindowOpen -and $script:InstallApiProgressForm -and -not $script:InstallApiProgressForm.IsDisposed) {
         if ($script:InstallApiProgressLabels.Eta) {
-            $script:InstallApiProgressLabels.Eta.Text = "Install finished"
+            $script:InstallApiProgressLabels.Eta.Text = "Finished"
         }
         if ($script:InstallApiProgressLabels.Status) {
-            $script:InstallApiProgressLabels.Status.Text = "Use Open logs folder for the install log."
+            $script:InstallApiProgressLabels.Status.Text = "Use Open logs folder for the log."
         }
         try {
             [System.Windows.Forms.Application]::DoEvents()
@@ -491,7 +496,9 @@ function Stop-InstallApiProgressWindow {
     try {
         $hostUi = $Host.UI
         if ($hostUi -and $hostUi.RawUI) {
-            $hostUi.RawUI.WindowTitle = "Heimdall API install"
+            $title = $script:InstallApiProgressWindowTitle
+            if (-not $title) { $title = "Heimdall API install" }
+            $hostUi.RawUI.WindowTitle = $title
         }
     }
     catch {
@@ -503,10 +510,11 @@ function Start-InstallApiConsoleCountdown {
         [Parameter(Mandatory = $true)][datetime]$FinishAt,
         [Parameter(Mandatory = $true)][int]$EstimatedSec,
         [string]$LogPath = $null,
-        [int]$TotalSteps = 9
+        [int]$TotalSteps = 9,
+        [string]$WindowTitle = "Heimdall API install"
     )
 
-    Start-InstallApiProgressWindow -FinishAt $FinishAt -TotalSteps $TotalSteps -LogPath $LogPath -InitialStepName "Starting"
+    Start-InstallApiProgressWindow -FinishAt $FinishAt -TotalSteps $TotalSteps -LogPath $LogPath -InitialStepName "Starting" -WindowTitle $WindowTitle
 }
 
 function Stop-InstallApiConsoleCountdown {

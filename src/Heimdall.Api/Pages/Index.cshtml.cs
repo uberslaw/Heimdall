@@ -46,21 +46,6 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
         var utilByMachine = await util.ComputeAsync(machines.Select(m => m.Id).ToList(), Period, ct);
 
         var teams = await db.Teams.AsNoTracking().OrderBy(t => t.Name).ToListAsync(ct);
-        var activeLinks = await db.TeamAppListLinks.AsNoTracking()
-            .Include(l => l.AppList)
-            .ThenInclude(a => a.Entries)
-            .Where(l => !l.IsExcluded)
-            .ToListAsync(ct);
-        var appsByTeam = activeLinks
-            .GroupBy(l => l.TeamId)
-            .ToDictionary(
-                g => g.Key,
-                g => g.SelectMany(l => l.AppList.Entries)
-                    .Select(e => string.IsNullOrWhiteSpace(e.DisplayName) ? e.ProcessName : e.DisplayName!)
-                    .Where(n => !string.IsNullOrWhiteSpace(n))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
-                    .ToList());
 
         var rows = new List<MachineRow>();
         foreach (var m in machines)
@@ -109,16 +94,14 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
                 .ToList();
             if (teamRows.Count == 0)
                 continue;
-            appsByTeam.TryGetValue(team.Id, out var apps);
-            apps ??= [];
-            sections.Add(new TeamSection(team.Id, team.Name, FormatAppsHeader(apps), string.Join(" · ", apps), teamRows));
+            sections.Add(new TeamSection(team.Id, team.Name, teamRows));
         }
 
         var unassigned = rows.Where(r => r.TeamId is null)
             .OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (unassigned.Count > 0)
-            sections.Add(new TeamSection(null, "Unassigned", "", "", unassigned));
+            sections.Add(new TeamSection(null, "Unassigned", unassigned));
 
         Sections = sections;
         return Page();
@@ -205,17 +188,6 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
         return string.Join(" · ", parts);
     }
 
-    private static string FormatAppsHeader(IReadOnlyList<string> apps)
-    {
-        if (apps.Count == 0) return "";
-        const int max = 5;
-        var shown = apps.Take(max).ToList();
-        var text = string.Join(" – ", shown);
-        if (apps.Count > max)
-            text += " …";
-        return text;
-    }
-
     public enum MachineStatus { Active, Idle, Off }
 
     public sealed record MachineRow(
@@ -234,7 +206,5 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
     public sealed record TeamSection(
         int? TeamId,
         string TeamName,
-        string AppsShort,
-        string AppsFull,
         IReadOnlyList<MachineRow> Machines);
 }
