@@ -165,6 +165,18 @@ What it does:
 
 **Install log:** `%ProgramData%\Heimdall\logs\install-agent-YYYYMMDD-HHMMSS.log`
 
+See **[docs/CLIENT.md](docs/CLIENT.md)** for how the agent collects data, fleet snapshots, TUFLOW, and silent `UpdateClient` deploy.
+
+### Option C — Silent client update (after bootstrap)
+
+Once agents report version **≥ 3** (and one manual install has been done for older agents):
+
+1. On the API host: **Fleet → Client version** → **Pack client** (when Ready)
+2. Select hosts → **Deploy Client** — queues download + service restart
+3. Updates **defer** while an interactive session is Active
+
+Agents below version 3 need **Install.lnk** or Setup push once before silent Deploy works.
+
 ---
 
 ## 3. Verify
@@ -175,7 +187,7 @@ What it does:
 | **Dashboard** | http://SERVER:5080 |
 | **API service** | `Get-Service HeimdallApi` → Running |
 | **Agent service** | `Get-Service HeimdallAgent` → Running |
-| **First heartbeat** | Dashboard → **Machines** — your hostname should appear after the agent’s first successful heartbeat |
+| **First heartbeat** | Dashboard → **Fleet → Computers** — hostname after first successful heartbeat |
 
 Quick PowerShell checks:
 

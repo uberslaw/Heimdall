@@ -30,7 +30,7 @@ public static class DurationDisplay
     public static IHtmlContent Render(double totalSeconds)
     {
         var seconds = Math.Max(0, totalSeconds);
-        var text = FormatAuto(seconds);
+        var text = Format(seconds);
         var secondsAttr = seconds.ToString("0.##", CultureInfo.InvariantCulture);
         return new HtmlString(
             "<span class=\"hd-duration\" data-seconds=\"" + secondsAttr + "\" " +
@@ -42,8 +42,14 @@ public static class DurationDisplay
 
     public static IHtmlContent Render(TimeSpan span) => Render(span.TotalSeconds);
 
-    private static string FormatAuto(double seconds)
+    /// <summary>
+    /// Plain-text auto unit label (e.g. "2 hours"). Use in HTML attributes — never nest
+    /// <see cref="Render"/> inside <c>title</c>/<c>aria-*</c>/etc.; that embeds a full
+    /// <c>&lt;span&gt;</c> and breaks markup.
+    /// </summary>
+    public static string Format(double totalSeconds)
     {
+        var seconds = Math.Max(0, totalSeconds);
         if (seconds < SecondsPerMinute) return FormatUnit(seconds, 1, "second");
         if (seconds < SecondsPerHour) return FormatUnit(seconds, SecondsPerMinute, "minute");
         if (seconds < SecondsPerDay) return FormatUnit(seconds, SecondsPerHour, "hour");
@@ -52,6 +58,10 @@ public static class DurationDisplay
         if (seconds < SecondsPerYear) return FormatUnit(seconds, SecondsPerMonth, "month");
         return FormatUnit(seconds, SecondsPerYear, "year");
     }
+
+    public static string Format(long totalSeconds) => Format((double)totalSeconds);
+
+    public static string Format(TimeSpan span) => Format(span.TotalSeconds);
 
     private static string FormatUnit(double seconds, double perUnit, string unitLabel)
     {

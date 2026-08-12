@@ -6,6 +6,15 @@ Lightweight workstation usage tracker for justifying remote / modelling machine 
 
 **POC goal:** clearer session + app utilisation than CADFX, with server-side config and minimal agent overhead.
 
+## Documentation
+
+| Doc | Use |
+|-----|-----|
+| [HANDOVER.md](HANDOVER.md) | Agent handoff — start here on a new machine |
+| [INSTALL.md](INSTALL.md) | Server + client install and troubleshoot |
+| [docs/CLIENT.md](docs/CLIENT.md) | How the Windows agent works |
+| Dashboard **Admin → Help** | Page-by-page operator guide |
+
 ## What it tracks
 
 - Local vs RDP logons
@@ -101,15 +110,17 @@ Dashboard → **Discovery**: full central process catalog (ProcessName + Executa
 
 In-app **Admin → Help** is the page-by-page operator guide (preferred for UI detail).
 
-### Remote
+### Remote / Flood
 
 | Page | Purpose |
 |------|---------|
-| **Remote Machines** | RDP/RDS health, ping from API host, Connect `.rdp`, Restart RDS via agent command queue |
-| **Historical Dashboard** | Enroll machines → always-on **30s** resource snapshots; Live Fleet + historical analytics (TUFLOW-oriented POC). Distinct from backlog **Flight Recorder**. |
-| **Staff Access** | Restricted live metrics for staff in a Remote Access Group (optional Windows Negotiate — see [INSTALL.md](INSTALL.md)) |
+| **Fleet → Online status** | RDP/RDS health, ping, Connect `.rdp`, Restart RDS |
+| **Fleet → Live** | Estate-wide 30s util for all clients |
+| **Flood hub** | Enrollment allowlist; Live/Historical analytics for enrolled hosts; Fleet Sims |
+| **TUFLOW Runs** | Queue TUFLOW start/stop on enrolled hosts |
+| **Staff Access** | Public team RDP pool + bookings (optional Windows Negotiate — [INSTALL.md](INSTALL.md)) |
 
-Admin → **Remote Access Groups** maps staff email ↔ machines. Admin → **Clients** compares agent heartbeat version vs published pack version. Admin → **Theme** / **Database mode** (Live vs Sandbox).
+Admin → **Remote Access Groups**; Fleet → **Client version** for pack/deploy. See **[docs/CLIENT.md](docs/CLIENT.md)** for agent behaviour.
 
 ### Teams
 

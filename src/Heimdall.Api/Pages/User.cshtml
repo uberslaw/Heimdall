@@ -9,6 +9,7 @@
     var shortLabel = Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d";
     var maxHour = d is { HourOfDay.Count: > 0 } ? d.HourOfDay.Max(h => h.ActiveSeconds) : 0;
     var maxDow = d is { DayOfWeek.Count: > 0 } ? d.DayOfWeek.Max(h => h.ActiveSeconds) : 0;
+    ViewData["HelpFragment"] = "user-detail";
 }
 
 <p class="hd-meta-line mb-2">
@@ -100,62 +101,74 @@ else
                     }
                 </select>
             </div>
-            <div class="col-md-3 col-lg-2">
-                <button type="submit" class="btn btn-hd w-100">Apply</button>
+            <div class="col-auto">
+                <button type="submit" class="hd-btn hd-btn-gold">Apply</button>
             </div>
         </div>
     </form>
 
-    <div class="row g-3 mb-3">
-        <div class="col-lg-6">
-            <div class="hd-panel h-100">
-                <h2 class="hd-section-title mb-2">Active by day of week</h2>
-                <p class="text-secondary small mb-2">Local time · session active seconds started on each weekday</p>
-                @if (maxDow <= 0)
-                {
-                    <p class="text-secondary mb-0">No session activity in this period.</p>
-                }
-                else
-                {
-                    <div class="hd-user-bars">
-                        @foreach (var row in d.DayOfWeek)
-                        {
-                            <div class="hd-user-bar-row">
-                                <div class="hd-user-bar-label">@row.Label[..3]</div>
-                                <div class="hd-user-bar-track" title="@DurationDisplay.Render(row.ActiveSeconds) · @row.SessionCount session(s)">
-                                    <div class="hd-user-bar-fill" style="width:@UserModel.FormatHourBar(row.ActiveSeconds, maxDow)"></div>
-                                </div>
-                                <div class="hd-user-bar-val">@DurationDisplay.Render(row.ActiveSeconds)</div>
-                            </div>
-                        }
-                    </div>
-                }
-            </div>
+    <div class="hd-panel mb-3">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+            <h2 class="hd-section-title mb-0">Active time</h2>
+            <ul class="nav nav-tabs hd-ops-tabs mb-0" id="user-activity-view-tabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button type="button" class="nav-link active" id="user-activity-tab-dow"
+                            role="tab" aria-selected="true" aria-controls="user-activity-view-dow"
+                            data-user-activity-view="dow">By day of week</button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button type="button" class="nav-link" id="user-activity-tab-hour"
+                            role="tab" aria-selected="false" aria-controls="user-activity-view-hour"
+                            data-user-activity-view="hour">By hour of day</button>
+                </li>
+            </ul>
         </div>
-        <div class="col-lg-6">
-            <div class="hd-panel h-100">
-                <h2 class="hd-section-title mb-2">Active by hour of day</h2>
-                <p class="text-secondary small mb-2">Local time · active seconds distributed across hours spanned</p>
-                @if (maxHour <= 0)
-                {
-                    <p class="text-secondary mb-0">No session activity in this period.</p>
-                }
-                else
-                {
-                    <div class="hd-user-bars hd-user-bars--hours">
-                        @foreach (var row in d.HourOfDay)
-                        {
-                            <div class="hd-user-bar-row">
-                                <div class="hd-user-bar-label">@row.Label</div>
-                                <div class="hd-user-bar-track" title="@DurationDisplay.Render(row.ActiveSeconds)">
-                                    <div class="hd-user-bar-fill" style="width:@UserModel.FormatHourBar(row.ActiveSeconds, maxHour)"></div>
-                                </div>
-                                <div class="hd-user-bar-val">@DurationDisplay.Render(row.ActiveSeconds)</div>
+
+        <div id="user-activity-view-dow" class="hd-user-activity-panel" role="tabpanel" aria-labelledby="user-activity-tab-dow">
+            <p class="text-secondary small mb-2">Local time · session active seconds started on each weekday</p>
+            @if (maxDow <= 0)
+            {
+                <p class="text-secondary mb-0">No session activity in this period.</p>
+            }
+            else
+            {
+                <div class="hd-user-bars">
+                    @foreach (var row in d.DayOfWeek)
+                    {
+                        var tip = $"{DurationDisplay.Format(row.ActiveSeconds)} · {row.SessionCount} session(s)";
+                        <div class="hd-user-bar-row">
+                            <div class="hd-user-bar-label" title="@row.Label">@row.Label[..3]</div>
+                            <div class="hd-user-bar-track" title="@tip" aria-hidden="true">
+                                <div class="hd-user-bar-fill" style="width:@UserModel.FormatHourBar(row.ActiveSeconds, maxDow)"></div>
                             </div>
-                        }
-                    </div>
-                }
-            </div>
+                            <div class="hd-user-bar-val">@DurationDisplay.Render(row.ActiveSeconds)</div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <div id="user-activity-view-hour" class="hd-user-activity-panel d-none" role="tabpanel" aria-labelledby="user-activity-tab-hour" hidden>
+            <p class="text-secondary small mb-2">Local time · active seconds distributed across hours spanned</p>
+            @if (maxHour <= 0)
+            {
+                <p class="text-secondary mb-0">No session activity in this period.</p>
+            }
+            else
+            {
+                <div class="hd-user-bars hd-user-bars--hours">
+                    @foreach (var row in d.HourOfDay)
+                    {
+                        <div class="hd-user-bar-row">
+                            <div class="hd-user-bar-label" title="@row.Label">@row.Label[..2]</div>
+                            <div class="hd-user-bar-track" title="@DurationDisplay.Format(row.ActiveSeconds)" aria-hidden="true">
+                                <div class="hd-user-bar-fill" style="width:@UserModel.FormatHourBar(row.ActiveSeconds, maxHour)"></div>
+                            </div>
+                            <div class="hd-user-bar-val">@DurationDisplay.Render(row.ActiveSeconds)</div>
+                        </div>
+                    }
+                </div>
+            }
         </div>
     </div>
 
@@ -200,7 +213,7 @@ else
 
     <div class="hd-panel mb-3">
         <h2 class="hd-section-title mb-2">Apps</h2>
-        <p class="text-secondary small mb-2">Most → least used by open time (tracked process runs)</p>
+        <p class="text-secondary small mb-2">Most → least used by open time (tracked process runs). Time open is how long the process was running during an active user session — not necessarily in the foreground (e.g. Revit vs a licensing service).</p>
         @if (d.Apps.Count == 0)
         {
             <p class="text-secondary mb-0">No tracked app runs for this user in the selected period.</p>
@@ -231,7 +244,7 @@ else
                         <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
                         <td data-sort-value="@a.RunCount">@a.RunCount</td>
                         <td data-sort-value="@a.UniqueMachines">@a.UniqueMachines</td>
-                        <td data-sort-value="@a.LastUsedUtc.ToUnixTimeSeconds()">@a.LastUsedUtc.ToLocalTime().ToString("g")</td>
+                        <td data-sort-value="@a.LastUsedUtc.ToUnixTimeSeconds()">@IndexModel.FormatLocalTimestamp(a.LastUsedUtc)</td>
                     </tr>
                 }
                 </tbody>
@@ -244,6 +257,40 @@ else
 <script>
   if (window.HeimdallTable) {
     HeimdallTable.initSort(document);
+  }
+
+  const activityTabs = document.getElementById('user-activity-view-tabs');
+  if (activityTabs) {
+    const storeKey = 'hd-user-activity-view';
+    const panels = {
+      dow: document.getElementById('user-activity-view-dow'),
+      hour: document.getElementById('user-activity-view-hour')
+    };
+    const buttons = activityTabs.querySelectorAll('[data-user-activity-view]');
+    const showView = (view) => {
+      const key = view === 'hour' ? 'hour' : 'dow';
+      Object.entries(panels).forEach(([name, el]) => {
+        if (!el) return;
+        const on = name === key;
+        el.classList.toggle('d-none', !on);
+        el.hidden = !on;
+      });
+      buttons.forEach(btn => {
+        const on = btn.getAttribute('data-user-activity-view') === key;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      try { sessionStorage.setItem(storeKey, key); } catch (_) { /* ignore */ }
+    };
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => showView(btn.getAttribute('data-user-activity-view')));
+    });
+    let initial = 'dow';
+    try {
+      const stored = sessionStorage.getItem(storeKey);
+      if (stored === 'hour' || stored === 'dow') initial = stored;
+    } catch (_) { /* ignore */ }
+    showView(initial);
   }
 </script>
 }

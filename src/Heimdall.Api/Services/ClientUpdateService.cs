@@ -153,8 +153,6 @@ public sealed class ClientUpdateService(
             {
                 if (detail is not null && detail.Contains("DeferredWaitingForIdle", StringComparison.OrdinalIgnoreCase))
                     phase = ClientUpdatePhases.DeferredWaitingForIdle;
-                else if (detail is not null && detail.Contains("Downloading", StringComparison.OrdinalIgnoreCase))
-                    phase = ClientUpdatePhases.Downloading;
                 else
                 {
                     phase = ClientUpdatePhases.Failed;

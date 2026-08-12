@@ -2,6 +2,7 @@
 @model RemoteMachinesModel
 @{
     ViewData["Title"] = "Online Status";
+    ViewData["HelpFragment"] = "remote-machines";
     var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
     if (isPartial)
         Layout = null;
@@ -9,23 +10,13 @@
 
 @if (!isPartial)
 {
-    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-        <h1 class="hd-title mb-1">Online Status</h1>
-        <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="remote-machines">Help</a>
-    </div>
+    <h1 class="hd-title mb-1">Online Status</h1>
 }
 <p class="hd-sub">
-    RDP health · RDS service status · ping from API server · restart RDS via agent command queue
+    Ping, RDP handshake, and RDS service from this API host. Utilisation lives on Computers; live metrics on Live.
 </p>
 
-@if (TempData["Message"] is string msg)
-{
-    <div class="alert alert-success">@msg</div>
-}
-@if (TempData["Error"] is string err)
-{
-    <div class="alert alert-danger">@err</div>
-}
+<partial name="_Toasts" />
 
 <div class="hd-grid">
     <div class="hd-stat">
@@ -110,7 +101,7 @@
                     }
                 </td>
                 <td class="hd-remote-machine" data-sort-value="@r.DisplayName">
-                    <a asp-page="/Machine" asp-route-hostname="@r.Hostname" title="@r.Hostname"><strong>@r.DisplayName</strong></a>
+                    <a asp-page="/Machine" asp-route-hostname="@r.Hostname" asp-route-range="7d" title="@r.Hostname"><strong>@r.DisplayName</strong></a>
                     @if (!string.IsNullOrWhiteSpace(r.FriendlyName))
                     {
                         <div class="text-secondary small">@r.Hostname</div>

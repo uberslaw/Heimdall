@@ -1,0 +1,23 @@
+@{
+    var toastMsg = TempData["Message"] as string;
+    var toastErr = TempData["Error"] as string;
+}
+@if (!string.IsNullOrWhiteSpace(toastMsg) || !string.IsNullOrWhiteSpace(toastErr))
+{
+    <div id="hd-toast-region" class="hd-toast-region">
+        @if (!string.IsNullOrWhiteSpace(toastMsg))
+        {
+            <div class="hd-toast hd-toast-success" role="status" data-autodismiss="5000">
+                <span>@toastMsg</span>
+                <button type="button" class="hd-toast-close" aria-label="Dismiss">&times;</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(toastErr))
+        {
+            <div class="hd-toast hd-toast-error" role="alert" data-autodismiss="5000">
+                <span>@toastErr</span>
+                <button type="button" class="hd-toast-close" aria-label="Dismiss">&times;</button>
+            </div>
+        }
+    </div>
+}

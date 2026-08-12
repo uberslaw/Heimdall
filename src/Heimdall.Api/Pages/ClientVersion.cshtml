@@ -2,6 +2,7 @@
 @model ClientVersionModel
 @{
     ViewData["Title"] = "Client Version";
+    ViewData["HelpFragment"] = "client-version";
     var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
     if (isPartial)
         Layout = null;
@@ -9,24 +10,13 @@
 
 @if (!isPartial)
 {
-    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-        <h1 class="hd-title mb-1">Client Version</h1>
-        <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="client-version">Help</a>
-    </div>
+    <h1 class="hd-title mb-1">Client Version</h1>
 }
 <p class="hd-sub">
-    Agent build per host vs. published version — online, in use, Active User, silent deploy when pack is ready.
-    First upgrade from pre-3 clients needs Launch Control / Install.lnk; afterward silent Deploy works.
+    Agent build vs published pack — online and in-use matter for silent deploy.
 </p>
 
-@if (TempData["Message"] is string msg)
-{
-    <div class="alert alert-success">@msg</div>
-}
-@if (TempData["Error"] is string err)
-{
-    <div class="alert alert-danger">@err</div>
-}
+<partial name="_Toasts" />
 
 <div class="hd-panel mb-4">
     <form method="post" asp-page-handler="SetPublishedVersion" class="d-flex flex-wrap align-items-end gap-3">
@@ -56,7 +46,7 @@
             <input type="text" class="form-control form-control-sm" id="NewPublishedVersion" name="NewPublishedVersion"
                    placeholder="e.g. 3" style="width:120px" autocomplete="off" inputmode="numeric" />
         </div>
-        <button type="submit" class="btn btn-hd btn-sm">Save</button>
+        <button type="submit" class="hd-btn hd-btn-gold hd-btn-sm">Save</button>
     </form>
     <p class="text-secondary small mt-2 mb-0">
         Set automatically when a pack completes (Launch Control or Pack client below). Simple integers
@@ -76,9 +66,9 @@
             <pre id="pack-log-tail" class="small mt-2 mb-0 p-2" style="display:none;max-height:160px;overflow:auto;background:rgba(0,0,0,.04);white-space:pre-wrap"></pre>
         </div>
         <div class="d-flex flex-wrap gap-2">
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-pack-client" disabled title="Always full rebuild + version bump (N+1), even when Ready">Pack client</button>
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-cancel-pack" style="display:none" title="Stop the in-flight pack">Cancel</button>
-            <button type="button" class="btn btn-hd btn-sm" id="btn-deploy-client" disabled title="Waiting for pack readiness check">Deploy Client</button>
+            <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-pack-client" disabled title="Always full rebuild + version bump (N+1), even when Ready">Pack client</button>
+            <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-cancel-pack" style="display:none" title="Stop the in-flight pack">Cancel</button>
+            <button type="button" class="hd-btn hd-btn-gold hd-btn-sm" id="btn-deploy-client" disabled title="Waiting for pack readiness check">Deploy Client</button>
         </div>
     </div>
 </div>
@@ -110,7 +100,7 @@
                 <input type="checkbox" class="form-check-input" id="select-all-hosts" /> Select all
             </label>
             <span class="text-secondary small" id="selected-count">0 selected</span>
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-select-outdated">Select out of date</button>
+            <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-select-outdated">Select out of date</button>
         </div>
         <table class="hd-table hd-sortable">
             <thead>
@@ -148,7 +138,7 @@
                         </span>
                     </td>
                     <td data-sort-value="@r.DisplayName">
-                        <a asp-page="/Machine" asp-route-hostname="@r.Hostname" title="@r.Hostname"><strong>@r.DisplayName</strong></a>
+                        <a asp-page="/Machine" asp-route-hostname="@r.Hostname" asp-route-range="7d" title="@r.Hostname"><strong>@r.DisplayName</strong></a>
                         @if (hasFriendly)
                         {
                             <div class="text-secondary small">@r.Hostname</div>
@@ -169,8 +159,9 @@
                     <td data-sort-value="@UsernameDisplay.Format(r.ActiveUser)">
                         @if (!string.IsNullOrWhiteSpace(r.ActiveUser))
                         {
-                            <span class="badge-pill @ClientVersionModel.ActiveUserBadgeClass(r.ActiveUserState)"
-                                  title="@ClientVersionModel.ActiveUserLabel(r.ActiveUserState)">@UsernameDisplay.Format(r.ActiveUser)</span>
+                            <a asp-page="/User" asp-route-username="@UsernameDisplay.Format(r.ActiveUser)" asp-route-range="1d"
+                               class="badge-pill @ClientVersionModel.ActiveUserBadgeClass(r.ActiveUserState)"
+                               title="@ClientVersionModel.ActiveUserLabel(r.ActiveUserState)">@UsernameDisplay.Format(r.ActiveUser)</a>
                         }
                         else
                         {

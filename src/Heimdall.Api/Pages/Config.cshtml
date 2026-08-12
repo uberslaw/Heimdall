@@ -3,26 +3,17 @@
 @using Heimdall.Shared.Contracts
 @{
     ViewData["Title"] = "Config";
+    ViewData["HelpFragment"] = "tracking-config";
     var editing = Model.EditingConfigId.HasValue;
     var scopeLabel = Model.EditingConfig is not null
         ? ConfigModel.FormatScope(Model.EditingConfig.Scope, Model.EditingConfig.ScopeValue)
         : (editing ? ConfigModel.FormatScope(Model.SamplingScope, null) : "New scoped config");
 }
 
-<div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-    <h1 class="hd-title mb-1">Tracking config</h1>
-    <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="tracking-config">Help</a>
-</div>
-<p class="hd-sub">Scoped sampling, include/exclude process lists, known apps, and metric thresholds · <a asp-page="/Utilization">Utilization criteria</a></p>
+<h1 class="hd-title mb-1">Tracking config</h1>
+<p class="hd-sub">Scoped sampling, include/exclude process lists, and metric thresholds · <a asp-page="/AppLists">App lists</a> · <a asp-page="/Discovery">Discovery</a> · <a asp-page="/Utilization">Utilization criteria</a></p>
 
-@if (TempData["Message"] is string msg)
-{
-    <div class="alert alert-success">@msg</div>
-}
-@if (TempData["Error"] is string err)
-{
-    <div class="alert alert-danger">@err</div>
-}
+<partial name="_Toasts" />
 
 <div class="hd-panel mb-4">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">

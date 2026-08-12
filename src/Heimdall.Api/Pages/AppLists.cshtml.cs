@@ -166,6 +166,10 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
         Tab = NormalizeTab(Tab);
         CreateSearch = q;
 
+        if (!OpsPartial.IsPartial(HttpContext.Request)
+            && !string.Equals(HttpContext.Request.Method, "POST", StringComparison.OrdinalIgnoreCase))
+            return;
+
         // Discovery-gap scan walks ProcessRuns + inventories — only when the CSV/catalog panel needs it.
         var scanGap = Tab == "analyze"
             || (string.IsNullOrWhiteSpace(host) && Tab == "lists");

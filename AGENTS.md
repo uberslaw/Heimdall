@@ -12,6 +12,7 @@ Heimdall is a **.NET 10** solution (`Heimdall.slnx`). Standard build/run/config 
 - `cd src/Heimdall.Api && dotnet run --urls http://0.0.0.0:5080` (dashboard + API on port 5080).
 - SQLite DBs are auto-created and seeded at startup in the API's working directory: `heimdall.db` (live) and `heimdall-dev.db` (sandbox). There are **no EF migrations** — `SeedData` / `EnsureCreated` runs on boot, so a fresh checkout just works. These `*.db` files are gitignored; do not commit them.
 - A fresh DB is seeded with four `DEMO-*` machines for UX.
+- **Fleet snapshots:** agents post 30s util rows for every known machine (`POST /api/fleet/snapshot`). Flood enrollment (`FleetDashboardMachines`) gates TUFLOW control and Flood hub analytics only — not estate-wide sampling.
 
 ### Live vs sandbox database (important gotcha)
 - In `Development` the **dashboard browses the sandbox DB by default** (`DatabaseMode: sandbox` in `appsettings.Development.json`), but **agent ingest via `/api/ingest` always writes to the live DB** (`heimdall.db`).

@@ -53,6 +53,8 @@ public class Machine
     public decimal? PurchaseCost { get; set; }
     /// <summary>ISO-ish currency code; default AUD when purchase cost is set.</summary>
     public string? PurchaseCurrency { get; set; }
+    /// <summary>When the hardware was purchased (manual Finance / Cost entry).</summary>
+    public DateOnly? PurchaseDate { get; set; }
     public DateOnly? WarrantyStartDate { get; set; }
     public DateOnly? WarrantyEndDate { get; set; }
     public string? HardwareGpu { get; set; }
@@ -414,6 +416,44 @@ public class AppLicenseCost
     public double LicenseCostPerYear { get; set; }
 }
 
+/// <summary>Design vs simulation — drives Finance $/hour attribution rules.</summary>
+public static class LicenseWorkloadKinds
+{
+    public const string Design = "Design";
+    public const string Simulation = "Simulation";
+}
+
+/// <summary>Which compute axis to prefer for simulation util intensity / util÷cost.</summary>
+public static class LicenseComputeBiases
+{
+    public const string Cpu = "Cpu";
+    public const string Gpu = "Gpu";
+    public const string Either = "Either";
+}
+
+/// <summary>
+/// Yearly software license purchase (Finance). Latest year per process syncs into <see cref="AppLicenseCost"/> for Socratize.
+/// </summary>
+public class AppLicensePurchase
+{
+    public int Id { get; set; }
+    public string Vendor { get; set; } = "";
+    public required string SoftwareName { get; set; }
+    /// <summary>Normalized process name matched from Discovery catalog.</summary>
+    public required string ProcessName { get; set; }
+    public int? ProcessCatalogEntryId { get; set; }
+    public ProcessCatalogEntry? ProcessCatalogEntry { get; set; }
+    public double LicenseCost { get; set; }
+    public double MaintenanceCost { get; set; }
+    public int PurchaseYear { get; set; }
+    /// <summary><see cref="LicenseWorkloadKinds"/>.</summary>
+    public string WorkloadKind { get; set; } = LicenseWorkloadKinds.Design;
+    /// <summary><see cref="LicenseComputeBiases"/>.</summary>
+    public string ComputeBias { get; set; } = LicenseComputeBiases.Either;
+    public string? Notes { get; set; }
+    public DateTimeOffset CreatedUtc { get; set; } = DateTimeOffset.UtcNow;
+}
+
 /// <summary>
 /// Apply/ignore relationship between a team and an app list (many-to-many).
 /// Tracking visibility on Machines uses links with <see cref="IsExcluded"/> = false.
@@ -692,7 +732,10 @@ public class TuflowRunRecord
     public required string RunName { get; set; }
     public int MachineId { get; set; }
     public Machine Machine { get; set; } = null!;
+    /// <summary>Primary .tcf when known; for Cmd launches may stay empty until the launcher inspects the script.</summary>
     public required string TcfPath { get; set; }
+    /// <summary>Ready-made .cmd/.bat path when LaunchMode is Cmd; null for classic exe+.tcf starts.</summary>
+    public string? CmdPath { get; set; }
     public DateTimeOffset RequestedUtc { get; set; }
     public string? RequestedBy { get; set; }
     public DateTimeOffset? StartedUtc { get; set; }

@@ -2,6 +2,7 @@
 @model AppListChangelogModel
 @{
     ViewData["Title"] = "App list changelog";
+    ViewData["HelpFragment"] = "app-list-changelog";
     var from = Model.TotalCount == 0 ? 0 : (Model.PageNumber - 1) * AppListChangelogModel.PageSize + 1;
     var to = Model.TotalCount == 0 ? 0 : Math.Min(Model.PageNumber * AppListChangelogModel.PageSize, Model.TotalCount);
 }
@@ -20,7 +21,6 @@
     </div>
     <div class="d-flex gap-2">
         <a class="hd-btn hd-btn-black" asp-page="/AppLists">App lists</a>
-        <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="app-list-changelog" title="How the changelog works">Help</a>
     </div>
 </div>
 

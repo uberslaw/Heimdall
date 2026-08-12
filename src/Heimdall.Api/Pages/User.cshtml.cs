@@ -30,8 +30,7 @@ public class UserModel(StatsQueryService stats) : PageModel
             return;
         }
 
-        var fromUtc = DateTimeOffset.UtcNow.AddDays(-days);
-        var toUtc = DateTimeOffset.UtcNow;
+        var (fromUtc, toUtc) = IndexModel.ResolveRangeWindow(Range);
         Detail = await stats.QueryUserDetailAsync(Username.Trim(), fromUtc, toUtc, ct);
     }
 
@@ -39,7 +38,7 @@ public class UserModel(StatsQueryService stats) : PageModel
     {
         if (maxSeconds <= 0 || seconds <= 0) return "0%";
         var pct = Math.Clamp(seconds / maxSeconds * 100.0, 0, 100);
-        return pct.ToString("0.#") + "%";
+        return pct.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "%";
     }
 
     public static string DisplayOrDash(string? value) =>

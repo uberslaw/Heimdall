@@ -44,16 +44,24 @@
     }
   }
 
+  function tabSrc(key) {
+    var link = document.querySelector('[data-hd-ops-tab="' + key + '"]');
+    return link ? link.getAttribute("data-hd-ops-src") : null;
+  }
+
   function loadTab(key, src, pushUrl) {
     activateTab(key);
+    if (!src) return;
     if (pushUrl) {
-      var url = basePath + "?tab=" + encodeURIComponent(key);
-      history.pushState({ hdOpsTab: key, hdOpsBase: basePath }, "", url);
+      var url = new URL(location.href);
+      url.searchParams.set("tab", key);
+      history.pushState({ hdOpsTab: key, hdOpsBase: basePath }, "", url.pathname + url.search);
     }
 
-    if (cache[key]) {
+    var cached = cache[src];
+    if (cached) {
       setLoading(false);
-      body.innerHTML = cache[key];
+      body.innerHTML = cached;
       runScripts(body);
       return;
     }
@@ -77,7 +85,7 @@
         return r.text();
       })
       .then(function (html) {
-        cache[key] = html;
+        cache[src] = html;
         setLoading(false);
         body.innerHTML = html;
         runScripts(body);
@@ -87,12 +95,33 @@
         setLoading(false);
         body.hidden = false;
         body.innerHTML =
-          '<div class="alert alert-danger">Failed to load this tab. <a href="' +
+          '<div class="hd-toast hd-toast-error">Failed to load this tab. <a href="' +
           basePath +
           "?tab=" +
           encodeURIComponent(key) +
           '">Reload</a></div>';
       });
+  }
+
+  function applyGetForm(form) {
+    var action = form.getAttribute("action") || location.pathname;
+    var params = new URLSearchParams(new FormData(form));
+    params.set("partial", "1");
+    var path = action.split("?")[0];
+    var src = path + "?" + params.toString();
+    var link = document.querySelector('[data-hd-ops-tab="' + active + '"]');
+    if (link) link.setAttribute("data-hd-ops-src", src);
+    Object.keys(cache).forEach(function (k) {
+      if (k.indexOf(path) === 0) delete cache[k];
+    });
+    var fleet = new URL(location.href);
+    params.forEach(function (v, k) {
+      if (k === "partial") return;
+      fleet.searchParams.set(k, v);
+    });
+    fleet.searchParams.set("tab", active);
+    history.replaceState({ hdOpsTab: active, hdOpsBase: basePath }, "", fleet.pathname + fleet.search);
+    loadTab(active, src, false);
   }
 
   tabs.forEach(function (a) {
@@ -106,31 +135,46 @@
     });
   });
 
+  if (body) {
+    body.addEventListener("submit", function (e) {
+      var form = e.target;
+      if (!form || form.tagName !== "FORM") return;
+      if ((form.getAttribute("method") || "get").toLowerCase() !== "get") return;
+      if (form.getAttribute("data-hd-ops-full") === "1") return;
+      e.preventDefault();
+      applyGetForm(form);
+    });
+  }
+
   window.addEventListener("popstate", function () {
     var params = new URLSearchParams(location.search);
     var key = params.get("tab") || active;
-    var link = document.querySelector('[data-hd-ops-tab="' + key + '"]');
-    if (link) loadTab(key, link.getAttribute("data-hd-ops-src"), false);
+    var src = tabSrc(key);
+    if (src) loadTab(key, src, false);
   });
 
   window.HeimdallOpsTabs = {
     invalidate: function (key) {
-      if (key) delete cache[key];
-      else {
+      if (key) {
+        var src = tabSrc(key);
+        if (src) delete cache[src];
+        Object.keys(cache).forEach(function (k) {
+          if (k.indexOf(key) >= 0) delete cache[k];
+        });
+      } else {
         Object.keys(cache).forEach(function (k) {
           delete cache[k];
         });
       }
     },
     refreshActive: function () {
-      var link = document.querySelector('[data-hd-ops-tab="' + active + '"]');
-      if (!link) return;
-      delete cache[active];
-      loadTab(active, link.getAttribute("data-hd-ops-src"), false);
+      var src = tabSrc(active);
+      if (!src) return;
+      delete cache[src];
+      loadTab(active, src, false);
     }
   };
 
-  // First paint: load only the active tab.
   var initial = document.querySelector('[data-hd-ops-tab="' + active + '"]');
   if (initial) {
     loadTab(active, initial.getAttribute("data-hd-ops-src"), false);

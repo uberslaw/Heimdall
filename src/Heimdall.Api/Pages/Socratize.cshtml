@@ -2,6 +2,7 @@
 @model SocratizeModel
 @{
     ViewData["Title"] = string.IsNullOrWhiteSpace(Model.Host) ? "Socratize" : $"Socratize · {Model.Host}";
+    ViewData["HelpFragment"] = "socratize";
     var brief = Model.Brief;
     var appOpenTotal = brief?.Apps.Sum(a => a.TotalOpenSeconds) ?? 0;
     var localAccounted = brief is null ? 0 : brief.LocalActiveSeconds + brief.LocalDisconnectedSeconds;
@@ -9,10 +10,7 @@
     var outboundAccounted = brief?.OutboundRdpSeconds ?? 0;
 }
 
-<div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-    <h1 class="hd-title mb-1">Socratize</h1>
-    <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="socratize">Help</a>
-</div>
+<h1 class="hd-title mb-1">Socratize</h1>
 <p class="hd-sub">One-machine cost-justification brief — probe Heimdall’s collected data (sessions, local vs inbound/outbound RDP, util, apps, teams). Verdict from <a asp-page="/Utilization">Utilization criteria</a>.</p>
 
 <form method="get" class="hd-panel mb-3">

@@ -211,7 +211,14 @@ public class ClientVersionModel(
         var p = ClientUpdateService.DeserializeProgress(json);
         if (p is null)
             return null;
-        return string.IsNullOrWhiteSpace(p.Detail) ? p.Phase : $"{p.Phase}: {p.Detail}";
+        if (string.IsNullOrWhiteSpace(p.Detail))
+            return p.Phase;
+        // Agent details often already start with "Failed: …"; Phase is also "Failed" — avoid "Failed: Failed: …".
+        if (p.Detail.StartsWith(p.Phase + ":", StringComparison.OrdinalIgnoreCase)
+            || p.Detail.StartsWith(p.Phase + " ", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(p.Detail, p.Phase, StringComparison.OrdinalIgnoreCase))
+            return p.Detail;
+        return $"{p.Phase}: {p.Detail}";
     }
 
     public enum ClientVersionStatus

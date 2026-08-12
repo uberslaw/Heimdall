@@ -36,9 +36,61 @@ double? massErrorPercent = null;
 DateTimeOffset? stopRequestedUtc = null;
 var stopSignalSent = false;
 
-WriteStatus(RunState.Starting, message: "Launching TUFLOW process");
+var isCmdMode = string.Equals(spec.LaunchMode, "Cmd", StringComparison.OrdinalIgnoreCase)
+    || !string.IsNullOrWhiteSpace(spec.CmdPath);
 
-var commandLine = BuildCommandLine(spec);
+// Effective display paths — Cmd mode may learn a .tcf from the script body during preflight.
+var effectiveTcfPath = spec.TcfPath;
+var effectiveCmdPath = spec.CmdPath;
+
+WriteStatus(RunState.Starting, message: isCmdMode ? "Validating CMD/BAT launch script" : "Launching TUFLOW process");
+
+// Preflight — fail with a clear ErrorSummary before CreateProcess so the Machine page Detail column
+// (which prefers ErrorSummary over Message) and operators aren't left with an empty Detail.
+// Common real-world miss: .tcf path typed as a folder (e.g. "...\runs") or a mapped drive letter that
+// exists for the interactive user but not for the Heimdall.Agent Windows service session.
+string? launchMessage = null;
+if (isCmdMode)
+{
+    var inspection = CmdScriptInspector.Inspect(spec.CmdPath ?? "");
+    if (!inspection.Ok)
+    {
+        WriteStatus(RunState.Failed, message: inspection.ErrorSummary, errorSummary: inspection.ErrorSummary);
+        return 1;
+    }
+
+    if (inspection.TcfPaths.Count > 0)
+        effectiveTcfPath = inspection.TcfPaths[0];
+    effectiveCmdPath = spec.CmdPath;
+    launchMessage = $"Running CMD: {inspection.Summary}";
+    WriteStatus(RunState.Starting, message: launchMessage);
+}
+else
+{
+    if (string.IsNullOrWhiteSpace(spec.ExePath) || !File.Exists(spec.ExePath))
+    {
+        var msg = $"TUFLOW exe not found: {spec.ExePath}";
+        WriteStatus(RunState.Failed, message: msg, errorSummary: msg);
+        return 1;
+    }
+    if (string.IsNullOrWhiteSpace(spec.TcfPath) || !File.Exists(spec.TcfPath))
+    {
+        var msg = Directory.Exists(spec.TcfPath)
+            ? $"TcfPath is a folder, not a .tcf file: {spec.TcfPath}"
+            : $"TcfPath not found (service account may not see this path/drive): {spec.TcfPath}";
+        WriteStatus(RunState.Failed, message: msg, errorSummary: msg);
+        return 1;
+    }
+}
+
+if (!string.IsNullOrWhiteSpace(spec.WorkingDirectory) && !Directory.Exists(spec.WorkingDirectory))
+{
+    var msg = $"Working directory not found (mapped drives are often invisible to the agent service): {spec.WorkingDirectory}";
+    WriteStatus(RunState.Failed, message: msg, errorSummary: msg);
+    return 1;
+}
+
+var commandLine = isCmdMode ? BuildCmdCommandLine(spec.CmdPath!) : BuildCommandLine(spec);
 
 var stdOutHandle = OpenInheritableLogHandle(stdOutPath);
 var stdErrHandle = OpenInheritableLogHandle(stdErrPath);
@@ -69,13 +121,16 @@ var created = NativeMethods.CreateProcess(
     lpStartupInfo: ref startupInfo,
     lpProcessInformation: out var processInfo);
 
+// Capture immediately — CloseHandle below would overwrite Marshal.GetLastWin32Error().
+var createProcessError = created ? 0 : Marshal.GetLastWin32Error();
+
 NativeMethods.CloseHandle(stdOutHandle);
 NativeMethods.CloseHandle(stdErrHandle);
 
 if (!created)
 {
-    var err = Marshal.GetLastWin32Error();
-    WriteStatus(RunState.Failed, message: $"CreateProcess failed, Win32 error {err}");
+    var msg = $"CreateProcess failed, Win32 error {createProcessError}";
+    WriteStatus(RunState.Failed, message: msg, errorSummary: msg);
     return 1;
 }
 
@@ -84,7 +139,8 @@ var processHandle = processInfo.hProcess;
 var processId = processInfo.dwProcessId;
 var startedUtc = DateTimeOffset.UtcNow;
 
-WriteStatus(RunState.Running, processId, startedUtc, message: "TUFLOW running");
+WriteStatus(RunState.Running, processId, startedUtc,
+    message: launchMessage ?? (isCmdMode ? "CMD/BAT running" : "TUFLOW running"));
 
 var checkpointFolder = spec.ResultsFolder;
 var logFolder = spec.LogFolder;
@@ -198,9 +254,24 @@ static string BuildCommandLine(RunSpec spec)
 
     parts.Add(Quote(spec.TcfPath));
     return string.Join(' ', parts);
-
-    static string Quote(string s) => s.Contains(' ') ? $"\"{s}\"" : s;
 }
+
+/// <summary>
+/// Runs the operator's ready-made script via cmd.exe /c rather than reassembling TUFLOW.exe args.
+/// Scripts that use "start …" to spawn TUFLOW asynchronously will make this process exit early —
+/// operators should prefer a synchronous call inside the .cmd for Heimdall tracking/stop to work.
+/// </summary>
+static string BuildCmdCommandLine(string cmdPath)
+{
+    var comSpec = Environment.GetEnvironmentVariable("ComSpec");
+    if (string.IsNullOrWhiteSpace(comSpec) || !File.Exists(comSpec))
+        comSpec = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+
+    // Always quote the script path — UNC and spaced paths both need it for cmd.exe /c.
+    return $"{Quote(comSpec)} /c \"{cmdPath}\"";
+}
+
+static string Quote(string s) => s.Contains(' ') ? $"\"{s}\"" : s;
 
 static IntPtr OpenInheritableLogHandle(string path)
 {
@@ -456,7 +527,8 @@ void WriteStatus(
         RunName = spec.RunName,
         State = state.ToWireState(),
         ProcessId = processId,
-        TcfPath = spec.TcfPath,
+        TcfPath = string.IsNullOrWhiteSpace(effectiveTcfPath) ? null : effectiveTcfPath,
+        CmdPath = string.IsNullOrWhiteSpace(effectiveCmdPath) ? null : effectiveCmdPath,
         StartedUtc = startedUtc,
         StopRequestedUtc = stopRequestedUtc,
         LastCheckpointUtc = lastCheckpointUtc,

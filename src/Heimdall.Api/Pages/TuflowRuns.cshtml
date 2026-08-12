@@ -2,11 +2,12 @@
 @model Heimdall.Api.Pages.TuflowRunsModel
 @{
     ViewData["Title"] = "TUFLOW Runs";
+    ViewData["HelpFragment"] = "tuflow-runs";
 }
 
 <div class="hd-panel mb-3">
-    <h2 class="hd-section-title">TUFLOW Runs</h2>
-    <p class="text-secondary small mb-0"><a asp-page="/Flood" asp-route-tab="sims">View Fleet Sim Progress →</a> (who's running what, where, and how it's tracking)</p>
+    <h2 class="hd-section-title mb-0">TUFLOW Runs</h2>
+    <p class="text-secondary small mb-0 mt-2"><a asp-page="/Flood" asp-route-tab="sims">View Fleet Sim Progress →</a> (who's running what, where, and how it's tracking)</p>
 </div>
 
 @if (TempData["Message"] is string msg)
@@ -64,8 +65,12 @@ else
                     <td>
                         @if (row.Status is not null)
                         {
-                            <div>@(row.Status.RunName ?? row.Status.TcfPath)</div>
-                            <div class="text-secondary small">@row.Status.TcfPath</div>
+                            <div>@(row.Status.RunName ?? TuflowRunsModel.StatusPrimaryFileName(row.Status))</div>
+                            <div class="text-secondary small" title="@TuflowRunsModel.StatusPrimaryPath(row.Status)">@TuflowRunsModel.StatusPrimaryPath(row.Status)</div>
+                            @if (!string.IsNullOrWhiteSpace(row.Status.CmdPath) && !string.IsNullOrWhiteSpace(row.Status.TcfPath))
+                            {
+                                <div class="text-secondary small">tcf: @row.Status.TcfPath</div>
+                            }
                             <div class="text-secondary small">run @row.Status.RunId</div>
                         }
                     </td>
@@ -93,17 +98,44 @@ else
                                 Start…
                             </button>
                             <dialog id="start-@row.Hostname">
-                                <form method="post" asp-page-handler="Start" class="hd-panel mb-0">
+                                <form method="post" asp-page-handler="Start" class="hd-panel mb-0" data-tuflow-start>
                                     <input type="hidden" name="hostname" value="@row.Hostname" />
-                                    <label class="d-block mb-2">Run name (optional — shown on the Fleet Sim Progress page; defaults to the .tcf filename if left blank)
+                                    <label class="d-block mb-2">Run name (optional — shown on the Fleet Sim Progress page; defaults to the .tcf or .cmd filename if left blank)
                                         <input class="form-control" name="runName" placeholder="e.g. sim1, 100yr ARI" /></label>
                                     <label class="d-block mb-2">Your name (who's kicking this off)
                                         <input class="form-control" name="requestedBy" value="@Model.SuggestedRequestedBy" placeholder="e.g. C.Smith" /></label>
-                                    <label class="d-block mb-2">TUFLOW .exe path <input class="form-control" name="exePath" required placeholder="C:\TUFLOW\Releases\...\TUFLOW_iSP_w64.exe" /></label>
-                                    <label class="d-block mb-2">.tcf path <input class="form-control" name="tcfPath" required placeholder="C:\Models\...\runs\MR_H99_C25_Q100.tcf" /></label>
+
+                                    <fieldset class="mb-2">
+                                        <legend class="form-label mb-1">Launch mode</legend>
+                                        <label class="d-inline-flex align-items-center me-3 gap-1">
+                                            <input type="radio" name="launchMode" value="ExeTcf" checked
+                                                   onchange="hdTuflowToggleLaunchMode(this.form)" />
+                                            TUFLOW exe + .tcf
+                                        </label>
+                                        <label class="d-inline-flex align-items-center gap-1">
+                                            <input type="radio" name="launchMode" value="Cmd"
+                                                   onchange="hdTuflowToggleLaunchMode(this.form)" />
+                                            Use existing CMD
+                                        </label>
+                                    </fieldset>
+
+                                    <div data-mode="ExeTcf">
+                                        <label class="d-block mb-2">TUFLOW .exe path <input class="form-control" name="exePath" required placeholder="C:\TUFLOW\Releases\...\TUFLOW_iSP_w64.exe" /></label>
+                                        <label class="d-block mb-2">.tcf path <input class="form-control" name="tcfPath" required placeholder="\\server\share\Models\...\MR_H99_C25_Q100.tcf" /></label>
+                                        <label class="d-block mb-2">Scenarios (space/comma separated, optional) <input class="form-control" name="scenarios" placeholder="e.g. RESUME" /></label>
+                                        <label class="d-block mb-2">Events (space/comma separated, optional) <input class="form-control" name="events" /></label>
+                                    </div>
+                                    <div data-mode="Cmd" hidden>
+                                        <label class="d-block mb-2">CMD/BAT path (absolute or UNC)
+                                            <input class="form-control" name="cmdPath" placeholder="\\server\share\Models\...\run_model.cmd" /></label>
+                                        <p class="text-secondary small mb-2">
+                                            The agent service account must be able to read this path (prefer UNC over mapped drives).
+                                            Heimdall checks the script looks like a TUFLOW launch, then runs it with <code>cmd.exe /c</code>
+                                            — it does not rebuild TUFLOW.exe arguments from the file.
+                                        </p>
+                                    </div>
+
                                     <label class="d-block mb-2">Working directory (optional) <input class="form-control" name="workingDirectory" /></label>
-                                    <label class="d-block mb-2">Scenarios (space/comma separated, optional) <input class="form-control" name="scenarios" placeholder="e.g. RESUME" /></label>
-                                    <label class="d-block mb-2">Events (space/comma separated, optional) <input class="form-control" name="events" /></label>
                                     <label class="d-block mb-3">Results folder (optional, else auto-detected) <input class="form-control" name="resultsFolder" /></label>
                                     <button type="submit" class="btn btn-hd btn-sm">Queue start</button>
                                     <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('start-@row.Hostname').close()">Cancel</button>
@@ -125,3 +157,23 @@ else
         </table>
     </div>
 </div>
+
+<script>
+function hdTuflowToggleLaunchMode(form) {
+    if (!form) return;
+    var mode = (form.querySelector('input[name="launchMode"]:checked') || {}).value || 'ExeTcf';
+    form.querySelectorAll('[data-mode]').forEach(function (block) {
+        var on = block.getAttribute('data-mode') === mode;
+        block.hidden = !on;
+        block.querySelectorAll('input').forEach(function (input) {
+            if (on) {
+                if (input.name === 'exePath' || input.name === 'tcfPath') input.required = true;
+                if (input.name === 'cmdPath') input.required = true;
+            } else {
+                input.required = false;
+            }
+        });
+    });
+}
+document.querySelectorAll('form[data-tuflow-start]').forEach(hdTuflowToggleLaunchMode);
+</script>

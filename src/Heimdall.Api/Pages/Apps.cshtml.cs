@@ -31,8 +31,7 @@ public class AppsModel(HeimdallDbContext db) : PageModel
         var machineHosts = await db.Machines.AsNoTracking()
             .ToDictionaryAsync(m => m.Id, m => m.Hostname);
 
-        var fromUtc = DateTimeOffset.UtcNow.AddDays(-days);
-        var toUtc = DateTimeOffset.UtcNow;
+        var (fromUtc, toUtc) = IndexModel.ResolveRangeWindow(Range);
         // SQLite EF DateTimeOffset filters are unreliable; filter in memory for POC.
         // Only columns needed for metrics — exclude unused navigation/payload fields from materialization.
         var runs = (await db.ProcessRuns.AsNoTracking()

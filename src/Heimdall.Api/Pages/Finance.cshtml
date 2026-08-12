@@ -1,0 +1,429 @@
+@page
+@model FinanceModel
+@{
+    ViewData["Title"] = "Finance";
+    ViewData["HelpFragment"] = "finance";
+    var tab = Model.ActiveTab;
+}
+
+<div class="mb-2">
+    <h1 class="hd-title mb-1">Finance</h1>
+    <p class="hd-sub mb-0">Hardware models · software license purchases · cost per hour of use</p>
+</div>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<ul class="nav nav-tabs hd-ops-tabs mb-3" role="tablist">
+    <li class="nav-item" role="presentation">
+        <a class="nav-link @(tab == "hardware" ? "active" : null)" asp-page="/Finance" asp-route-tab="hardware" asp-route-teamId="@Model.TeamId">Hardware</a>
+    </li>
+    <li class="nav-item" role="presentation">
+        <a class="nav-link @(tab == "software" ? "active" : null)" asp-page="/Finance" asp-route-tab="software">Software</a>
+    </li>
+    <li class="nav-item" role="presentation">
+        <a class="nav-link @(tab == "metrics" ? "active" : null)" asp-page="/Finance" asp-route-tab="metrics" asp-route-period="@Model.Period" asp-route-year="@Model.Year">Metrics</a>
+    </li>
+</ul>
+
+@if (tab == "hardware")
+{
+    <form method="get" class="hd-panel mb-3 d-flex flex-wrap gap-3 align-items-end">
+        <input type="hidden" name="tab" value="hardware" />
+        <div>
+            <label class="form-label small mb-1" for="teamId">Team</label>
+            <select class="form-select form-select-sm" id="teamId" name="teamId" onchange="this.form.submit()">
+                <option value="">All teams</option>
+                @foreach (var t in Model.Teams)
+                {
+                    if (Model.TeamId == t.Id)
+                    {
+                        <option value="@t.Id" selected>@t.Name</option>
+                    }
+                    else
+                    {
+                        <option value="@t.Id">@t.Name</option>
+                    }
+                }
+            </select>
+        </div>
+        <span class="text-secondary small">@Model.HardwareGroups.Sum(g => g.MachineCount) machines · @Model.HardwareGroups.Count distinct specs</span>
+    </form>
+
+    @if (Model.EditingMachine is { } em)
+    {
+        <form method="post" asp-page-handler="SaveMachine" class="hd-panel mb-3">
+            <h2 class="h5 mb-2">Edit · @(string.IsNullOrWhiteSpace(em.FriendlyName) ? em.Hostname : em.FriendlyName) <span class="text-secondary small">@em.Hostname</span></h2>
+            <input type="hidden" name="EditMachineId" value="@em.Id" />
+            <input type="hidden" name="tab" value="hardware" />
+            <partial name="_CopyPurchaseFields" model="Model.PurchaseCopySources" />
+            <div class="row g-2">
+                <div class="col-md-2">
+                    <label class="form-label small">Purchase cost</label>
+                    <input class="form-control form-control-sm" name="PurchaseCost" value="@Model.PurchaseCost" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small">Currency</label>
+                    <input class="form-control form-control-sm" name="PurchaseCurrency" value="@(Model.PurchaseCurrency ?? "AUD")" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small">Purchase date</label>
+                    <input class="form-control form-control-sm" type="date" name="PurchaseDate" value="@Model.PurchaseDate?.ToString("yyyy-MM-dd")" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small">Warranty start</label>
+                    <input class="form-control form-control-sm" type="date" name="WarrantyStartDate" value="@Model.WarrantyStartDate?.ToString("yyyy-MM-dd")" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small">Warranty end</label>
+                    <input class="form-control form-control-sm" type="date" name="WarrantyEndDate" value="@Model.WarrantyEndDate?.ToString("yyyy-MM-dd")" />
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <label class="form-check small mb-2">
+                        <input type="hidden" name="HardwareManualOverride" value="false" />
+                        <input class="form-check-input" type="checkbox" name="HardwareManualOverride" value="true" @(Model.HardwareManualOverride ? "checked" : null) />
+                        Manual HW override
+                    </label>
+                </div>
+                <div class="col-md-2"><label class="form-label small">Brand</label><input class="form-control form-control-sm" name="HardwareBrand" value="@Model.HardwareBrand" /></div>
+                <div class="col-md-2"><label class="form-label small">Model</label><input class="form-control form-control-sm" name="HardwareModel" value="@Model.HardwareModel" /></div>
+                <div class="col-md-3"><label class="form-label small">CPU</label><input class="form-control form-control-sm" name="HardwareCpu" value="@Model.HardwareCpu" /></div>
+                <div class="col-md-3"><label class="form-label small">GPU</label><input class="form-control form-control-sm" name="HardwareGpu" value="@Model.HardwareGpu" /></div>
+                <div class="col-md-1"><label class="form-label small">RAM GB</label><input class="form-control form-control-sm" name="HardwareRamGb" value="@Model.HardwareRamGb" /></div>
+                <div class="col-md-1"><label class="form-label small">Disk GB</label><input class="form-control form-control-sm" name="HardwareDiskGb" value="@Model.HardwareDiskGb" /></div>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+                <button type="submit" class="hd-btn hd-btn-gold hd-btn-sm">Save</button>
+                <a class="hd-btn hd-btn-silver hd-btn-sm" asp-page="/Finance" asp-route-tab="hardware" asp-route-teamId="@Model.TeamId">Cancel</a>
+            </div>
+        </form>
+    }
+
+    @foreach (var g in Model.HardwareGroups)
+    {
+        <section class="hd-panel mb-3">
+            <h2 class="h6 mb-1">@g.Label</h2>
+            <p class="text-secondary small mb-2">
+                @g.MachineCount machine(s)
+                @if (g.Teams.Count > 0)
+                {
+                    <span>· Teams: @string.Join(", ", g.Teams)</span>
+                }
+                @if (g.PurchaseCostSum > 0)
+                {
+                    <span>· Purchase Σ @g.PurchaseCostSum.ToString("N0")</span>
+                }
+                @if (g.WarrantyActiveCount > 0)
+                {
+                    <span>· @g.WarrantyActiveCount in warranty</span>
+                }
+            </p>
+            <div class="table-responsive">
+                <table class="hd-table">
+                    <thead>
+                        <tr>
+                            <th>Machine</th>
+                            <th>Team</th>
+                            <th>Purchase</th>
+                            <th>Purchased</th>
+                            <th>Warranty end</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var h in g.Hosts)
+                    {
+                        <tr>
+                            <td>
+                                <a asp-page="/Machine" asp-route-hostname="@h.Hostname"><strong>@h.DisplayName</strong></a>
+                                @if (!string.Equals(h.DisplayName, h.Hostname, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    <div class="text-secondary small">@h.Hostname</div>
+                                }
+                            </td>
+                            <td>@(h.TeamName ?? "—")</td>
+                            <td>@(h.PurchaseCost is decimal c ? c.ToString("N0") : "—")</td>
+                            <td>@(h.PurchaseDate?.ToString("yyyy-MM-dd") ?? "—")</td>
+                            <td>@(h.WarrantyEndDate?.ToString("yyyy-MM-dd") ?? "—")</td>
+                            <td>
+                                <a class="hd-btn hd-btn-silver hd-btn-sm" asp-page="/Finance" asp-route-tab="hardware" asp-route-teamId="@Model.TeamId" asp-route-editMachine="@h.MachineId">Edit</a>
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    }
+
+    @if (Model.HardwareGroups.Count == 0)
+    {
+        <div class="hd-panel"><p class="text-secondary mb-0">No machines match this filter.</p></div>
+    }
+}
+else if (tab == "software")
+{
+    <form method="post" asp-page-handler="SavePurchase" class="hd-panel mb-3">
+        <h2 class="h5 mb-2">Add license purchase</h2>
+        <input type="hidden" name="tab" value="software" />
+        <div class="row g-2">
+            <div class="col-md-2">
+                <label class="form-label small">Maker / vendor</label>
+                <input class="form-control form-control-sm" name="Vendor" value="@Model.Vendor" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small">Software name</label>
+                <input class="form-control form-control-sm" name="SoftwareName" required value="@Model.SoftwareName" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small">Discovery process</label>
+                <input class="form-control form-control-sm" name="ProcessName" list="finance-process-list" required placeholder="e.g. tuflow" value="@Model.ProcessName" />
+                <datalist id="finance-process-list">
+                    @foreach (var p in Model.ProcessPicks)
+                    {
+                        <option value="@p.ProcessName">@(p.Hint ?? p.ProcessName)</option>
+                    }
+                </datalist>
+            </div>
+            <div class="col-md-1">
+                <label class="form-label small">Year</label>
+                <input class="form-control form-control-sm" type="number" name="PurchaseYear" value="@Model.PurchaseYear" />
+            </div>
+            <div class="col-md-1">
+                <label class="form-label small">License $</label>
+                <input class="form-control form-control-sm" type="number" step="0.01" name="LicenseCost" value="@Model.LicenseCost" />
+            </div>
+            <div class="col-md-1">
+                <label class="form-label small">Maint. $</label>
+                <input class="form-control form-control-sm" type="number" step="0.01" name="MaintenanceCost" value="@Model.MaintenanceCost" />
+            </div>
+            <div class="col-md-1">
+                <label class="form-label small">Kind</label>
+                <select class="form-select form-select-sm" name="WorkloadKind">
+                    @if (Model.WorkloadKind == "Simulation")
+                    {
+                        <option value="Design">Design</option>
+                        <option value="Simulation" selected>Simulation</option>
+                    }
+                    else
+                    {
+                        <option value="Design" selected>Design</option>
+                        <option value="Simulation">Simulation</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-1">
+                <label class="form-label small">Bias</label>
+                <select class="form-select form-select-sm" name="ComputeBias">
+                    @if (Model.ComputeBias == "Cpu")
+                    {
+                        <option value="Either">Either</option>
+                        <option value="Cpu" selected>CPU</option>
+                        <option value="Gpu">GPU</option>
+                    }
+                    else if (Model.ComputeBias == "Gpu")
+                    {
+                        <option value="Either">Either</option>
+                        <option value="Cpu">CPU</option>
+                        <option value="Gpu" selected>GPU</option>
+                    }
+                    else
+                    {
+                        <option value="Either" selected>Either</option>
+                        <option value="Cpu">CPU</option>
+                        <option value="Gpu">GPU</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Notes</label>
+                <input class="form-control form-control-sm" name="Notes" value="@Model.Notes" />
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button type="submit" class="hd-btn hd-btn-gold hd-btn-sm">Save purchase</button>
+            </div>
+        </div>
+        <p class="text-secondary small mt-2 mb-0">Must match a process from App Discovery. Latest year per process syncs to Socratize license $/year (license + maintenance).</p>
+    </form>
+
+    <form method="post" asp-page-handler="ImportLicenseCosts" class="hd-panel mb-3 d-flex flex-wrap gap-2 align-items-center justify-content-between">
+        <p class="text-secondary small mb-0">Import Utilization <code>AppLicenseCost</code> rows that are not yet in purchase history (current year, maintenance 0).</p>
+        <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Import from Utilization costs</button>
+    </form>
+
+    <div class="hd-panel">
+        <table class="hd-table">
+            <thead>
+                <tr>
+                    <th>Year</th>
+                    <th>Vendor</th>
+                    <th>Software</th>
+                    <th>Process</th>
+                    <th>Kind</th>
+                    <th>Bias</th>
+                    <th>License</th>
+                    <th>Maint.</th>
+                    <th>Total</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            @if (Model.Purchases.Count == 0)
+            {
+                <tr><td colspan="10" class="text-secondary">No purchases yet. Existing Utilization license costs are imported on first visit.</td></tr>
+            }
+            @foreach (var p in Model.Purchases)
+            {
+                <tr>
+                    <td>@p.PurchaseYear</td>
+                    <td>@(string.IsNullOrWhiteSpace(p.Vendor) ? "—" : p.Vendor)</td>
+                    <td>@p.SoftwareName</td>
+                    <td><code>@p.ProcessName</code></td>
+                    <td>@p.WorkloadKind</td>
+                    <td>@p.ComputeBias</td>
+                    <td>@p.LicenseCost.ToString("N0")</td>
+                    <td>@p.MaintenanceCost.ToString("N0")</td>
+                    <td>@((p.LicenseCost + p.MaintenanceCost).ToString("N0"))</td>
+                    <td>
+                        <form method="post" asp-page-handler="DeletePurchase" class="d-inline">
+                            <input type="hidden" name="id" value="@p.Id" />
+                            <button type="submit" class="btn btn-ghost btn-sm" onclick="return confirm('Delete this purchase?');">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+else if (Model.Metrics is { } m)
+{
+    <form method="get" class="hd-panel mb-3 d-flex flex-wrap gap-3 align-items-end">
+        <input type="hidden" name="tab" value="metrics" />
+        <div>
+            <label class="form-label small mb-1" for="period">Period</label>
+            <select class="form-select form-select-sm" id="period" name="period" onchange="this.form.submit()">
+                @foreach (var opt in MachineUtilisationService.PeriodOptions)
+                {
+                    if (Model.Period == opt.Key)
+                    {
+                        <option value="@opt.Key" selected>@opt.Label</option>
+                    }
+                    else
+                    {
+                        <option value="@opt.Key">@opt.Label</option>
+                    }
+                }
+            </select>
+        </div>
+        <div>
+            <label class="form-label small mb-1" for="year">License year</label>
+            <input class="form-control form-control-sm" id="year" name="year" type="number" value="@(Model.Year ?? m.Year)" onchange="this.form.submit()" style="width:6rem" />
+        </div>
+        <span class="text-secondary small">@m.FromUtc.ToString("yyyy-MM-dd") → @m.ToUtc.ToString("yyyy-MM-dd") UTC</span>
+    </form>
+
+    <section class="hd-panel mb-3">
+        <h2 class="h5 mb-2">Hardware · cost per user Active hour</h2>
+        <p class="text-secondary small mb-2">Purchase ÷ non-ops Active hours in period (window-clipped). Group by team / spec in the table.</p>
+        <div class="table-responsive">
+            <table class="hd-table hd-sortable">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Machine</th>
+                        <th data-sort="text">Team</th>
+                        <th data-sort="text">Spec</th>
+                        <th data-sort="num">Purchase</th>
+                        <th data-sort="num">User Active h</th>
+                        <th data-sort="num">$/user h</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var r in m.Hardware.OrderByDescending(x => x.CostPerUserHour ?? -1))
+                {
+                    <tr>
+                        <td>
+                            <a asp-page="/Machine" asp-route-hostname="@r.Hostname">@r.DisplayName</a>
+                        </td>
+                        <td>@(r.TeamName ?? "—")</td>
+                        <td class="small">@r.SpecLabel</td>
+                        <td>@(r.PurchaseCost is decimal c ? c.ToString("N0") : "—")</td>
+                        <td>@r.UserActiveHours.ToString("0.0")</td>
+                        <td>@(r.CostPerUserHour is double ch ? ch.ToString("0.00") : "—")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="hd-panel mb-3">
+        <h2 class="h5 mb-2">Software · cost per hour of use</h2>
+        <p class="text-secondary small mb-2">
+            Design = ProcessRun open time overlapping Active sessions. Simulation = sum of run durations (concurrent instances ≈ multi-seat).
+            Intensity = share of runs with peak util &lt;50% vs ≥50% (fit-for-purpose signal; not used in $/h).
+        </p>
+        <div class="table-responsive">
+            <table class="hd-table hd-sortable">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Software</th>
+                        <th data-sort="text">Process</th>
+                        <th data-sort="text">Kind</th>
+                        <th data-sort="num">Year</th>
+                        <th data-sort="num">Cost</th>
+                        <th data-sort="num">Use h</th>
+                        <th data-sort="num">Ann. h</th>
+                        <th data-sort="num">$/h</th>
+                        <th data-sort="num">Avg seats</th>
+                        <th data-sort="num">&lt;50%</th>
+                        <th data-sort="num">≥50%</th>
+                        <th data-sort="num">Util-h / $</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @if (m.Software.Count == 0)
+                {
+                    <tr><td colspan="12" class="text-secondary">No license purchases for this year.</td></tr>
+                }
+                @foreach (var r in m.Software.OrderByDescending(x => x.CostPerHour ?? -1))
+                {
+                    <tr>
+                        <td>
+                            @r.SoftwareName
+                            @if (!string.IsNullOrWhiteSpace(r.Vendor))
+                            {
+                                <div class="text-secondary small">@r.Vendor</div>
+                            }
+                        </td>
+                        <td><code>@r.ProcessName</code></td>
+                        <td>@r.WorkloadKind</td>
+                        <td>@r.PurchaseYear</td>
+                        <td>@r.TotalCost.ToString("N0")</td>
+                        <td>@r.UsageHoursInPeriod.ToString("0.0")</td>
+                        <td>@r.AnnualizedHours.ToString("0.0")</td>
+                        <td>@(r.CostPerHour is double ch ? ch.ToString("0.00") : "—")</td>
+                        <td>@r.AvgConcurrent.ToString("0.00")</td>
+                        <td>@(r.IntensityLowShare is double lo ? lo.ToString("0%") : "—")</td>
+                        <td>@(r.IntensityHighShare is double hi ? hi.ToString("0%") : "—")</td>
+                        <td>@(r.UtilHoursPerDollar is double uh ? uh.ToString("0.000") : "—")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </section>
+}
+
+@section Scripts {
+    <script src="~/js/hd-table.js" asp-append-version="true"></script>
+    <script>
+      if (window.HeimdallTable) HeimdallTable.initSort(document);
+    </script>
+}

@@ -33,8 +33,7 @@ public class ApplicationModel(StatsQueryService stats) : PageModel
             return;
         }
 
-        var fromUtc = DateTimeOffset.UtcNow.AddDays(-days);
-        var toUtc = DateTimeOffset.UtcNow;
+        var (fromUtc, toUtc) = IndexModel.ResolveRangeWindow(Range);
 
         Detail = await stats.QueryApplicationDetailAsync(
             Process.Trim(),

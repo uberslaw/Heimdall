@@ -2,6 +2,8 @@
 
 One folder. One install. No SDK on target PCs.
 
+**Full agent architecture:** see **[docs/CLIENT.md](../CLIENT.md)** (collection loops, API endpoints, fleet snapshots, TUFLOW, silent deploy).
+
 ## What you copy to each client PC
 
 After packing on a build PC, copy **this one folder**:
@@ -34,7 +36,7 @@ Then choose **Create client pack**. Or run:
 scripts\Pack-WorkstationCollector.cmd
 ```
 
-Pack again only when the **agent** changes (or if `dist\Heimdall-Client` is missing). Reuse the same folder on every PC until then.
+Pack again when the **agent** changes (or if `dist\Heimdall-Client` is missing). Reuse the same folder on every PC until then.
 
 **Push from Setup:** **Push client pack to PC…** asks for a hostname, copies the pack to `\\HOST\C$\Temp\Heimdall-Client`, and opens that share in Explorer. On the target, run `Install.lnk` (admin). Needs your account to reach C$ on that PC.
 
@@ -45,11 +47,27 @@ Pack again only when the **agent** changes (or if `dist\Heimdall-Client` is miss
 | `Install.lnk` | **Only entry you need on clients** |
 | `Install.cmd` / `Install-Client.ps1` | Guided wizard (launched by Install.lnk) |
 | `payload\` | Required agent binaries (self-contained) |
+| `payload\TuflowLauncher\` | TUFLOW start/stop helper (Flood-enrolled hosts) |
 | `Install-WorkstationCollector.cmd` | Silent/scripted install (advanced) |
 | `Heimdall-Setup.lnk` | Advanced tools (health check, logs) — optional on clients |
 | `VERSION.json` / `PACKED.txt` | Pack metadata |
 
 There is **no separate “workstation collector” folder to combine** with a “client install” folder. Those names meant the same pack.
+
+## What the installed agent does (short)
+
+- Windows service **`HeimdallAgent`**
+- Posts sessions + allowlisted app usage to **`POST /api/ingest`** (~60s)
+- Refreshes config from **`GET /api/config/{hostname}`** (~5 min)
+- **30s fleet snapshots** to **`POST /api/fleet/snapshot`** (all heartbeating machines — CPU/GPU/RAM/disk/network + TUFLOW flags)
+- Optional **Staff live sampling** when a viewer is active (separate from fleet snapshots)
+- Offline queue: `%ProgramData%\Heimdall\queue.db` when API is down
+
+See **[docs/CLIENT.md](../CLIENT.md)** for detail.
+
+## Silent update (version 3+)
+
+After bootstrap install, use dashboard **Fleet → Client version → Deploy Client** for silent service restart updates. Agents below version **3** need one manual `Install.lnk` first.
 
 ## Do not use
 
@@ -73,3 +91,5 @@ scripts\Install-Agent.cmd
 ```
 
 Prefer the portable pack for vanilla SOE / other PCs.
+
+Install guide: **[INSTALL.md](../../INSTALL.md)**

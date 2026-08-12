@@ -13,8 +13,12 @@ public sealed class RunSpec
     /// to every status.json write (RunStatus.RunName) purely so the Api side never has to merge it back in
     /// when it wholesale-replaces Machine.TuflowRunStatusJson from a heartbeat.</summary>
     public required string RunName { get; init; }
-    public required string ExePath { get; init; }
-    public required string TcfPath { get; init; }
+    /// <summary>ExeTcf (default) or Cmd — see Heimdall.Shared.Contracts.TuflowLaunchModes.</summary>
+    public string LaunchMode { get; init; } = "ExeTcf";
+    public string ExePath { get; init; } = "";
+    public string TcfPath { get; init; } = "";
+    /// <summary>Absolute/UNC .cmd/.bat path when LaunchMode is Cmd.</summary>
+    public string? CmdPath { get; init; }
     public required string WorkingDirectory { get; init; }
     public List<string> Scenarios { get; init; } = [];
     public List<string> Events { get; init; } = [];
@@ -68,6 +72,7 @@ public sealed class RunStatus
     public required string State { get; init; }
     public int? ProcessId { get; init; }
     public string? TcfPath { get; init; }
+    public string? CmdPath { get; init; }
     public DateTimeOffset? StartedUtc { get; init; }
     public DateTimeOffset? StopRequestedUtc { get; init; }
     /// <summary>Last time the launcher observed a new/updated .trf or .erf restart file being written.</summary>

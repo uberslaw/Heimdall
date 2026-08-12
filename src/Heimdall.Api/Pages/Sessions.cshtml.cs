@@ -62,8 +62,7 @@ public class SessionsModel(StatsQueryService stats, HeimdallDbContext db) : Page
             Range = key;
             RangeLabel = label;
             RangeDays = days;
-            fromUtc = DateTimeOffset.UtcNow.AddDays(-days);
-            toUtc = DateTimeOffset.UtcNow;
+            (fromUtc, toUtc) = IndexModel.ResolveRangeWindow(Range);
         }
 
         var selectedHosts = Hosts.Count > 0 ? Hosts : null;

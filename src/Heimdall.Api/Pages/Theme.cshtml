@@ -2,12 +2,11 @@
 @model ThemeModel
 @{
     ViewData["Title"] = "Theme";
+    ViewData["HelpFragment"] = "admin-preferences";
     var returnUrl = "/Theme";
 }
 
-<div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-    <h1 class="hd-title mb-1">Theme</h1>
-</div>
+<h1 class="hd-title mb-1">Theme</h1>
 <p class="hd-sub">Pick a premade look, or build and save your own — colours are CSS variables, so every page updates instantly.</p>
 
 @if (TempData["Message"] is string msg)
@@ -270,7 +269,7 @@
                     </div>
 
                     <div class="hd-panel">
-                        <div class="text-secondary small mb-1">Buttons — Gold primary · Silver secondary · Rose destructive · Black nav</div>
+                        <div class="text-secondary small mb-1">Buttons — Gold primary · Gunmetal secondary (silver/black) · Rose destructive</div>
                         <div class="hd-theme-preview-row mb-1">
                             <button type="button" class="hd-btn hd-btn-gold">Analyze Apps</button>
                             <button type="button" class="hd-btn hd-btn-silver">Apply List</button>

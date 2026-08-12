@@ -37,9 +37,16 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
         foreach (var m in machines)
             MachineHierarchy.EnsureDefaults(m);
 
-        var sessions = await db.Sessions.AsNoTracking().ToListAsync(ct);
+        var machineIds = machines.Select(m => m.Id).ToList();
+        // SQLite cannot filter DateTimeOffset in SQL — load by MachineId, then freshness in memory.
+        var sessionHints = machineIds.Count == 0
+            ? []
+            : await db.Sessions.AsNoTracking()
+                .Where(s => machineIds.Contains(s.MachineId))
+                .Select(s => new { s.MachineId, s.Username, s.State, s.LastObservedUtc, s.ActiveSeconds })
+                .ToListAsync(ct);
         var freshCutoff = now - MachineUtilisationService.SessionFreshness;
-        var openByMachine = sessions
+        var openByMachine = sessionHints
             .Where(s => s.State != SessionState.Ended && s.LastObservedUtc >= freshCutoff)
             .GroupBy(s => s.MachineId)
             .ToDictionary(g => g.Key, g => g.ToList());
@@ -56,7 +63,7 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
             var hasActiveSession = open.Any(s => s.State == SessionState.Active);
             var status = ResolveStatus(m.LastSeenUtc >= onlineCutoff, hasActiveSession);
 
-            var lastUser = sessions.Where(s => s.MachineId == m.Id)
+            var lastUser = sessionHints.Where(s => s.MachineId == m.Id)
                 .OrderByDescending(s => s.State == SessionState.Active && s.LastObservedUtc >= freshCutoff)
                 .ThenByDescending(s => s.LastObservedUtc)
                 .ThenByDescending(s => s.ActiveSeconds)
@@ -126,6 +133,38 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
         var match = RangeOptions.FirstOrDefault(o => o.Key == key);
         return match.Key is null ? RangeOptions[1] : match;
     }
+
+    /// <summary>Local calendar day 00:00 for the instant's time zone.</summary>
+    public static DateTimeOffset StartOfLocalDay(DateTimeOffset instant) =>
+        new(DateTime.SpecifyKind(instant.ToLocalTime().Date, DateTimeKind.Local));
+
+    /// <summary>UTC query window for shared Range keys. 1d = local midnight → now; others = rolling N days.</summary>
+    public static (DateTimeOffset FromUtc, DateTimeOffset ToUtc) ResolveRangeWindow(string? range, DateTimeOffset? now = null)
+    {
+        var (key, _, days) = ResolveRange(range);
+        var to = now ?? DateTimeOffset.UtcNow;
+        if (key == "1d")
+            return (StartOfLocalDay(to), to);
+        return (to.AddDays(-days), to);
+    }
+
+    /// <summary>Map Fleet Computers <c>period</c> onto Apps/Sessions/User/Machine <c>range</c> keys.</summary>
+    public static string RangeFromPeriod(string? period) =>
+        MachineUtilisationService.NormalizePeriod(period) switch
+        {
+            "today" or "24h" => "1d",
+            "5d" or "7d" => "7d",
+            "30d" => "4w",
+            "all" => "year",
+            _ => "7d"
+        };
+
+    /// <summary>Map Stats quick-range days onto shared <c>range</c> keys.</summary>
+    public static string RangeFromStatsDays(int days) =>
+        days <= 1 ? "1d" : days <= 7 ? "7d" : days <= 30 ? "4w" : days <= 90 ? "quarter" : days <= 182 ? "6m" : "year";
+
+    public static string FormatLocalTimestamp(DateTimeOffset utc) =>
+        RemoteMachineService.FormatAgentContact(utc);
 
     public static string FormatRelativeUtc(DateTimeOffset utc)
     {

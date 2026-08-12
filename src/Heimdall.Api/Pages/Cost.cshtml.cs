@@ -1,4 +1,5 @@
 using Heimdall.Api.Data;
+using Heimdall.Api.Services;
 using Heimdall.Shared;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -6,10 +7,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Pages;
 
-public class CostModel(HeimdallDbContext db) : PageModel
+public class CostModel(HeimdallDbContext db, FinanceQueryService finance) : PageModel
 {
     public IReadOnlyList<CostRow> Rows { get; private set; } = [];
     public IReadOnlyList<IdentityEventRow> IdentityHistory { get; private set; } = [];
+    public IReadOnlyList<FinanceQueryService.PurchaseCopySource> PurchaseCopySources { get; private set; } = [];
     public int ActiveWarrantyCount { get; private set; }
     public int ExpiredWarrantyCount { get; private set; }
     public int UnknownWarrantyCount { get; private set; }
@@ -26,6 +28,9 @@ public class CostModel(HeimdallDbContext db) : PageModel
 
     [BindProperty]
     public string? PurchaseCurrency { get; set; } = "AUD";
+
+    [BindProperty]
+    public DateOnly? PurchaseDate { get; set; }
 
     [BindProperty]
     public DateOnly? WarrantyStartDate { get; set; }
@@ -105,6 +110,7 @@ public class CostModel(HeimdallDbContext db) : PageModel
         machine.PurchaseCurrency = string.IsNullOrWhiteSpace(PurchaseCurrency)
             ? (PurchaseCost is not null ? "AUD" : null)
             : PurchaseCurrency.Trim().ToUpperInvariant();
+        machine.PurchaseDate = PurchaseDate;
         machine.WarrantyStartDate = WarrantyStartDate;
         machine.WarrantyEndDate = WarrantyEndDate;
         machine.HardwareGpu = NullIfEmpty(HardwareGpu);
@@ -158,6 +164,7 @@ public class CostModel(HeimdallDbContext db) : PageModel
         EditingMachineId = m.Id;
         PurchaseCost = m.PurchaseCost;
         PurchaseCurrency = m.PurchaseCurrency ?? "AUD";
+        PurchaseDate = m.PurchaseDate;
         WarrantyStartDate = m.WarrantyStartDate;
         WarrantyEndDate = m.WarrantyEndDate;
         HardwareGpu = m.HardwareGpu;
@@ -173,6 +180,8 @@ public class CostModel(HeimdallDbContext db) : PageModel
         SupportHourlyRate = m.SupportHourlyRate;
         // Default checked so a Cost-page save protects agent-reported blanks unless cleared
         HardwareManualOverride = true;
+
+        PurchaseCopySources = await finance.GetPurchaseCopySourcesAsync(id);
 
         IdentityHistory = (await db.MachineIdentityEvents.AsNoTracking()
                 .Where(e => e.MachineId == id)

@@ -1,8 +1,22 @@
 # Heimdall handover
 
 **Audience:** a fresh Cursor agent (or human) with **no prior chat history**.  
-**Date of this handover:** 2026-08-04  
-**Purpose:** continue POC work on another computer without losing product intent, paths, or gotchas.
+**Date of this handover:** 2026-08-12  
+**Purpose:** continue POC work on another machine without losing product intent, paths, or gotchas.
+
+---
+
+## Start here (documentation map)
+
+| Read first | Contents |
+|------------|----------|
+| **This file** | Product intent, paths, nav, gotchas, what shipped |
+| **[INSTALL.md](INSTALL.md)** | Server + client install, verify, troubleshoot, Staff auth, Entra secrets |
+| **[docs/CLIENT.md](docs/CLIENT.md)** | How the agent works — loops, endpoints, fleet sampling, silent deploy |
+| **Dashboard → Admin → Help** | Page-by-page operator guide (most up to date for UI) |
+| **[README.md](README.md)** | Short product overview + dev quick start |
+| **[docs/BACKLOG.md](docs/BACKLOG.md)** | Parked ideas (Flight Recorder, etc.) |
+| **[AGENTS.md](AGENTS.md)** | Cursor Cloud VM constraints (Linux API-only) |
 
 ---
 
@@ -11,47 +25,39 @@
 | Item | Status |
 |------|--------|
 | **Branch** | `main` (canonical). Prefer `origin/main` for cross-machine continuity. |
-| **PR #4** | **Merged** 2026-07-31 — unified Heimdall Setup UX is on `main`. |
-| **Docs audit** | In-app **Help** is the most complete product guide. Repo markdown (README / this file) was lagging Remote + Historical features — keep them aligned when shipping UI. |
+| **Historical Dashboard / Flood hub** | **Shipped** — always-on 30s fleet snapshots for all clients; Flood enrollment gates TUFLOW control + Flood-scoped analytics only |
+| **Fleet console** | **Shipped** — `/Fleet` shell with lazy tabs (Computers, Live, Sessions, Online status, Client version, Cost, Stats) |
+| **Client silent deploy** | **Shipped** — Fleet → Client version; baseline integer version **3** = first `UpdateClient`-capable build |
+| **Docs audit** | In-app **Help** + `docs/CLIENT.md` are the operator references; keep repo markdown aligned when shipping UI |
 
-### Setup UX (shipped on main)
+### Setup UX (on main)
 
 - `scripts/Heimdall-Setup.cmd` (+ `.lnk` after `New-HeimdallShortcuts.cmd`) — **primary** guided Setup UI (API / create client pack / **push to PC via C$** / install agent)
-- Steps panel: **Client install** (default) and **Server install** branches with click-through details
+- Steps panel: **Client install** (default) and **Server install** branches
 - `scripts/Heimdall-LaunchControl.*` — compat wrappers → same Setup UI
 - `scripts/Pack-WorkstationCollector.cmd` — publishes self-contained `win-x64` agent into `dist/Heimdall-Client/`
 - `scripts/Install.lnk` / `Install.cmd` — **only** entry clients need (inside the pack)
 - `docs/portable-client/` — docs only (copied into pack as README/FILES)
-- `Directory.Build.props` — shared `productVersion` 0.1.0; `/api/health` returns it for pack matching
-- Repo-root `NuGet.config` → nuget.org
-- Pack / `Install-Agent` publish force `--source https://api.nuget.org/v3/index.json`
+- `docs/CLIENT.md` — full agent architecture (also summarized in Help → Client / agent)
 
-### Folder model (simplified)
+### Folder model
 
 | Path | What it is |
 |------|------------|
 | `docs\portable-client\` | Docs only in git — **not** installable |
 | `dist\Heimdall-Client\` | **The one folder** to copy after pack (`Install.lnk` + `payload\`) |
 
-“Workstation collector” and “client install” are the same pack — not two folders to combine.
+“Workstation collector” and “client install” are the same pack.
 
 ### NuGet on the pack PC (critical)
 
 If `dotnet nuget list source` shows only **"Microsoft Visual Studio Offline Packages"**, pack fails with **NU1101**. Fix:
 
 ```powershell
-cd C:\Users\christopher.owen\Cursor\Heimdall   # or C:\Heimdall
+cd C:\Heimdall   # or C:\Users\christopher.owen\Cursor\Heimdall
 dotnet nuget add source https://api.nuget.org/v3/index.json -n nuget.org
-dotnet nuget list source
-curl.exe -I https://api.nuget.org/v3/index.json
 .\scripts\Heimdall-Setup.lnk   # Create client pack
 ```
-
-- First pack can take **many minutes** (download win-x64 runtime packs).
-- If `curl` to nuget.org fails → corporate proxy/firewall; need network allowlist or internal NuGet mirror.
-- After SUCCESS, copy `dist\Heimdall-Client\` (or zip) to SOE PCs and run `Install.lnk`.
-
-Prefer **portable pack** for other machines; `Install-Agent.cmd` is for full-repo + SDK on that PC.
 
 ---
 
@@ -62,10 +68,10 @@ Prefer **portable pack** for other machines; `Install-Agent.cmd` is for full-rep
 | **Canonical local clone (RepoSync)** | `C:\Users\christopher.owen\Cursor\Heimdall` |
 | **Also used** | `C:\Heimdall` — keep in sync with GitHub `main` |
 | **GitHub** | https://github.com/uberslaw/Heimdall |
-| Older / stale copy (do not treat as source of truth) | `C:\Users\christopher.owen\Arup\Heimdall` |
+| **Typical prod API** | `http://BNELT5CG5152D8R:5080` (hostname, not localhost when service runs) |
+| **Prod SQLite** | `%ProgramData%\Heimdall\heimdall.db` |
 
-**Always open the Cursor path** (or a synced `C:\Heimdall` clone from GitHub).  
-User typically syncs with **RepoSync**. Feature work usually lands on **`origin/main`**.
+**Always open the Cursor path** (or a synced `C:\Heimdall` clone from GitHub).
 
 ---
 
@@ -75,11 +81,11 @@ POC **workstation usage tracker** to justify modelling / remote machine cost ver
 
 Three pieces:
 
-1. **Agent** — Windows Service that collects sessions, processes, heartbeats, hardware inventory, OS install signals, MachineGuid / SMBIOS UUID; optional live resource sampling (Staff Access viewers) and 30s fleet snapshots (Historical Dashboard enrollment)
+1. **Agent** — Windows Service: sessions, processes, heartbeats, hardware, **30s fleet snapshots** (all clients), optional Staff live sampling, TUFLOW launcher on Flood-enrolled hosts
 2. **ASP.NET Core Razor Pages API + dashboard** — ingest, config, analytics UI
-3. **SQLite** — POC database (zero SQL Server install)
+3. **SQLite** — POC database (no SQL Server)
 
-Goal: clearer session + app utilisation than CADFX, with **hardware purchase cost** and support-time context — not just app license $/yr.
+Goal: clearer session + app utilisation than CADFX, with **hardware purchase cost** and support-time context.
 
 ---
 
@@ -90,12 +96,10 @@ Goal: clearer session + app utilisation than CADFX, with **hardware purchase cos
 | Runtime / SDK | **.NET 10** |
 | Agent | .NET 10 **Windows Service** |
 | API + dashboard | ASP.NET Core **Razor Pages** |
-| DB (POC) | **SQLite** |
-| Auth (POC) | API key `X-Heimdall-Key` for agent ingest; Staff Access can use Windows Negotiate; **Teams membership** can sync from Entra Graph (optional — see Admin → Auth). No site-wide Entra SSO for the dashboard yet. |
+| DB (POC) | **SQLite** (`EnsureCreated` + additive schema patches — **no EF migrations**) |
+| Auth (POC) | API key `X-Heimdall-Key` for agent; Staff Access optional Windows Negotiate; Entra Graph optional for **Teams membership** (not site SSO) |
 
-**Default POC API key:** `heimdall-poc-key` — change for anything beyond trusted-LAN POC. Dashboard remains trusted-LAN for general pages; Entra is used for **group membership reads**, not login.
-
-Live repo: https://github.com/uberslaw/Heimdall
+**Default POC API key:** `heimdall-poc-key`
 
 ---
 
@@ -104,121 +108,68 @@ Live repo: https://github.com/uberslaw/Heimdall
 ```
 src/Heimdall.Agent              Windows service collector
 src/Heimdall.Api                Ingest API + Razor dashboard
-src/Heimdall.Shared             DTOs / contracts / hostname serial + ops. helpers
-scripts/                        Installers, diagnostics, SOE inspect, repair tools
-scripts/Pack-WorkstationCollector.cmd
-scripts/Install-WorkstationCollector.cmd
-docs/portable-client/           Docs only — not the payload
-dist/Heimdall-Client/           Created by pack (gitignored) — copy to SOE PCs
-NuGet.config                    nuget.org (needed for pack/publish)
-docs/BACKLOG.md                 Parked product ideas (Flight Recorder, etc.)
-INSTALL.md                      Full install / verify / troubleshoot guide
+src/Heimdall.Shared             DTOs / contracts
+scripts/                        Installers, Setup, pack, diagnostics
+docs/CLIENT.md                  Agent architecture (for agents + humans)
+docs/portable-client/           Pack docs only
+dist/Heimdall-Client/           Created by pack (gitignored)
+INSTALL.md                      Install guide
 HANDOVER.md                     This file
-README.md                       Product overview + quick start
 Heimdall.slnx                   Solution
 ```
 
-Read first on a new machine: **this file**, then **[INSTALL.md](INSTALL.md)**, then dashboard **Admin → Help**, then **[docs/BACKLOG.md](docs/BACKLOG.md)**. For agent deploy: `docs/portable-client/README.md`.
+---
+
+## Dashboard navigation (current)
+
+| Menu | Pages / tabs |
+|------|----------------|
+| **Fleet** | Computers, Live, Sessions, Online status, Client version, Cost, Stats (`/Fleet?tab=…`) |
+| **Applications** | App lists, Application Usage, Discovery, Socratize, Teams |
+| **Staff** | Staff Access (RDP pool + bookings) |
+| **Flood** (gated) | Flood hub: Live, Historical, Fleet Sims, Enrollment; plus **TUFLOW Runs** |
+| **Admin** | Tracking config, Utilization, Finance, Auth, Remote Access Groups, Help, Theme, Database mode |
+
+Legacy URLs (`/`, `/Ops`, `/Clients`, `/HistoricalDashboard`, …) redirect into Fleet or Flood tabs.
 
 ---
 
-## How to run / install
+## Data model highlights (for agents editing code)
 
-### Dev
+| Concept | Table / service | Notes |
+|---------|-----------------|-------|
+| Machines, sessions, process runs | `Machines`, `UserSessions`, `ProcessRuns` | Core ingest |
+| Fleet snapshots | `FleetMetricSnapshots` | Append-only 30s rows; `FleetDashboardService`, retention hosted service |
+| Flood allowlist | `FleetDashboardMachines` | **Not** required for sampling — gates TUFLOW + Flood UI |
+| App tracking | App lists + assignments | Primary include source; Tracking Config legacy includes may remain |
+| Live staff metrics | `MachineResourceMetrics` | Latest-only row per machine; viewer-gated sampling |
+| Client deploy | `PendingClientUpdateJson` on Machine | `UpdateClient` command + version **3+** agents |
 
-```powershell
-# Terminal 1 — API + dashboard
-cd src\Heimdall.Api
-dotnet run --urls http://localhost:5080
+**Fleet sampling:** `IngestService.ResolveForHostAsync` sets `FleetSamplingEnabled = true` for any known machine. Agent `Worker.RunFleetSamplingTickAsync` posts to `POST /api/fleet/snapshot` every 30s.
 
-# Terminal 2 — Agent (console)
-cd src\Heimdall.Agent
-dotnet run
-```
-
-Open http://localhost:5080  
-Default key: `heimdall-poc-key` (`X-Heimdall-Key`).
-
-### Prod-ish (Windows services)
-
-Run **elevated** (prefer `.cmd` so the console stays open when double-clicked):
-
-```text
-scripts\Install-Api.cmd
-scripts\Install-Agent.cmd
-```
-
-Or use **Heimdall Setup** (`scripts\Heimdall-Setup.lnk`) for guided Client/Server steps.
-
-### Other workstations / vanilla SOE (portable client)
-
-```text
-# Build PC (.NET 10 SDK + NuGet access to nuget.org or mirror):
-scripts\Heimdall-Setup.lnk   # Create client pack
-# or: scripts\Pack-WorkstationCollector.cmd
-
-# Copy dist\Heimdall-Client\ (or zip) to each PC, then:
-Install.lnk
-```
-
-- Install / service logs: `%ProgramData%\Heimdall\logs\`
-- SQLite DB (typical): `%ProgramData%\Heimdall\heimdall.db`
-- Agent offline queue: `%ProgramData%\Heimdall\queue.db`
-- API default listen: `http://0.0.0.0:5080` (allow inbound TCP 5080 if agents are remote)
-
-Full install detail: [INSTALL.md](INSTALL.md).
+**Active/Idle (TUFLOW):** while `tuflow*` process running — Active if process GPU > 5%, CPU > 10%, or disk R/W > 5 MB/s.
 
 ---
 
-## Features shipped (summarize)
-
-**Dashboard nav (main):**
-
-| Menu | Pages |
-|------|--------|
-| **Fleet** | Shell with tabs: Computers (ex-Index), Sessions, Online status, Client version, Cost, Stats |
-| **Applications** | App lists, Application Usage, Discovery, Socratize, **Teams**, Track Software |
-| **Staff** | Staff Access (RDP pool) |
-| **Flood** (gated) | Flood hub / Historical Dashboard, TUFLOW Runs, Fleet Sim Progress (allowlist emails) |
-| **Admin** | Tracking config, Utilization, **Auth** (membership source toggles), Remote Access Groups, Help, Database mode (Live/Sandbox), Theme |
-
-In-app **Admin → Help** has page-by-page operator docs (preferred over README for UI detail).
+## Features shipped (summary)
 
 | Area | What it does |
 |------|----------------|
-| **Fleet / Computers** | Estate view; utilisation period; **Reimaged** badge when MachineGuid changed; team section headers |
-| **Sessions** | Local vs RDP logons; start/end; active vs disconnected; Team column when mapped; session drilldown |
-| **Apps / Track Software** | Allowlisted / known / discovered / custom titles; scoped tracking |
-| **App lists + Analyze** | Approval-gated Analyze — **no silent auto-track**; inventory request; Team apps (Spec overlay + Spec/unlisted); classification CSV AI workflow |
-| **Discovery** | Full process catalog (name+path); edit friendly name/version/category; installs + frequency |
-| **Config** | Sampling, known apps, SOE autogenerate, metric thresholds, pause |
-| **Teams** | Hierarchy + people/machines; app-list track/ignore links; CSV import; optional **Entra Graph** group sync (Admin → Auth) |
-| **Auth** | Toggle Manual/CSV vs Entra Graph membership; Probe Graph credentials/permissions; DPAPI secrets on API host |
-| **Stats** | Scoped analytics (logons, apps, RDP disconnected, patterns) — under Fleet tabs |
-| **Socratize** | Per-machine cost-justification Q&A from collected data |
-| **Utilization** | Utilisation weights; **app license $/yr** (secondary to hardware cost) |
-| **Cost** | **Hardware purchase cost** focus; user vs **`ops.` support hours** (30d); optional SupportHourlyRate; WMI hardware autodetection + manual; **PSU watts manual only**; BIOS vs hostname asset serial; OS install + Windows folder created dates; reimage identity history — under Fleet tabs |
-| **Online status** | RDP/RDS health, ping from API host, Connect `.rdp`, Restart RDS via agent queue — under Fleet tabs |
-| **Historical / Flood** | Enroll hosts → always-on **30s** fleet snapshots; Live + historical analytics (TUFLOW-oriented); gated Flood nav |
-| **Staff Access** | Public-facing team machines; bookings; optional Windows Negotiate |
-| **Remote Access Groups** | Admin: staff email ↔ machine membership (+ favourite processes) |
-| **Clients** | Agent version per host vs published pack version — under Fleet tabs |
-| **Theme / DB mode** | Custom themes; Live vs Sandbox (`heimdall-dev.db`) browse toggle — ingest always Live |
-| **Metric thresholds** | Config → agents; per-process ProcessRun GPU/disk columns still often empty; **live/fleet sampling** populates Historical + Staff views |
+| **Fleet / Computers** | Team sections; Active/Idle/Off status; period util; clickable metric drill-down; fleet-snapshot-backed GPU/CPU/IO columns |
+| **Fleet / Live** | Estate-wide 30s gauges; auto-refresh; TUFLOW Active/Idle when detected |
+| **Flood hub** | Enrollment allowlist; Live/Historical for enrolled hosts; Fleet Sims; machine Chart.js detail |
+| **TUFLOW Runs** | Queue start/stop on enrolled hosts; ~20s agent poll; TuflowLauncher in client pack |
+| **Sessions** | Period + location filter; drill-down; duration display |
+| **App lists + Discovery** | Track/ignore via lists; catalog; changelog; Analyze PC (approval-gated) |
+| **Teams** | People/machines; app-list links; optional Entra sync |
+| **Staff Access** | Public-facing teams; bookings; `.rdp` Connect; optional Negotiate |
+| **Remote Access Groups** | Staff ↔ machine membership |
+| **Client version** | Pack + silent Deploy; bootstrap pre-v3 via Install.lnk |
+| **Finance** | Hardware catalog + software license costs + $/hour metrics |
+| **Cost / Socratize / Stats** | Hardware cost focus; machine brief; scoped analytics |
+| **Theme / DB mode** | Custom themes; Live vs Sandbox browse — **ingest always Live** |
 
-### Hardware / identity
-
-| Signal | Auto (agent) | Manual | Notes |
-|--------|--------------|--------|-------|
-| Brand, Model, CPU, GPU, RAM, Disk | Yes (WMI) | Yes | Manual override blocks agent fills |
-| Serial | BIOS + **hostname parse** | Yes | Pattern: 3-letter city + optional DT/LT + serial. Config: `Heimdall:HostnameSerialPattern` |
-| **PSU rated W** | No | Yes (`PsuWatts`) | Not in WMI |
-| **Power draw W** | No | Stub field only | Not reliable via agent POC |
-| OS install date | WMI/registry | — | May move on feature update |
-| Windows folder created | `%SystemRoot%` created | — | Often closer to original image |
-| MachineGuid | Registry | — | Changes on **reimage** |
-| SmbiosUuid | WMI | — | Usually survives reimage |
-| Support hours | From sessions | Rate optional | Username `ops.*` / domain `OPS` |
+In-app **Admin → Help** has the full page-by-page guide.
 
 ---
 
@@ -226,79 +177,67 @@ In-app **Admin → Help** has page-by-page operator docs (preferred over README 
 
 | Topic | Detail |
 |-------|--------|
-| **NuGet offline-only** | Pack/publish fails NU1101 if only VS Offline Packages. Need nuget.org (or mirror). |
-| **Docs vs pack folder** | `docs\portable-client\` = docs; `dist\Heimdall-Client\` = real pack after SUCCESS. |
-| **PS 5.1 + UTF-8** | Em-dashes without BOM broke install scripts historically; pack scripts use BOM/ASCII-safe text. |
-| **Mojibake usernames** | Encoding fix shipped; **restart agent**. Repair DB with `scripts\Repair-SessionMojibake.ps1`. |
-| **RDP vs local** | Classify by **protocol** first (then RDP-/ICA- WinStation, then ClientName/Address). Console alone must not force Local. |
-| **PSU / power draw** | Rated wattage = manual. Live draw = **not** collected. |
-| **OS InstallDate** | Feature updates often rewrite WMI/registry InstallDate — show both signals on Cost. |
-| **ProcessRun GPU/disk** | Stats ranking columns for ProcessRun peaks may stay empty; use Historical Dashboard / Staff live sampling for GPU/disk util. |
-| **Dell / HP warranty API** | Not wired — official APIs later; **no scraping**. |
-| **SQLite + DateTimeOffset** | Prefer filter/order in memory where EF translation is unreliable. |
-| **Wrong folder** | Prefer **`C:\Users\christopher.owen\Cursor\Heimdall`**, not Arup. |
-| **POC auth** | Agent = API key; admin dashboard = open on LAN; Staff Access optional Windows auth (INSTALL.md). |
-| **Live vs sandbox** | Do not run `dotnet run` on :5080 while `HeimdallApi` service also listens — two processes, not a toggle. Use Admin → Database mode. |
+| **Live vs sandbox** | Agent ingest **always** writes live DB. Sandbox is browse-only. **DEV** badge = sandbox. Do not confuse with “agents missing”. |
+| **Two APIs on :5080** | `dotnet run` + `HeimdallApi` service = two processes — use Admin → Database mode or one process only. |
+| **localhost vs hostname** | Prod service DB is `%ProgramData%\Heimdall\heimdall.db`. Dev `dotnet run` often uses sandbox in repo folder. Use hostname URL for prod. |
+| **Flood enrollment ≠ sampling** | All heartbeating agents get fleet snapshots. Enrollment only for TUFLOW ops + Flood analytics scope. |
+| **Pre-v3 agents** | Silent Deploy fails until one manual Install.lnk / Setup push. |
+| **NuGet offline-only** | Pack fails NU1101 — need nuget.org or mirror. |
+| **PSU / power draw** | Rated W manual only; live draw not collected. |
+| **ProcessRun GPU/disk peaks** | Often empty in Stats; use fleet snapshots / Flood views. |
+| **SQLite DateTimeOffset** | Some queries filter/order in memory when EF translation fails. |
+| **Redeploy API** | `install-api.ps1` can overwrite Program Files appsettings — preserve StaffAccess / AdminEmails intentionally. |
 
 ---
 
-## Product decisions / naming to keep
+## Product decisions / naming
 
-1. **Socratize** = retrospective interrogation of *already collected* data for **one machine**.
-2. **Flight Recorder / Deep Observe** = future high-cardinality *incident* capture — **backlog / not built**. Distinct from shipped **Historical Dashboard** (30s fleet snapshots). See [docs/BACKLOG.md](docs/BACKLOG.md).
-3. **App analysis requires approval** — never silently auto-track.
-4. **No scraping HP/Dell** for warranty.
-5. **Hardware cost** is the primary Cost-page story; app license $/yr lives on Utilization.
+1. **Socratize** — retrospective one-machine cost brief from collected data.
+2. **Flight Recorder / Deep Observe** — **backlog** (incident capture). Distinct from **fleet snapshots** (30s util history).
+3. **App analysis requires approval** — never silent auto-track.
+4. **Flood** — gated nav for modelling team (config: `AdminEmails` ∪ `FloodTeamEmails`).
 
 ---
 
 ## Suggested next steps
 
-1. Deploy/refresh portable pack on SOE boxes; confirm Machines + Clients versions.
-2. Enroll modelling hosts on **Historical Dashboard** if TUFLOW fleet visibility is needed.
-3. Configure **Remote Access Groups** + Staff Access Windows auth for non-admin viewers (INSTALL.md).
-4. Run `Inspect-SoeInstalledPrograms` on a golden image for program-list excludes.
-5. Later backlog: Dell warranty API (if keys); Flight Recorder spike; CADFX demo with purchase cost + support hours + Socratize.
+1. Redeploy API + refresh client pack on modelling hosts; verify Fleet → Live and Flood hub after agent v3+.
+2. Enroll TUFLOW machines on **Flood → Enrollment** before using TUFLOW Runs.
+3. Configure Remote Access Groups + Staff Access Negotiate for production staff pool.
+4. Tune Finance / Cost for Socratize hardware + license context.
+5. Backlog: Flight Recorder spike; Dell warranty API; CADFX comparison demo.
 
 ---
 
 ## For the next Cursor agent
 
-- Open **`C:\Users\christopher.owen\Cursor\Heimdall`** (or synced **`C:\Heimdall`**) on **`main`**
-- Read **HANDOVER.md** → **INSTALL.md** → dashboard **Help** → **docs/BACKLOG.md**
-- Unblock pack if still blocked: NuGet/network first — do not reinvent the pack scripts unless broken
-- User often wants **commit + push** to `origin/main` for RepoSync continuity
-- Never update git config; no force-push; do not commit secrets
-- Preserve names: **Socratize**, **Flight Recorder / Deep Observe**
-- Prefer **CMD** installers for SOE targets (avoid PowerShell on locked-down images)
+1. Open **`C:\Heimdall`** (or RepoSync clone) on **`main`**
+2. Read **HANDOVER.md** → **INSTALL.md** → **docs/CLIENT.md** → dashboard **Help**
+3. Build: `dotnet build Heimdall.slnx -c Debug` (expect CA1416 / NU1903 warnings on Linux)
+4. Do not commit secrets; user often wants **commit + push** when asked
+5. Preserve names: **Socratize**, **Flight Recorder**, **Flood** (not “Historical Dashboard” in nav — that’s the Flood hub)
+6. Prefer **CMD** installers on locked-down SOE targets
 
 ---
 
 ## Quick reference commands
 
 ```powershell
-cd C:\Users\christopher.owen\Cursor\Heimdall   # or C:\Heimdall
+cd C:\Heimdall
 git status
-dotnet nuget list source
-.\scripts\New-HeimdallShortcuts.cmd
-.\scripts\Heimdall-Setup.lnk
+dotnet build Heimdall.slnx -c Debug
 
-# Dev API / agent
+# Dev
 cd src\Heimdall.Api;  dotnet run --urls http://localhost:5080
 cd src\Heimdall.Agent; dotnet run
 
-# Elevated installers
+# Elevated
 .\scripts\Install-Api.cmd
 .\scripts\Install-Agent.cmd
-.\scripts\Collect-Diagnostics.cmd
-.\scripts\Inspect-SoeInstalledPrograms.cmd
+.\scripts\Heimdall-Setup.lnk
 
-# Packed client on another PC:
+# Client on target PC
 .\Install.lnk
-
-# Mojibake repair
-.\scripts\Repair-SessionMojibake.ps1
 ```
 
-**GitHub:** https://github.com/uberslaw/Heimdall  
-**This file on main:** https://github.com/uberslaw/Heimdall/blob/main/HANDOVER.md
+**GitHub:** https://github.com/uberslaw/Heimdall

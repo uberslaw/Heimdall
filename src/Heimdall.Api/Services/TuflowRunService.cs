@@ -53,13 +53,15 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
     public async Task<(bool Ok, string? Error, string? RunId)> QueueStartAsync(
         string hostname,
         string? runName,
-        string exePath,
-        string tcfPath,
+        string? exePath,
+        string? tcfPath,
         string? workingDirectory,
         List<string> scenarios,
         List<string> events,
         string? resultsFolder,
         string? requestedBy,
+        string? launchMode,
+        string? cmdPath,
         CancellationToken ct)
     {
         var machine = await db.Machines.FirstOrDefaultAsync(m => m.Hostname == hostname, ct);
@@ -83,17 +85,61 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
         if (liveRow?.TuflowRunning == true)
             return (false, $"TUFLOW is already running on {hostname} (detected by fleet sampling, not queued via Heimdall). Confirm it's finished before starting a new run.", null);
 
+        var mode = string.Equals(launchMode, TuflowLaunchModes.Cmd, StringComparison.OrdinalIgnoreCase)
+            ? TuflowLaunchModes.Cmd
+            : TuflowLaunchModes.ExeTcf;
+
+        string trimmedExe = "";
+        string trimmedTcf = "";
+        string? trimmedCmd = null;
+
+        if (mode == TuflowLaunchModes.Cmd)
+        {
+            var cmdCheck = ValidateCmdPath(cmdPath);
+            if (cmdCheck.Error is not null)
+                return (false, cmdCheck.Error, null);
+            trimmedCmd = cmdCheck.Path;
+            // Keep TcfPath populated with the script path so older UI that only shows TcfPath still
+            // displays a sensible filename (.cmd/.bat) before the launcher reports an inspected .tcf.
+            trimmedTcf = trimmedCmd!;
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(exePath))
+                return (false, "TUFLOW .exe path is required for exe+.tcf launches.", null);
+            if (string.IsNullOrWhiteSpace(tcfPath))
+                return (false, "Tcf path is required for exe+.tcf launches.", null);
+
+            trimmedExe = exePath.Trim();
+            trimmedTcf = tcfPath.Trim();
+            // Soft guard: UI "Recent runs" .tcf column shows Path.GetFileName — a folder like "...\runs"
+            // looks like a valid short name and CreateProcess/TUFLOW then fail opaquely on the agent.
+            if (!trimmedTcf.EndsWith(".tcf", StringComparison.OrdinalIgnoreCase))
+                return (false, $"Tcf path must be a .tcf file (got '{trimmedTcf}').", null);
+            if (!IsAbsoluteOrUncPath(trimmedExe))
+                return (false, $"TUFLOW .exe path must be absolute or UNC (got '{trimmedExe}').", null);
+            if (!IsAbsoluteOrUncPath(trimmedTcf))
+                return (false, $"Tcf path must be absolute or UNC (got '{trimmedTcf}').", null);
+        }
+
         var runId = Guid.NewGuid().ToString("n");
-        var resolvedRunName = await ResolveRunNameAsync(machine.Id, runName, tcfPath, ct);
+        var nameHint = mode == TuflowLaunchModes.Cmd ? trimmedCmd! : trimmedTcf;
+        var resolvedRunName = await ResolveRunNameAsync(machine.Id, runName, nameHint, ct);
         var request = new TuflowStartRequestDto
         {
             RunId = runId,
             RunName = resolvedRunName,
-            ExePath = exePath.Trim(),
-            TcfPath = tcfPath.Trim(),
+            LaunchMode = mode,
+            ExePath = trimmedExe,
+            TcfPath = mode == TuflowLaunchModes.Cmd ? "" : trimmedTcf,
+            CmdPath = trimmedCmd,
             WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? null : workingDirectory.Trim(),
-            Scenarios = scenarios.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList(),
-            Events = events.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList(),
+            Scenarios = mode == TuflowLaunchModes.Cmd
+                ? []
+                : scenarios.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList(),
+            Events = mode == TuflowLaunchModes.Cmd
+                ? []
+                : events.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList(),
             ResultsFolder = string.IsNullOrWhiteSpace(resultsFolder) ? null : resultsFolder.Trim(),
             RequestedUtc = DateTimeOffset.UtcNow,
             RequestedBy = requestedBy
@@ -107,7 +153,8 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
             RunId = runId,
             RunName = resolvedRunName,
             State = TuflowRunStates.Starting,
-            TcfPath = request.TcfPath,
+            TcfPath = mode == TuflowLaunchModes.Cmd ? null : request.TcfPath,
+            CmdPath = request.CmdPath,
             UpdatedUtc = request.RequestedUtc
         }, JsonOptions);
 
@@ -118,7 +165,8 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
             RunId = runId,
             RunName = resolvedRunName,
             MachineId = machine.Id,
-            TcfPath = request.TcfPath,
+            TcfPath = mode == TuflowLaunchModes.Cmd ? (request.CmdPath ?? trimmedTcf) : request.TcfPath,
+            CmdPath = request.CmdPath,
             RequestedUtc = request.RequestedUtc,
             RequestedBy = requestedBy,
             State = TuflowRunStates.Starting,
@@ -126,15 +174,44 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
         });
 
         await db.SaveChangesAsync(ct);
-        logger.LogWarning("Queued TUFLOW start ({RunId}, \"{RunName}\") for {Host}: {Tcf}", runId, resolvedRunName, hostname, request.TcfPath);
+        logger.LogWarning(
+            "Queued TUFLOW start ({RunId}, \"{RunName}\", {Mode}) for {Host}: {Target}",
+            runId, resolvedRunName, mode, hostname,
+            mode == TuflowLaunchModes.Cmd ? request.CmdPath : request.TcfPath);
         return (true, null, runId);
     }
 
     /// <summary>
+    /// Server-side path shape checks for Cmd mode. Existence/content inspection runs on the agent
+    /// (TuflowLauncher) because the API host usually cannot see modelling UNC shares.
+    /// </summary>
+    private static (string? Path, string? Error) ValidateCmdPath(string? cmdPath)
+    {
+        if (string.IsNullOrWhiteSpace(cmdPath))
+            return (null, "CMD/BAT path is required for \"Use existing CMD\" launches.");
+
+        var trimmed = cmdPath.Trim();
+        var ext = Path.GetExtension(trimmed);
+        if (!ext.Equals(".cmd", StringComparison.OrdinalIgnoreCase)
+            && !ext.Equals(".bat", StringComparison.OrdinalIgnoreCase))
+        {
+            return (null, $"CMD/BAT path must end with .cmd or .bat (got '{trimmed}').");
+        }
+
+        if (!IsAbsoluteOrUncPath(trimmed))
+            return (null, $"CMD/BAT path must be absolute or UNC (got '{trimmed}'). Prefer \\\\server\\share\\… so the agent service account can see it.");
+
+        return (trimmed, null);
+    }
+
+    private static bool IsAbsoluteOrUncPath(string path) =>
+        Path.IsPathRooted(path);
+
+    /// <summary>
     /// Resolution order per Chris's request ("...ask them to enter a name for the run on launch..."):
     /// 1. Whatever the user typed on the start form (trimmed, if non-blank).
-    /// 2. The .tcf filename without extension (e.g. "M04_5m_001.tcf" -&gt; "M04_5m_001") — usually far more
-    ///    useful than a generic label, since Chris's team already names their .tcf files meaningfully.
+    /// 2. The .tcf / .cmd / .bat filename without extension (e.g. "M04_5m_001.tcf" -&gt; "M04_5m_001") —
+    ///    usually far more useful than a generic label, since Chris's team already names their files meaningfully.
     /// 3. "Sim {N}" where N is a 1-based count of runs already queued on this machine (including this one),
     ///    only reached if both of the above are somehow unavailable.
     /// </summary>
@@ -178,6 +255,7 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
             State = TuflowRunStates.StopRequested,
             ProcessId = status.ProcessId,
             TcfPath = status.TcfPath,
+            CmdPath = status.CmdPath,
             StartedUtc = status.StartedUtc,
             StopRequestedUtc = now,
             LastCheckpointUtc = status.LastCheckpointUtc,
@@ -254,7 +332,10 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
                 // only fires for pre-existing runs from before RunName existed, or a manual DB edit.
                 RunName = status.RunName ?? status.RunId,
                 MachineId = machineId,
-                TcfPath = status.TcfPath ?? "(unknown)",
+                TcfPath = !string.IsNullOrWhiteSpace(status.TcfPath)
+                    ? status.TcfPath!
+                    : (status.CmdPath ?? "(unknown)"),
+                CmdPath = status.CmdPath,
                 RequestedUtc = status.StartedUtc ?? status.UpdatedUtc,
                 State = status.State,
                 UpdatedUtc = status.UpdatedUtc
@@ -265,6 +346,18 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
         record.RunName = status.RunName ?? record.RunName;
         record.State = status.State;
         record.StartedUtc ??= status.StartedUtc;
+        if (!string.IsNullOrWhiteSpace(status.CmdPath))
+            record.CmdPath = status.CmdPath;
+        // Prefer a real .tcf discovered by the launcher over a placeholder that was the .cmd path.
+        if (!string.IsNullOrWhiteSpace(status.TcfPath)
+            && status.TcfPath.EndsWith(".tcf", StringComparison.OrdinalIgnoreCase))
+        {
+            record.TcfPath = status.TcfPath;
+        }
+        else if (string.IsNullOrWhiteSpace(record.TcfPath) && !string.IsNullOrWhiteSpace(status.CmdPath))
+        {
+            record.TcfPath = status.CmdPath!;
+        }
         record.PercentComplete = status.PercentComplete ?? record.PercentComplete;
         record.SimulationTimeHours = status.SimulationTimeHours ?? record.SimulationTimeHours;
         record.SimulationEndTimeHours = status.SimulationEndTimeHours ?? record.SimulationEndTimeHours;
@@ -281,7 +374,11 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
             // clobber a later run's fields (RunId is unique per run, but defensive either way).
             record.EndedUtc = status.UpdatedUtc;
             record.ExitCode = status.ExitCode;
-            record.ErrorSummary = status.ErrorSummary;
+            // Early launch failures (CreateProcess, missing .tcf, etc.) put the reason in Message and
+            // leave ErrorSummary null — persist Message so Machine "Recent runs" Detail is not blank.
+            record.ErrorSummary = !string.IsNullOrWhiteSpace(status.ErrorSummary)
+                ? status.ErrorSummary
+                : status.Message;
         }
     }
 
@@ -301,7 +398,7 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
             .ToList();
 
         return rows.Select(r => new TuflowRunHistoryEntry(
-            r.RunId, r.RunName, r.TcfPath, r.RequestedUtc, r.RequestedBy, r.StartedUtc, r.EndedUtc, r.State,
+            r.RunId, r.RunName, r.TcfPath, r.CmdPath, r.RequestedUtc, r.RequestedBy, r.StartedUtc, r.EndedUtc, r.State,
             r.PercentComplete, r.SimulationTimeHours, r.SimulationEndTimeHours, r.WarningCount,
             r.MassErrorPercent, r.ExitCode, r.ErrorSummary, r.LastCheckpointFile)).ToList();
     }
@@ -320,6 +417,19 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
 
         var current = DeserializeStatus(machine.TuflowRunStatusJson);
         var history = await GetHistoryAsync(hostname, take: 20, ct);
+        // Backfill Detail for already-ended runs whose ErrorSummary was never stored (pre-fix rows
+        // still have Message on the live TuflowRunStatusJson). Avoids empty Detail until a re-queue.
+        if (current is not null
+            && string.Equals(current.State, TuflowRunStates.Failed, StringComparison.OrdinalIgnoreCase)
+            && (!string.IsNullOrWhiteSpace(current.ErrorSummary) || !string.IsNullOrWhiteSpace(current.Message)))
+        {
+            var detail = !string.IsNullOrWhiteSpace(current.ErrorSummary) ? current.ErrorSummary : current.Message;
+            history = history
+                .Select(h => h.RunId == current.RunId && string.IsNullOrWhiteSpace(h.ErrorSummary)
+                    ? h with { ErrorSummary = detail }
+                    : h)
+                .ToList();
+        }
         return new TuflowMachineView(true, current, history);
     }
 
@@ -508,6 +618,7 @@ public sealed record TuflowRunHistoryEntry(
     string RunId,
     string RunName,
     string TcfPath,
+    string? CmdPath,
     DateTimeOffset RequestedUtc,
     string? RequestedBy,
     DateTimeOffset? StartedUtc,
@@ -524,6 +635,20 @@ public sealed record TuflowRunHistoryEntry(
 {
     public bool IsActive => TuflowRunService.IsActiveRunState(State);
     public bool IsFailure => State == TuflowRunStates.Failed;
+
+    /// <summary>Filename shown in Recent runs — prefer .cmd/.bat when this was a CMD launch.</summary>
+    public string DisplayFileName
+    {
+        get
+        {
+            var path = !string.IsNullOrWhiteSpace(CmdPath) ? CmdPath! : TcfPath;
+            try { return Path.GetFileName(path); }
+            catch { return path; }
+        }
+    }
+
+    public string? DisplayFileFullPath =>
+        !string.IsNullOrWhiteSpace(CmdPath) ? CmdPath : TcfPath;
 }
 
 /// <summary>Everything the Machine page's TUFLOW panel needs, from TuflowRunService.GetMachineViewAsync.</summary>

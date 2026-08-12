@@ -3,6 +3,7 @@
 @using Heimdall.Api.Services
 @{
     ViewData["Title"] = "Historical Dashboard";
+    ViewData["HelpFragment"] = "historical-dashboard";
     var tab = Model.Tab;
     var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
     if (isPartial)
@@ -11,12 +12,9 @@
 
 @if (!isPartial)
 {
-    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
-        <div>
-            <h1 class="hd-title mb-1">Historical Dashboard</h1>
-            <p class="hd-sub mb-0">Flood TUFLOW fleet · live gauges · historical analytics</p>
-        </div>
-        <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="historical-dashboard">Help</a>
+    <div class="mb-2">
+        <h1 class="hd-title mb-1">Historical Dashboard</h1>
+        <p class="hd-sub mb-0">Flood TUFLOW fleet · live gauges · historical analytics</p>
     </div>
 
     <ul class="nav nav-pills gap-2 mb-3 flex-wrap">
@@ -236,7 +234,12 @@
             </div>
             <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Apply</button>
         </form>
-        <span class="text-secondary small ms-auto" data-live="meta">@Model.FilteredLiveRows.Count / @Model.Enrolled.Count enrolled · auto-refresh 30s</span>
+        <span class="hd-live-meta ms-auto align-self-center" data-live="meta"
+              data-filtered="@Model.FilteredLiveRows.Count" data-total="@Model.Enrolled.Count">
+            <span data-live-meta-count>@Model.FilteredLiveRows.Count / @Model.Enrolled.Count enrolled</span>
+            <span class="hd-live-meta-sep" aria-hidden="true">·</span>
+            <span data-live-meta-countdown>Next update in 30s</span>
+        </span>
     </div>
 
     <div data-flood-live-body>
@@ -720,6 +723,8 @@
         const oldLink = oldHost.querySelector('.hd-live-host');
         if (newLink && oldLink) {
           if (oldLink.textContent !== newLink.textContent) oldLink.textContent = newLink.textContent;
+          if (newLink.getAttribute('href') && oldLink.getAttribute('href') !== newLink.getAttribute('href'))
+            oldLink.setAttribute('href', newLink.getAttribute('href'));
           oldLink.classList.toggle('hd-live-host-stale', newLink.classList.contains('hd-live-host-stale'));
           if (newLink.hasAttribute('title')) oldLink.title = newLink.title;
         }
@@ -745,9 +750,12 @@
     const nextRoot = doc.querySelector('[data-flood-live-root]');
     if (!nextRoot) return false;
 
-    const metaOld = root.querySelector('[data-live="meta"]');
     const metaNew = nextRoot.querySelector('[data-live="meta"]');
-    if (metaOld && metaNew) metaOld.textContent = metaNew.textContent;
+    if (metaNew) {
+      const filtered = metaNew.getAttribute('data-filtered');
+      const total = metaNew.getAttribute('data-total');
+      if (filtered != null && total != null) updateMetaCount(filtered, total);
+    }
 
     const bodyOld = root.querySelector('[data-flood-live-body]');
     const bodyNew = nextRoot.querySelector('[data-flood-live-body]');
@@ -771,8 +779,32 @@
     return true;
   }
 
+  const REFRESH_MS = 30000;
   let timer = null;
+  let countdownTimer = null;
+  let nextRefreshAt = Date.now() + REFRESH_MS;
   let refreshing = false;
+
+  function updateMetaCount(filtered, total) {
+    const meta = root.querySelector('[data-live="meta"]');
+    if (!meta) return;
+    meta.setAttribute('data-filtered', String(filtered));
+    meta.setAttribute('data-total', String(total));
+    const el = meta.querySelector('[data-live-meta-count]');
+    if (el) el.textContent = filtered + ' / ' + total + ' enrolled';
+  }
+
+  function updateMetaCountdown() {
+    const el = root.querySelector('[data-live-meta-countdown]');
+    if (!el) return;
+    const remaining = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
+    el.textContent = 'Next update in ' + remaining + 's';
+  }
+
+  function resetCountdown() {
+    nextRefreshAt = Date.now() + REFRESH_MS;
+    updateMetaCountdown();
+  }
 
   async function softRefresh() {
     if (refreshing || document.hidden) return;
@@ -788,9 +820,11 @@
       });
       if (!res.ok) return;
       const html = await res.text();
-      patchFromHtml(html);
+      if (!patchFromHtml(html)) return;
       if (window.HeimdallOpsTabs && typeof window.HeimdallOpsTabs.invalidate === 'function')
         window.HeimdallOpsTabs.invalidate('live');
+      resetCountdown();
+      schedule();
     } catch (_) {
       /* keep current numbers */
     } finally {
@@ -800,7 +834,7 @@
 
   function schedule() {
     if (timer) clearInterval(timer);
-    timer = setInterval(softRefresh, 30000);
+    timer = setInterval(softRefresh, REFRESH_MS);
   }
 
   if (form) {
@@ -810,7 +844,10 @@
     });
   }
 
+  resetCountdown();
   schedule();
+  if (countdownTimer) clearInterval(countdownTimer);
+  countdownTimer = setInterval(updateMetaCountdown, 1000);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) softRefresh();
   });

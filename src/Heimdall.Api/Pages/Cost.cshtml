@@ -2,6 +2,7 @@
 @model CostModel
 @{
     ViewData["Title"] = "Cost";
+    ViewData["HelpFragment"] = "cost";
     var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
     if (isPartial)
         Layout = null;
@@ -10,23 +11,11 @@
 
 @if (!isPartial)
 {
-    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-        <h1 class="hd-title mb-1">Cost</h1>
-        <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="cost">Help</a>
-    </div>
+    <h1 class="hd-title mb-1">Cost</h1>
 }
-<p class="hd-sub">
-    Hardware purchase cost · user vs <code>ops.</code> support hours · inventory · reimage identity
-</p>
+<p class="hd-sub">Per-machine purchase, warranty, and 30-day hours. <a asp-page="/Finance">Finance</a> is the org rollup.</p>
 
-@if (TempData["Message"] is string msg)
-{
-    <div class="alert alert-success">@msg</div>
-}
-@if (TempData["Error"] is string err)
-{
-    <div class="alert alert-danger">@err</div>
-}
+<partial name="_Toasts" />
 
 <div class="hd-grid">
     <div class="hd-stat">
@@ -55,7 +44,7 @@
     </div>
 </div>
 
-<form method="get" class="hd-panel mb-3">
+<form method="get" asp-page="/Cost" class="hd-panel mb-3">
     <div class="row g-3 align-items-end">
         <div class="col-md-5 col-lg-4">
             <label class="form-label" for="cost-q">Filter</label>
@@ -71,8 +60,8 @@
                 <option value="Unknown" selected="@(Model.Warranty == "Unknown" ? "selected" : null)">Unknown</option>
             </select>
         </div>
-        <div class="col-md-2 col-lg-2">
-            <button type="submit" class="btn btn-hd w-100">Apply</button>
+        <div class="col-auto">
+            <button type="submit" class="hd-btn hd-btn-gold">Apply</button>
         </div>
     </div>
 </form>
@@ -94,16 +83,22 @@
             <a class="btn btn-ghost btn-sm" asp-page="/Cost" asp-route-q="@Model.Q" asp-route-warranty="@Model.Warranty">Cancel</a>
         </div>
 
+        <partial name="_CopyPurchaseFields" model="Model.PurchaseCopySources" />
+
         <div class="row g-3">
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <label class="form-label">Purchase cost (hardware)</label>
                 <input class="form-control" asp-for="PurchaseCost" type="number" step="0.01" min="0" placeholder="e.g. 4200" />
             </div>
-            <div class="col-md-2">
+            <div class="col-md-1">
                 <label class="form-label">Currency</label>
                 <input class="form-control" asp-for="PurchaseCurrency" maxlength="8" placeholder="AUD" />
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
+                <label class="form-label">Purchase date</label>
+                <input class="form-control" asp-for="PurchaseDate" type="date" />
+            </div>
+            <div class="col-md-2">
                 <label class="form-label">Support rate ($/hr)</label>
                 <input class="form-control" asp-for="SupportHourlyRate" type="number" step="0.01" min="0" placeholder="optional" />
                 <div class="form-text">Applied to <code>ops.</code> sessions · optional</div>
@@ -115,6 +110,9 @@
             <div class="col-md-2">
                 <label class="form-label">Warranty end</label>
                 <input class="form-control" asp-for="WarrantyEndDate" type="date" />
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+                <a class="btn btn-ghost btn-sm mb-2" asp-page="/Finance" asp-route-tab="hardware" asp-route-editMachine="@editing?.Id">Finance</a>
             </div>
         </div>
 
@@ -190,7 +188,7 @@
                     SMBIOS: <code>@(editing.SmbiosUuid ?? "—")</code>
                     @if (editing.LastReimagedUtc is DateTimeOffset ri)
                     {
-                        <div><span class="badge-pill badge-rdp">Reimaged @ri.ToLocalTime().ToString("d")</span></div>
+                        <div><span class="badge-pill badge-rdp">Reimaged @IndexModel.FormatLocalTimestamp(ri)</span></div>
                     }
                     @if (!string.IsNullOrWhiteSpace(editing.CityCode) || !string.IsNullOrWhiteSpace(editing.ChassisHint))
                     {
@@ -238,7 +236,7 @@
                 @foreach (var e in Model.IdentityHistory)
                 {
                     <tr>
-                        <td data-sort-value="@e.ObservedAtUtc.ToUnixTimeSeconds()">@e.ObservedAtUtc.ToLocalTime().ToString("g")</td>
+                        <td data-sort-value="@e.ObservedAtUtc.ToUnixTimeSeconds()">@IndexModel.FormatLocalTimestamp(e.ObservedAtUtc)</td>
                         <td><span class="badge-pill badge-rdp">@e.EventType</span></td>
                         <td><code class="small">@(e.OldMachineGuid ?? "—")</code></td>
                         <td><code class="small">@(e.NewMachineGuid ?? "—")</code></td>
@@ -282,14 +280,14 @@
             var supportHrs = r.SupportSeconds30d / 3600.0;
             <tr>
                 <td data-sort-value="@r.Hostname">
-                    <strong>@r.Hostname</strong>
+                    <a asp-page="/Machine" asp-route-hostname="@r.Hostname" asp-route-range="4w"><strong>@r.Hostname</strong></a>
                     @if (r.ManualOverride)
                     {
                         <span class="badge-pill badge-local ms-1" title="Manual override — agent will not change hardware">manual</span>
                     }
                     @if (r.LastReimagedUtc is DateTimeOffset re)
                     {
-                        <span class="badge-pill badge-rdp ms-1" title="MachineGuid changed">Reimaged @re.ToLocalTime().ToString("d")</span>
+                        <span class="badge-pill badge-rdp ms-1" title="MachineGuid changed">Reimaged @IndexModel.FormatLocalTimestamp(re)</span>
                     }
                     @if (!string.IsNullOrWhiteSpace(r.ChassisHint))
                     {
@@ -355,11 +353,11 @@
                 <td data-sort-value="@(r.WindowsFolderCreatedUtc?.ToUnixTimeSeconds() ?? -1)" class="small">
                     @if (r.OsInstallDateUtc is DateTimeOffset oi)
                     {
-                        <div title="WMI/registry InstallDate — may move on feature update">OS: @oi.ToLocalTime().ToString("d")</div>
+                        <div title="WMI/registry InstallDate — may move on feature update">OS: @IndexModel.FormatLocalTimestamp(oi)</div>
                     }
                     @if (r.WindowsFolderCreatedUtc is DateTimeOffset wf)
                     {
-                        <div title="%SystemRoot% creation time">Win: @wf.ToLocalTime().ToString("d")</div>
+                        <div title="%SystemRoot% creation time">Win: @IndexModel.FormatLocalTimestamp(wf)</div>
                     }
                     @if (r.OsInstallDateUtc is null && r.WindowsFolderCreatedUtc is null)
                     {
@@ -367,7 +365,7 @@
                     }
                 </td>
                 <td class="text-end text-nowrap">
-                    <a class="btn btn-ghost btn-sm"
+                    <a class="hd-btn hd-btn-silver hd-btn-sm"
                        asp-page="/Cost"
                        asp-route-edit="@r.Id"
                        asp-route-q="@Model.Q"

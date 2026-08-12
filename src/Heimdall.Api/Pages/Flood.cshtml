@@ -14,9 +14,10 @@
     var helpFragment = active switch
     {
         "live" or "historical" or "enroll" => "historical-dashboard",
-        "sims" => "tuflow-runs",
+        "sims" => "fleet-sims",
         _ => "historical-dashboard"
     };
+    ViewData["HelpFragment"] = helpFragment;
 }
 
 <div class="hd-fleet-header mb-3">
@@ -36,7 +37,7 @@
                    data-hd-ops-src="@FloodModel.PartialUrl(t.Key, ViewContext.HttpContext.Request)"
                    data-hd-flood-title="@t.Label"
                    data-hd-flood-help="@((t.Key) switch {
-                       "sims" => "tuflow-runs",
+                       "sims" => "fleet-sims",
                        _ => "historical-dashboard"
                    })"
                    role="tab"
@@ -45,7 +46,6 @@
         }
         </ul>
     </div>
-    <a class="btn btn-ghost btn-sm hd-fleet-help" asp-page="/Help" asp-fragment="@helpFragment" data-hd-flood-help-link>Help</a>
 </div>
 
 @if (TempData["Message"] is string msg)
@@ -67,7 +67,7 @@
     <script>
     (() => {
       const titleEl = document.querySelector('[data-hd-flood-title]');
-      const helpLink = document.querySelector('[data-hd-flood-help-link]');
+      const helpLink = document.querySelector('[data-hd-global-help]');
       document.querySelectorAll('[data-hd-ops-tab]').forEach((a) => {
         a.addEventListener('click', () => {
           const t = a.getAttribute('data-hd-flood-title');

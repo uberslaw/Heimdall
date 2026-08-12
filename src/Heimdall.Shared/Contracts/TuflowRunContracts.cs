@@ -19,19 +19,30 @@ public sealed class TuflowStartRequestDto
     /// <summary>
     /// Human-facing label for this run — the Fleet Sim Progress page's "which simulation" column.
     /// Resolved server-side in TuflowRunService.QueueStartAsync: what the person typed on the start
-    /// form, else the .tcf's filename (no extension), else "Sim {N}" (N = count of prior runs on that
-    /// machine + 1) as a last resort. Always non-null by the time this DTO is built.
+    /// form, else the .tcf's filename (no extension) or .cmd/.bat stem, else "Sim {N}" (N = count of
+    /// prior runs on that machine + 1) as a last resort. Always non-null by the time this DTO is built.
     /// </summary>
     public required string RunName { get; init; }
-    /// <summary>Full path to the TUFLOW executable (e.g. TUFLOW_iSP_w64.exe) on the modelling machine.</summary>
-    public required string ExePath { get; init; }
-    /// <summary>Full path to the .tcf control file to run.</summary>
-    public required string TcfPath { get; init; }
-    /// <summary>Optional working directory; defaults to the .tcf's folder when null.</summary>
+    /// <summary>
+    /// How the launcher should start this run. One of <see cref="TuflowLaunchModes"/>.
+    /// Defaults to ExeTcf for older queued payloads that omit the field.
+    /// </summary>
+    public string LaunchMode { get; init; } = TuflowLaunchModes.ExeTcf;
+    /// <summary>Full path to the TUFLOW executable (e.g. TUFLOW_iSP_w64.exe) on the modelling machine. Required for ExeTcf; unused for Cmd.</summary>
+    public string ExePath { get; init; } = "";
+    /// <summary>Full path to the .tcf control file to run. Required for ExeTcf; for Cmd may be filled later from script inspection.</summary>
+    public string TcfPath { get; init; } = "";
+    /// <summary>
+    /// Absolute/UNC path to a ready-made .cmd or .bat that already invokes TUFLOW.
+    /// Required when <see cref="LaunchMode"/> is <see cref="TuflowLaunchModes.Cmd"/>; the launcher
+    /// validates and then executes this script (does not reassemble a CreateProcess of TUFLOW.exe).
+    /// </summary>
+    public string? CmdPath { get; init; }
+    /// <summary>Optional working directory; defaults to the .tcf's (or .cmd's) folder when null.</summary>
     public string? WorkingDirectory { get; init; }
-    /// <summary>Scenario tokens, passed as numbered -s1/-s2/... switches (see TuflowLauncher/Program.cs).</summary>
+    /// <summary>Scenario tokens, passed as numbered -s1/-s2/... switches (see TuflowLauncher/Program.cs). ExeTcf only.</summary>
     public List<string> Scenarios { get; init; } = [];
-    /// <summary>Event tokens, passed as numbered -e1/-e2/... switches.</summary>
+    /// <summary>Event tokens, passed as numbered -e1/-e2/... switches. ExeTcf only.</summary>
     public List<string> Events { get; init; } = [];
     /// <summary>Optional results/trf folder hint — see RunSpec.ResultsFolder in TuflowLauncher for why.</summary>
     public string? ResultsFolder { get; init; }
@@ -44,6 +55,15 @@ public sealed class TuflowStartRequestDto
     /// editable so this never silently ends up blank.
     /// </summary>
     public string? RequestedBy { get; init; }
+}
+
+/// <summary>TuflowStartRequestDto.LaunchMode / RunSpec.LaunchMode values.</summary>
+public static class TuflowLaunchModes
+{
+    /// <summary>Heimdall builds CreateProcess(TUFLOW.exe … .tcf) from form fields.</summary>
+    public const string ExeTcf = "ExeTcf";
+    /// <summary>Heimdall validates then runs an existing .cmd/.bat via cmd.exe /c.</summary>
+    public const string Cmd = "Cmd";
 }
 
 /// <summary>
@@ -63,6 +83,8 @@ public sealed class TuflowRunStatusDto
     public required string State { get; init; } // one of TuflowRunStates.*
     public int? ProcessId { get; init; }
     public string? TcfPath { get; init; }
+    /// <summary>Present when this run was started from a ready-made .cmd/.bat (TuflowLaunchModes.Cmd).</summary>
+    public string? CmdPath { get; init; }
     public DateTimeOffset? StartedUtc { get; init; }
     public DateTimeOffset? StopRequestedUtc { get; init; }
     public DateTimeOffset? LastCheckpointUtc { get; init; }

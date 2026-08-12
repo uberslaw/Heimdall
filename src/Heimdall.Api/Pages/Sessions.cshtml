@@ -3,6 +3,7 @@
 @model SessionsModel
 @{
     ViewData["Title"] = "Sessions";
+    ViewData["HelpFragment"] = "sessions";
     var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
     if (isPartial)
         Layout = null;
@@ -14,14 +15,11 @@
 
 @if (!isPartial)
 {
-    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-        <h1 class="hd-title mb-1">Sessions</h1>
-        <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="sessions">Help</a>
-    </div>
+    <h1 class="hd-title mb-1">Sessions</h1>
 }
-<p class="hd-sub">Logon / usage sessions · who signed in · local vs RDP · active vs disconnected time</p>
+<p class="hd-sub">Who signed in · local vs RDP · active vs disconnected. Click a user for their page; select machines and Apply for the session log.</p>
 
-<form method="get" class="hd-panel mb-3">
+<form method="get" asp-page="/Sessions" class="hd-panel mb-3">
     <div class="row g-3 align-items-end">
         <div class="col-md-4 col-lg-3">
             <label class="form-label" for="util-range">Period</label>
@@ -68,8 +66,8 @@
                 <label class="form-check-label" for="only-disc-apps">Only sessions with app activity while disconnected</label>
             </div>
         </div>
-        <div class="col-md-3 col-lg-2">
-            <button type="submit" class="btn btn-hd w-100">Apply</button>
+        <div class="col-auto">
+            <button type="submit" class="hd-btn hd-btn-gold">Apply</button>
         </div>
     </div>
     @foreach (var h in Model.Hosts)
@@ -110,8 +108,7 @@ else
     <div class="hd-panel mb-3">
         <h2 class="hd-section-title">By machine</h2>
         <p class="text-secondary small">
-            Click a machine name to open its session log for this period.
-            Or select one or more machines and Apply.
+            Select one or more machines and Apply for the session log. Click a name for machine detail.
             @if (!snap.ShowSessionDetails)
             {
                 <span>Or <a href="@Url.Page("/Sessions", new { range = Model.Range, hideSystem = Model.HideSystem, onlyDisconnectedApps = Model.OnlyDisconnectedApps, hosts = snap.MachineSummaries.Select(m => m.Hostname).ToArray() })">view all @snap.MachineSummaries.Count machines</a>.</span>
@@ -165,24 +162,7 @@ else
                                 <input type="checkbox" class="host-checkbox" name="hosts" value="@m.Hostname" @(isChecked ? "checked" : null) />
                             </td>
                             <td>
-                                @{
-                                    var sessionLink = Model.UsesStatsDuration
-                                        ? Url.Page("/Sessions", new
-                                        {
-                                            statsDuration = Model.StatsDuration,
-                                            hosts = m.Hostname,
-                                            hideSystem = Model.HideSystem ? "true" : null,
-                                            onlyDisconnectedApps = Model.OnlyDisconnectedApps ? "true" : null
-                                        })
-                                        : Url.Page("/Sessions", new
-                                        {
-                                            range = Model.Range,
-                                            hosts = m.Hostname,
-                                            hideSystem = Model.HideSystem ? "true" : null,
-                                            onlyDisconnectedApps = Model.OnlyDisconnectedApps ? "true" : null
-                                        });
-                                }
-                                <a href="@sessionLink">@m.Hostname</a>
+                                <a asp-page="/Machine" asp-route-hostname="@m.Hostname" asp-route-range="@Model.Range">@m.Hostname</a>
                             </td>
                             <td>@m.SessionCount</td>
                             <td data-sort-value="@m.ActiveSeconds">@DurationDisplay.Render(m.ActiveSeconds)</td>
@@ -204,8 +184,8 @@ else
                     </tbody>
                 </table>
                 <div class="mt-3 d-flex gap-2 flex-wrap">
-                    <button type="submit" class="btn btn-hd">Show selected sessions</button>
-                    <button type="button" class="btn btn-outline-secondary" id="clear-hosts">Clear selection</button>
+                    <button type="submit" class="hd-btn hd-btn-gold">Show selected sessions</button>
+                    <button type="button" class="hd-btn hd-btn-silver" id="clear-hosts">Clear selection</button>
                 </div>
             </form>
         }
@@ -298,7 +278,7 @@ else
                 </div>
                 @if (Model.Hosts.Count == 1)
                 {
-                    <a class="hd-btn hd-btn-black hd-btn-sm" asp-page="/Machine" asp-route-hostname="@Model.Hosts[0]" asp-route-range="@Model.Range">Machine detail</a>
+                    <a class="hd-btn hd-btn-silver hd-btn-sm" asp-page="/Machine" asp-route-hostname="@Model.Hosts[0]" asp-route-range="@Model.Range">Machine detail</a>
                 }
             </div>
             @if (Model.SessionRows.Count == 0)
@@ -368,8 +348,8 @@ else
                                         break;
                                 }
                             </td>
-                            <td data-sort-value="@s.StartedAtUtc.ToUnixTimeSeconds()">@s.StartedAtUtc.ToLocalTime().ToString("g")</td>
-                            <td data-sort-value="@(s.EndedAtUtc?.ToUnixTimeSeconds() ?? 0)">@(s.EndedAtUtc?.ToLocalTime().ToString("g") ?? "—")</td>
+                            <td data-sort-value="@s.StartedAtUtc.ToUnixTimeSeconds()">@IndexModel.FormatLocalTimestamp(s.StartedAtUtc)</td>
+                            <td data-sort-value="@(s.EndedAtUtc?.ToUnixTimeSeconds() ?? 0)">@(s.EndedAtUtc is DateTimeOffset ended ? IndexModel.FormatLocalTimestamp(ended) : "—")</td>
                             <td data-sort-value="@durationSec">@DurationDisplay.Render(durationSec)</td>
                             <td data-sort-value="@s.ActiveSeconds">@DurationDisplay.Render(s.ActiveSeconds)</td>
                             <td data-sort-value="@s.DisconnectedSeconds">@DurationDisplay.Render(s.DisconnectedSeconds)</td>

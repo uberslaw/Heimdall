@@ -2,23 +2,18 @@
 @model UtilizationModel
 @{
     ViewData["Title"] = "Utilization criteria";
+    ViewData["HelpFragment"] = "utilization";
     var sum = Model.WeightSum;
 }
 
-<div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-    <h1 class="hd-title mb-1">Utilization criteria</h1>
-    <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="utilization">Help</a>
-</div>
+<h1 class="hd-title mb-1">Utilization criteria</h1>
 <p class="hd-sub">
     Global weights &amp; targets for Socratize POC verdict ·
-    <a asp-page="/Config">Config</a> ·
+    <a asp-page="/Config">Tracking config</a> ·
     <a asp-page="/Socratize">Socratize</a>
 </p>
 
-@if (TempData["Message"] is string msg)
-{
-    <div class="alert alert-success">@msg</div>
-}
+<partial name="_Toasts" />
 
 <div class="hd-panel mb-3">
     <p class="hd-meta-line mb-2">
@@ -120,6 +115,12 @@
         <h2 class="hd-section-title mb-0">App license cost / year</h2>
         <span class="text-secondary small">Leave blank or 0 to clear · used for $/hour value score</span>
     </div>
+    <p class="text-secondary small mb-3">
+        <strong>Source of truth:</strong> enter yearly license purchases under Admin →
+        <a asp-page="/Finance" asp-route-tab="software">Finance → Software</a>
+        (license + maintenance, Design/Simulation). Latest year per process syncs here for Socratize.
+        Edits on this page still work as a quick override of the synced $/year values.
+    </p>
 
     <table class="hd-table hd-sortable mb-3">
         <thead>

@@ -19,7 +19,7 @@
 // confirm Windows auth reliably populates User.Identity.Name here, you can make the field readonly.
 //
 // NOTE on RunName ("which simulation"): the start form has an optional "Run name" text field. Left blank,
-// TuflowRunService.ResolveRunNameAsync falls back to the .tcf filename, then "Sim {N}" — see that method.
+// TuflowRunService.ResolveRunNameAsync falls back to the .tcf / .cmd filename, then "Sim {N}" — see that method.
 
 using Heimdall.Api.Services;
 using Heimdall.Shared.Contracts;
@@ -51,8 +51,10 @@ public class TuflowRunsModel(TuflowRunService runs, FloodAccessGuard flood) : Pa
     public async Task<IActionResult> OnPostStartAsync(
         string hostname,
         string? runName,
-        string exePath,
-        string tcfPath,
+        string? launchMode,
+        string? exePath,
+        string? tcfPath,
+        string? cmdPath,
         string? workingDirectory,
         string? scenarios,
         string? events,
@@ -63,9 +65,26 @@ public class TuflowRunsModel(TuflowRunService runs, FloodAccessGuard flood) : Pa
         if (flood.ForbidIfDenied(HttpContext) is { } denied)
             return denied;
 
-        if (string.IsNullOrWhiteSpace(hostname) || string.IsNullOrWhiteSpace(exePath) || string.IsNullOrWhiteSpace(tcfPath))
+        if (string.IsNullOrWhiteSpace(hostname))
         {
-            TempData["Error"] = "Machine, TUFLOW .exe path and .tcf path are all required.";
+            TempData["Error"] = "Machine is required.";
+            return RedirectToPage();
+        }
+
+        var mode = string.Equals(launchMode, TuflowLaunchModes.Cmd, StringComparison.OrdinalIgnoreCase)
+            ? TuflowLaunchModes.Cmd
+            : TuflowLaunchModes.ExeTcf;
+
+        if (mode == TuflowLaunchModes.ExeTcf
+            && (string.IsNullOrWhiteSpace(exePath) || string.IsNullOrWhiteSpace(tcfPath)))
+        {
+            TempData["Error"] = "Machine, TUFLOW .exe path and .tcf path are all required for exe+.tcf launches.";
+            return RedirectToPage();
+        }
+
+        if (mode == TuflowLaunchModes.Cmd && string.IsNullOrWhiteSpace(cmdPath))
+        {
+            TempData["Error"] = "Machine and CMD/BAT path are required for \"Use existing CMD\" launches.";
             return RedirectToPage();
         }
 
@@ -76,13 +95,15 @@ public class TuflowRunsModel(TuflowRunService runs, FloodAccessGuard flood) : Pa
         var (ok, error, runId) = await runs.QueueStartAsync(
             hostname.Trim(),
             string.IsNullOrWhiteSpace(runName) ? null : runName.Trim(),
-            exePath.Trim(),
-            tcfPath.Trim(),
+            string.IsNullOrWhiteSpace(exePath) ? null : exePath.Trim(),
+            string.IsNullOrWhiteSpace(tcfPath) ? null : tcfPath.Trim(),
             workingDirectory,
             SplitTokens(scenarios),
             SplitTokens(events),
             resultsFolder,
             requestedBy: effectiveRequestedBy,
+            launchMode: mode,
+            cmdPath: string.IsNullOrWhiteSpace(cmdPath) ? null : cmdPath.Trim(),
             ct);
 
         TempData[ok ? "Message" : "Error"] = ok
@@ -141,6 +162,21 @@ public class TuflowRunsModel(TuflowRunService runs, FloodAccessGuard flood) : Pa
         FleetDashboardService.FleetStatus.NotRunning => "badge-expired",
         _ => "badge-ended"
     };
+
+    /// <summary>Prefer CMD/BAT filename when present; otherwise the .tcf path.</summary>
+    public static string? StatusPrimaryPath(TuflowRunStatusDto? status)
+    {
+        if (status is null) return null;
+        return !string.IsNullOrWhiteSpace(status.CmdPath) ? status.CmdPath : status.TcfPath;
+    }
+
+    public static string? StatusPrimaryFileName(TuflowRunStatusDto? status)
+    {
+        var path = StatusPrimaryPath(status);
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        try { return Path.GetFileName(path); }
+        catch { return path; }
+    }
 
     private static List<string> SplitTokens(string? raw) =>
         string.IsNullOrWhiteSpace(raw)

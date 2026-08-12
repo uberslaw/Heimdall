@@ -269,3 +269,64 @@ Heimdall should treat the **batch path** (and optional stop script) as the allow
 - Expanded under **Machine detail** sections above (volume free space + on-demand TreeSize-style scan). Keep this stub for backlog scanning:
 - On-demand agent scan of free disk space and large folder trees (MFT-style or throttled walk) — not always-on sampling
 - Surfaces in Fleet / machine detail when requested; avoid continuous filesystem walking on every heartbeat
+
+---
+
+## Load Lab (resource stress / tracking validation)
+
+Parked **2026-08-12**. Goal: run controlled load on a host so we can confirm Heimdall agent sampling + dashboard tracking (CPU / GPU / disk / network) behave as expected — **real load**, never fake metrics in the agent.
+
+### Why
+
+- Validate Fleet Live, machine resource glance, snapshots, and top-process attribution under known intensity bands
+- Catch regressions (e.g. GPU >100% summing, disk “Low/High” vs MB/s, missing NIC counters) with repeatable runs
+
+### Preferred approach
+
+Thin **orchestrator** (`tools/LoadLab` PowerShell or small .NET console) that shells out to mature tools rather than inventing four burners:
+
+| Resource | Intensity model | Candidate tools |
+|----------|-----------------|-----------------|
+| CPU | Duration + ~% band (duty cycle / thread count) | Small managed burner and/or CPU-Z / similar |
+| GPU | Duration + mid/high band | FurMark, OCCT, GpuTest (when present) |
+| Disk | Duration + MB/s (read/write) | `diskspd`, CrystalDiskMark, `fio` |
+| Network | Duration + Mbps (needs peer) | `iperf3` |
+
+Print expected Heimdall signals (process name in Top apps, metric band, duration). Optional recognizable process name (`HeimdallLoadLab`) for easy history spotting.
+
+### Constraints / out of scope
+
+- Exact “hold at 47%” for GPU/disk/net is unreliable — use **idle / mid / high** bands + duration
+- No production CAD burns during work hours without operator buy-in
+- Do **not** inject synthetic samples into ingest; trust real Windows counters
+- Network validation needs a second endpoint (or document loopback limitations)
+
+### Scope phases (when picked up)
+
+1. **CPU-only lab** — managed burner + duration/% band + checklist of UI/API places to verify
+2. **Disk + network** — wrap `diskspd` / `iperf3` when installed; skip cleanly if missing
+3. **GPU** — optional external burner detection; document expected >100% GPU behaviour
+4. **Docs** — short runbook under Help or `docs/` for DT validation passes
+
+---
+
+## Foreground / interaction-aware app time
+
+Parked **2026-08-12**. User page **Apps → Time open** today counts tracked `ProcessRun` duration while the user's session is active — any matching process the agent sees running, not necessarily the foreground window.
+
+### Current data model
+
+- Agent `ProcessCollector` enumerates running processes on each heartbeat (~1 min); tracks `StartedAtUtc`, `LastSeenAtUtc`, `EndedAtUtc`, session user via PID → WTS lookup
+- No foreground window (`GetForegroundWindow`), input idle, or focus-change events are collected
+- API stores flat `ProcessRun` rows; stats use union duration in the query window
+
+### What would be needed
+
+- Agent: sample foreground HWND → process name/PID on a shorter interval (or on focus change); optional input-idle seconds from WTS (`WTSIdle` exists in `SessionCollector` but is not wired to app metrics)
+- DTO/DB: e.g. `ForegroundSeconds` vs `BackgroundSeconds` per run, or separate focus-segment table
+- UI: split **Time open** vs **Time in focus** on User / Application / Machine app tables
+
+### Out of scope for now
+
+- Heuristic-only classification (e.g. hide `*.licensing.*`) without real focus data — misleading for Revit vs licensing service
+- Always-on global input hooks — prefer WTS + periodic foreground poll aligned with existing heartbeat cadence

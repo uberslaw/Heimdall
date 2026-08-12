@@ -2,6 +2,7 @@
 @model TeamsModel
 @{
     ViewData["Title"] = "Teams";
+    ViewData["HelpFragment"] = "teams";
 }
 
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
@@ -9,7 +10,6 @@
     <div class="d-flex flex-wrap gap-2 align-items-center">
         <a class="hd-btn hd-btn-silver" asp-page="/Teams/ImportCsv">Import CSV</a>
         <a class="hd-btn hd-btn-gold" asp-page="/Teams/EditTeam">Add team</a>
-        <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="teams">Help</a>
     </div>
 </div>
 

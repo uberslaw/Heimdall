@@ -5,7 +5,7 @@
 }
 
 <h1 class="hd-title">Help</h1>
-<p class="hd-sub mb-4">Quick, page-by-page guide to Heimdall. Every page has a <strong>Help</strong> link that jumps straight to its section here.</p>
+<p class="hd-sub mb-4">Quick, page-by-page guide to Heimdall. Every page has a gunmetal <strong>Help</strong> button in the top-right of the header that jumps straight to its section here. Repo docs: <code>HANDOVER.md</code>, <code>INSTALL.md</code>, <code>docs/CLIENT.md</code> (agent architecture).</p>
 
 <nav class="hd-panel mb-4" aria-label="Help sections">
     <div class="d-flex flex-wrap gap-2">
@@ -27,9 +27,14 @@
         <a class="btn btn-ghost btn-sm" href="#tracking-config">Tracking config</a>
         <a class="btn btn-ghost btn-sm" href="#teams">Teams</a>
         <a class="btn btn-ghost btn-sm" href="#utilization">Utilization criteria</a>
+        <a class="btn btn-ghost btn-sm" href="#finance">Finance</a>
         <a class="btn btn-ghost btn-sm" href="#cost">Cost</a>
         <a class="btn btn-ghost btn-sm" href="#stats">Stats</a>
         <a class="btn btn-ghost btn-sm" href="#client-version">Client Version</a>
+        <a class="btn btn-ghost btn-sm" href="#client-agent">Client / agent</a>
+        <a class="btn btn-ghost btn-sm" href="#machine-detail">Computer detail</a>
+        <a class="btn btn-ghost btn-sm" href="#user-detail">User detail</a>
+        <a class="btn btn-ghost btn-sm" href="#fleet-sims">Fleet Sims</a>
         <a class="btn btn-ghost btn-sm" href="#admin-preferences">Theme &amp; database mode</a>
     </div>
 </nav>
@@ -141,9 +146,10 @@
 
 <section id="sessions" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Sessions</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> logon / usage sessions — who signed in, local vs RDP, start/end, active vs disconnected time.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> logon / usage sessions — who signed in, local vs RDP, start/end, active vs disconnected time. Under <a asp-page="/Fleet" asp-route-tab="sessions">Fleet → Sessions</a>.</p>
     <ol class="small mb-0">
-        <li>Under nav <strong>Machines → Sessions</strong>. Pick a period, then click a machine name (or multi-select) to open the session log.</li>
+        <li>Pick a <strong>Period</strong> (Today / 24h / 5d / 7d / 30d / All). Location filter (Country → City) narrows the machine list when set.</li>
+        <li>Click a machine name or multi-select to open the session log. Duration cells are clickable where drill-down is available.</li>
         <li>Each row shows user, Local / Inbound RDP, started, ended, total duration, active time, and disconnected time.</li>
         <li>Open-count buttons show who is on a machine right now; <em>Machine detail</em> links to the apps/metrics page for that host.</li>
     </ol>
@@ -163,40 +169,77 @@
     <h2 class="h5">TUFLOW Runs</h2>
     <p class="text-secondary small mb-2">
         <strong>Purpose:</strong> queue a TUFLOW start or graceful stop on Flood-enrolled machines.
-        Nav under <strong>Flood</strong> (visible only to <code>Heimdall:StaffAccess:AdminEmails</code> ∪ <code>Heimdall:FloodTeamEmails</code>).
+        Nav under <strong>Flood → TUFLOW Runs</strong> (visible only to <code>Heimdall:StaffAccess:AdminEmails</code> ∪ <code>Heimdall:FloodTeamEmails</code>).
     </p>
     <ol class="small">
-        <li>Enroll the modelling host on <strong>Flood → Enrollment</strong> first (Flood allowlist — not required for util sampling).</li>
-        <li>On <strong>TUFLOW Runs</strong>, enter exe path, <code>.tcf</code>, optional scenarios/events/run name, then Start. The agent picks up within ~20s.</li>
-        <li><strong>Stop gracefully</strong> asks the launcher to send a process-group break so TUFLOW can finish the current checkpoint (resume-friendly if your <code>.tcf</code> writes restart files — see <code>tuflow-automation/tcf/</code>).</li>
+        <li>Enroll the modelling host on <strong>Flood → Enrollment</strong> first (Flood allowlist — separate from util sampling, which is always-on for all clients).</li>
+        <li>On <strong>TUFLOW Runs</strong>, choose <strong>TUFLOW exe + .tcf</strong> or <strong>Use existing CMD</strong>. For CMD mode, point at an absolute/UNC <code>.cmd</code>/<code>.bat</code> the agent service can read; Heimdall validates it looks like a TUFLOW launch, then runs it with <code>cmd.exe /c</code>. Optional scenarios/events/run name apply to exe+.tcf mode. The agent picks up within ~20s.</li>
+        <li><strong>Stop gracefully</strong> asks the launcher to send a process-group break so TUFLOW can finish the current checkpoint (resume-friendly if your <code>.tcf</code> writes restart files — see <code>tuflow-automation/tcf/</code>). Prefer scripts that call TUFLOW synchronously (not <code>start …</code>) so Heimdall can track/stop the process group.</li>
         <li>Progress comes from TUFLOW’s own <code>.tsf</code>; crashes from <code>.tlf</code> ERROR lines. Machine detail also shows a TUFLOW panel + recent run history for flood-gated users.</li>
         <li>Agent needs <code>%ProgramFiles%\Heimdall\Agent\TuflowLauncher\TuflowLauncher.exe</code> (included when you pack/install the client or run <code>Install-Agent</code>).</li>
+        <li>For active-run progress across the fleet, use <a href="#fleet-sims">Fleet Sims</a> (<a asp-page="/Flood" asp-route-tab="sims">Flood → Fleet Sims</a>).</li>
     </ol>
     <p class="text-secondary small mb-0">
-        POC uses free-form paths (not allowlisted batches yet). Modelling+DT RBAC is a follow-up.
+        Paths are free-form (not allowlisted job definitions yet). Modelling+DT RBAC is a follow-up.
     </p>
 </section>
 
+<section id="fleet-sims" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Fleet Sims (Flood → Fleet Sims)</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> live progress table for TUFLOW runs currently active on Flood-enrolled machines — complements <a href="#tuflow-runs">TUFLOW Runs</a> (start/stop queue).</p>
+    <ol class="small mb-0">
+        <li>Open <a asp-page="/Flood" asp-route-tab="sims">Flood → Fleet Sims</a>. Empty when no run is active.</li>
+        <li>Columns include run name, machine, started-by, state, progress %, elapsed, estimated remaining, and resource averages since run start.</li>
+        <li><strong>TUFLOW process averages</strong> (CPU/GPU/disk R/W) come from 30s fleet snapshots scoped to the TUFLOW process. <strong>Whole-machine</strong> averages include network (no per-process network counter).</li>
+        <li>Start new runs from <a asp-page="/TuflowRuns">TUFLOW Runs</a>; this tab is read-only monitoring.</li>
+    </ol>
+</section>
+
 <section id="historical-dashboard" class="hd-panel mb-4 hd-help-section">
-    <h2 class="h5">Flood hub (Historical + Sims)</h2>
+    <h2 class="h5">Flood hub (Live / Historical / Enrollment / Sims)</h2>
     <p class="text-secondary small mb-2">
-        <strong>Purpose:</strong> Flood-gated workspace — Live / Historical analytics for the Flood allowlist, Fleet Sims progress, and Enrollment.
+        <strong>Purpose:</strong> Flood-gated workspace for TUFLOW fleet ops — Live and Historical analytics scoped to the Flood allowlist, Enrollment, and Fleet Sims.
         Open <a asp-page="/Flood">Flood</a> (visible only to <code>Heimdall:StaffAccess:AdminEmails</code> ∪ <code>Heimdall:FloodTeamEmails</code>).
         Legacy <code>/HistoricalDashboard</code> and <code>/FleetSimProgress</code> URLs redirect into this hub.
+        Estate-wide live util (all clients) lives under <a asp-page="/Fleet" asp-route-tab="live">Fleet → Live</a>.
     </p>
     <ol class="small">
-        <li><strong>Enrollment</strong> — Flood allowlist for TUFLOW Runs / sims. Search by hostname or last-known IP. Util sampling does <em>not</em> require enrollment (always-on for all clients).</li>
-        <li><strong>Live</strong> — current CPU/GPU/RAM/disk/network from the latest snapshot on enrolled Flood machines, TUFLOW status (Active / Idle / Not Running), today’s runtime/active/GPU hours. Auto-refreshes every 30s. Estate-wide live util lives under <a asp-page="/Fleet" asp-route-tab="live">Fleet → Live</a>.</li>
-        <li><strong>Active vs Idle</strong> — while TUFLOW is running: Active if <em>TUFLOW process</em> GPU &gt; 5%, CPU &gt; 10%, or disk read/write &gt; 5 MB/s; otherwise Idle. Not Running when TUFLOW is not detected. Live gauges still show system-wide util.</li>
+        <li><strong>Enrollment</strong> — Flood allowlist for TUFLOW Runs / sims / Flood-scoped analytics. Search by hostname or last-known IP. <em>Util sampling does not require enrollment</em> — every heartbeating client gets 30s fleet snapshots.</li>
+        <li><strong>Live</strong> — latest snapshot on enrolled Flood machines: gauges, TUFLOW status (Active / Idle / Not Running), today’s runtime/active/GPU hours. Auto-refreshes every 30s.</li>
+        <li><strong>Active vs Idle</strong> — while TUFLOW is running: Active if <em>TUFLOW process</em> GPU &gt; 5%, CPU &gt; 10%, or disk read/write &gt; 5 MB/s; otherwise Idle. Not Running when TUFLOW is not detected.</li>
         <li><strong>Historical</strong> — fleet summary cards for enrolled machines, Totals (today / week / month / 30d / 3m / 6m / year) or Averages (daily / 7-day / monthly / all-time), plus rankings (GPU, CPU, RAM, disk I/O, most active).</li>
-        <li><strong>Fleet Sims</strong> — active TUFLOW runs across Flood-enrolled machines (progress, elapsed, process/machine averages).</li>
-        <li><strong>Machine detail</strong> — click a hostname for period summary cards and Chart.js time series (24h / 7d / 30d / 90d / 365d).</li>
+        <li><strong>Fleet Sims</strong> — see <a href="#fleet-sims">Fleet Sims</a>.</li>
+        <li><strong>Machine detail</strong> — click a hostname (or open <code>/HistoricalDashboardMachine/{id}</code>) for period summary cards and Chart.js time series (24h / 7d / 30d / 90d / 365d).</li>
     </ol>
     <p class="text-secondary small mb-0">
         <strong>Retention:</strong> raw 30s samples are purged after ~90 days by default (<code>Heimdall:FleetSnapshotRetention</code>).
         Rough disk estimate: about <em>N × 2,880</em> rows per day (N = sampling machines), so 10 hosts ≈ 28.8k rows/day.
         Derived metrics use Σ (util%/100)×Δt for GPU/CPU hours, Σ (RAM GB)×Δt for GB-hours, and Σ (MB/s × Δt)/1024 for transfer GB.
     </p>
+</section>
+
+<section id="machine-detail" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Computer detail</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> per-host drill-down — utilisation, apps, app lists, TUFLOW panel, disk scan, and tracking controls. Open from a hostname on <a asp-page="/Fleet" asp-route-tab="machines">Fleet → Computers</a> or Sessions.</p>
+    <ol class="small mb-0">
+        <li><strong>Period</strong> — matches the Computers list range (Today / 24h / 5d / 7d / 30d / All). Stats duration toggle controls how app/process time is shown.</li>
+        <li><strong>Utilisation cards</strong> — Active / Passive / Free %; session and hardware breakdowns link from Fleet metric cells.</li>
+        <li><strong>Apps grid</strong> — tracked software on this machine; Show Usage Data / Tracking Time Range filters.</li>
+        <li><strong>App lists</strong> — apply/remove/customize lists for this host; preferred path for “track TUFLOW here” (not App Lists global apply-to-scope).</li>
+        <li><strong>TUFLOW</strong> — recent runs and status when Flood-gated; requires Flood enrollment + updated agent.</li>
+        <li><strong>Disk usage scan</strong> — queue a top-folders scan from the machine page; agent reports progress within ~20s poll cadence.</li>
+        <li>Links to <a asp-page="/Socratize">Socratize</a>, Stats, and Analyze apps on App Lists.</li>
+    </ol>
+</section>
+
+<section id="user-detail" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">User detail</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> per-person usage — sessions, machines used, hour-of-day / day-of-week patterns. Open by clicking a username on Fleet → Computers or Live.</p>
+    <ol class="small mb-0">
+        <li>Period matches the Fleet list you came from.</li>
+        <li>Summary cards show active time, machines touched, and dominant apps where tracked.</li>
+        <li>Charts highlight when the person tends to be active (hour-of-day, day-of-week).</li>
+    </ol>
 </section>
 
 <section id="staff-access" class="hd-panel mb-4 hd-help-section">
@@ -271,6 +314,7 @@
         <li>Weights (users, daily utilisation, busy metrics, app value) must add to 100% — the page shows a running total.</li>
         <li>Ideal targets (min users, ideal daily %, working hours/day) define what "good" looks like before scoring kicks in.</li>
         <li>High/Adequate/Mixed thresholds decide which verdict bucket a machine lands in.</li>
+        <li>License $/year for Socratize is maintained under <a asp-page="/Finance" asp-route-tab="software">Admin → Finance → Software</a> (latest purchase year syncs here).</li>
     </ol>
 </section>
 
@@ -278,8 +322,9 @@
     <h2 class="h5">Cost</h2>
     <p class="text-secondary small mb-2"><strong>Purpose:</strong> hardware purchase cost, warranty, support hours, and inventory/reimage identity — under <a asp-page="/Fleet" asp-route-tab="cost">Fleet → Cost</a>.</p>
     <ol class="small mb-0">
-        <li>Edit a row to record purchase cost/currency, warranty dates, and hardware specs (or let the agent auto-fill what it can detect).</li>
+        <li>Edit a row to record purchase cost/currency, purchase date, warranty dates, and hardware specs (or let the agent auto-fill what it can detect).</li>
         <li>Support hourly rate feeds into the <a asp-page="/Socratize" asp-fragment="socratize">Socratize</a> brief's cost-per-hour comparison.</li>
+        <li>Model-level catalog and $/hour metrics live under <a asp-page="/Finance">Admin → Finance</a> (Fleet → Cost stays the per-machine editor).</li>
         <li>Reimage identity fields help distinguish a genuinely new machine from the same box after a reimage.</li>
     </ol>
 </section>
@@ -295,12 +340,40 @@
 
 <section id="client-version" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Client Version</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> under <strong>Machines</strong> — agent build vs. published version, online / in use / <strong>Active User</strong> (green = Active, red = Disconnected), and silent <strong>Deploy Client</strong> when the pack on this API host matches source.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> under <strong>Fleet → Client version</strong> — agent build vs. published version, online / in use / <strong>Active User</strong> (green = Active, red = Disconnected), pack readiness, and silent <strong>Deploy Client</strong>.</p>
     <ol class="small mb-0">
-        <li>On load the page checks source vs pack fingerprints; <strong>Deploy Client</strong> stays locked until the pack is Ready. <strong>Pack client</strong> always rebuilds and bumps version (N+1), even when already Ready (requires <code>Heimdall:RepoRoot</code> on D8R).</li>
+        <li>On load the page checks source vs pack fingerprints; <strong>Deploy Client</strong> stays locked until the pack is Ready. <strong>Pack client</strong> always rebuilds and bumps version (N+1), even when already Ready (requires <code>Heimdall:RepoRoot</code> on the API host).</li>
         <li>Deploy queues a silent agent self-update (download + service restart only). Updates defer while any interactive session is Active — no logoff or reboot. Agents below version <code>3</code> do not support <code>UpdateClient</code> — Deploy marks them Failed with bootstrap guidance.</li>
-        <li><strong>Bootstrap once:</strong> first upgrade from pre-3 / legacy clients needs Launch Control push or <code>Install.lnk</code> from the pack. After that, silent Deploy works for subsequent versions.</li>
+        <li><strong>Bootstrap once:</strong> first upgrade from pre-3 / legacy clients needs Heimdall Setup push or <code>Install.lnk</code> from the pack. After that, silent Deploy works for subsequent versions.</li>
         <li>Legacy SemVer builds count as version <code>1</code>; current packs use simple integers (baseline <code>3</code> = first UpdateClient-capable). Old <code>/Clients</code> URLs redirect here.</li>
+        <li>Full agent architecture: see <a href="#client-agent">Client / agent</a> or repo doc <code>docs/CLIENT.md</code>.</li>
+    </ol>
+</section>
+
+<section id="client-agent" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Client / agent (how it works)</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> background on the Windows service installed on each workstation — not a dashboard page. Install procedures: <code>INSTALL.md</code> and <code>docs/CLIENT.md</code> in the repo.</p>
+    <ol class="small">
+        <li><strong>Service</strong> — <code>HeimdallAgent</code> under <code>%ProgramFiles%\Heimdall\Agent\</code>; logs in <code>%ProgramData%\Heimdall\logs\</code>; offline ingest queue <code>queue.db</code>.</li>
+        <li><strong>Ingest</strong> — every ~60s (configurable): sessions, allowlisted process runs, heartbeat, hardware. Auth: header <code>X-Heimdall-Key</code>.</li>
+        <li><strong>Config poll</strong> — every ~5 min: merged App lists + Tracking Config + pending commands (Restart RDS, inventory, TUFLOW start, disk scan, UpdateClient).</li>
+        <li><strong>Fleet snapshots</strong> — every <strong>30s</strong> for every known machine: CPU/GPU/RAM/disk/network, TUFLOW Y/N, Active/Idle, top processes. Powers Fleet → Live, Computers util columns, and Flood analytics.</li>
+        <li><strong>Staff live sampling</strong> — separate 10s loop, only while a Staff/drilldown viewer is active (not the same as fleet snapshots).</li>
+        <li><strong>Portable install</strong> — pack once on a build PC (<code>dist\Heimdall-Client\</code>), run <code>Install.lnk</code> on each target (self-contained .NET — no SDK on clients).</li>
+        <li><strong>TUFLOW</strong> — Flood-enrolled hosts only; agent includes <code>TuflowLauncher.exe</code>; polls queued starts every ~20s.</li>
+    </ol>
+    <p class="text-secondary small mb-0">
+        Troubleshooting: API key mismatch → 401; unreachable API → queue grows; no util data → wait for heartbeat + agent v3+. Run <code>scripts\Collect-Diagnostics.cmd</code> for support bundles.
+    </p>
+</section>
+
+<section id="finance" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Finance</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> Admin → <strong>Finance</strong> — hardware model catalog, software license purchases by year, and cost per hour of use for hardware and licenses.</p>
+    <ol class="small mb-0">
+        <li><strong>Hardware</strong> — groups machines by brand/model/CPU/GPU/RAM/disk fingerprint; filter by Team (Flood, Energy, Acoustics, …). Edit purchase date, cost, warranty, and specs per host.</li>
+        <li><strong>Software</strong> — enter Maker, software name, Discovery process match, license + maintenance cost, year, Design vs Simulation. Latest year per process syncs into Socratize / Utilization license $/year.</li>
+        <li><strong>Metrics</strong> — hardware $/user Active hour; Design $/h from ProcessRun time overlapping Active sessions; Simulation $/h from summed run durations (concurrent ≈ multi-seat). Intensity &lt;50% / ≥50% is a separate fit-for-purpose signal.</li>
     </ol>
 </section>
 

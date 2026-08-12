@@ -128,7 +128,7 @@ public class MachineModel(
         var to = now;
         DateTimeOffset from = k switch
         {
-            "today" => new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero),
+            "today" => IndexModel.StartOfLocalDay(now),
             "24h" => now.AddHours(-24),
             "week" => StartOfUtcWeek(now),
             "7d" => now.AddDays(-7),
@@ -512,8 +512,7 @@ public class MachineModel(
 
         var host = Hostname.Trim();
         var now = DateTimeOffset.UtcNow;
-        var fromUtc = now.AddDays(-days);
-        var toUtc = now;
+        var (fromUtc, toUtc) = IndexModel.ResolveRangeWindow(Range, now);
 
         // Always load full app stats for the period; table checkboxes filter client-side.
         Detail = await stats.QueryMachineDetailAsync(host, fromUtc, toUtc, null, ct);
@@ -605,6 +604,53 @@ public class MachineModel(
             i++;
         } while (v >= 1024 && i < units.Length - 1);
         return $"{v:0.##} {units[i]}";
+    }
+
+    /// <summary>Plain-text export of a disk usage scan (full paths; both top folders and large files).</summary>
+    public static string FormatDiskUsageExportText(
+        string hostname,
+        DiskUsageScanResultDto scan,
+        DateTimeOffset? scanUtc)
+    {
+        var when = FormatLocalTimestamp(scanUtc ?? scan.CompletedUtc);
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"Disk usage scan — {hostname}");
+        sb.AppendLine($"Last scan: {when}");
+        sb.AppendLine($"Root: {scan.RootPath}");
+        sb.AppendLine(
+            $"Elapsed: {scan.ElapsedSeconds.ToString("0.#")}s · Files seen: {scan.FilesSeen.ToString("N0")} · Bytes seen: {FormatBytes(scan.BytesScanned)}");
+        if (scan.Truncated)
+            sb.AppendLine("Note: truncated (time budget)");
+        if (!string.IsNullOrWhiteSpace(scan.Error))
+            sb.AppendLine($"Error: {scan.Error}");
+        sb.AppendLine();
+        sb.AppendLine("=== Top folders ===");
+        if (scan.TopFolders.Count == 0)
+            sb.AppendLine("(none)");
+        else
+        {
+            foreach (var f in scan.TopFolders)
+                sb.AppendLine($"{FormatBytes(f.SizeBytes)}  {f.Path}");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("=== Large files (≥ threshold) ===");
+        if (scan.LargeFiles.Count == 0)
+            sb.AppendLine("(none)");
+        else
+        {
+            foreach (var f in scan.LargeFiles)
+                sb.AppendLine($"{FormatBytes(f.SizeBytes)}  {f.Path}");
+        }
+
+        return sb.ToString().TrimEnd() + "\r\n";
+    }
+
+    public static string FormatDiskUsageExportFileName(string hostname, DateTimeOffset whenUtc)
+    {
+        var stamp = whenUtc.ToLocalTime().ToString("yyyyMMdd-HHmmss");
+        var safeHost = string.Join("_", (hostname ?? "machine").Split(Path.GetInvalidFileNameChars()));
+        return $"heimdall-disk-usage-{safeHost}-{stamp}.txt";
     }
 
     public static string FormatGlancePct(double? v) => v is double n ? $"{n:0.#}%" : "—";

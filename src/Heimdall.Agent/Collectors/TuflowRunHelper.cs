@@ -72,9 +72,14 @@ internal static class TuflowRunHelper
             var runDir = Path.Combine(StateDir, request.RunId);
             Directory.CreateDirectory(runDir);
 
+            var isCmdMode = string.Equals(request.LaunchMode, TuflowLaunchModes.Cmd, StringComparison.OrdinalIgnoreCase)
+                || !string.IsNullOrWhiteSpace(request.CmdPath);
+
             var workingDirectory = !string.IsNullOrWhiteSpace(request.WorkingDirectory)
                 ? request.WorkingDirectory
-                : Path.GetDirectoryName(request.TcfPath) ?? runDir;
+                : isCmdMode
+                    ? Path.GetDirectoryName(request.CmdPath) ?? runDir
+                    : Path.GetDirectoryName(request.TcfPath) ?? runDir;
 
             // Field names here are camelCase to match TuflowLauncher's LauncherJsonContext
             // (JsonKnownNamingPolicy.CamelCase) — see TuflowLauncher/RunModels.cs. Using an anonymous
@@ -84,8 +89,10 @@ internal static class TuflowRunHelper
             {
                 runId = request.RunId,
                 runName = request.RunName,
-                exePath = request.ExePath,
-                tcfPath = request.TcfPath,
+                launchMode = isCmdMode ? TuflowLaunchModes.Cmd : TuflowLaunchModes.ExeTcf,
+                exePath = request.ExePath ?? "",
+                tcfPath = request.TcfPath ?? "",
+                cmdPath = request.CmdPath,
                 workingDirectory,
                 scenarios = request.Scenarios,
                 events = request.Events,
@@ -106,7 +113,10 @@ internal static class TuflowRunHelper
             Process.Start(psi);
 
             WritePointer(new RunPointer(request.RunId, runDir));
-            logger.LogWarning("Started TUFLOW run {RunId} via launcher: {Tcf}", request.RunId, request.TcfPath);
+            logger.LogWarning(
+                "Started TUFLOW run {RunId} via launcher: {Target}",
+                request.RunId,
+                isCmdMode ? request.CmdPath : request.TcfPath);
         }
         catch (Exception ex)
         {

@@ -2,6 +2,7 @@
 @model AppsModel
 @{
     ViewData["Title"] = "Application Usage";
+    ViewData["HelpFragment"] = "applications";
 }
 
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
@@ -13,7 +14,6 @@
         <a class="hd-btn hd-btn-black" asp-page="/AppLists">App lists</a>
         <a class="hd-btn hd-btn-black" asp-page="/AppLists" asp-route-tab="create">Create app list</a>
         <a class="hd-btn hd-btn-black" asp-page="/Discovery">Discovery &amp; Classification</a>
-        <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="applications">Help</a>
     </div>
 </div>
 
@@ -40,8 +40,8 @@
                 }
             </select>
         </div>
-        <div class="col-md-3 col-lg-2">
-            <button type="submit" class="hd-btn hd-btn-gold w-100">Apply</button>
+        <div class="col-auto">
+            <button type="submit" class="hd-btn hd-btn-gold">Apply</button>
         </div>
         <div class="col-md-5 col-lg-5 ms-lg-auto">
             <label class="form-label" for="socratize-host">Socratize machine</label>
@@ -97,8 +97,8 @@
                 <td class="hd-apps-col-num" data-sort-value="@a.UniqueMachines">@a.UniqueMachines</td>
                 <td class="hd-apps-col-num" data-sort-value="@a.AvgConcurrentProcesses.ToString(System.Globalization.CultureInfo.InvariantCulture)">@ConcurrentDisplay.Render(a.AvgConcurrentProcesses)</td>
                 <td class="hd-apps-col-num" data-sort-value="@a.RunCount">@a.RunCount</td>
-                <td class="hd-apps-col-time" data-sort-value="@a.TotalDuration.TotalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)" title="@DurationDisplay.Render(a.TotalDuration)">@DurationDisplay.Render(a.TotalDuration)</td>
-                <td class="hd-apps-col-seen" data-sort-value="@a.LastSeenUtc.ToUnixTimeSeconds()" title="@a.LastSeenUtc.ToLocalTime().ToString("g")">@a.LastSeenUtc.ToLocalTime().ToString("g")</td>
+                <td class="hd-apps-col-time" data-sort-value="@a.TotalDuration.TotalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)">@DurationDisplay.Render(a.TotalDuration)</td>
+                <td class="hd-apps-col-seen" data-sort-value="@a.LastSeenUtc.ToUnixTimeSeconds()" title="@IndexModel.FormatLocalTimestamp(a.LastSeenUtc)">@IndexModel.FormatLocalTimestamp(a.LastSeenUtc)</td>
             </tr>
         }
         </tbody>

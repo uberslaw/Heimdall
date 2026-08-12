@@ -5,55 +5,60 @@
 @using Heimdall.Shared.Contracts
 @{
     ViewData["Title"] = "Application Lists and Tracking";
+    ViewData["HelpFragment"] = "app-lists";
+    var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
+    if (isPartial)
+        Layout = null;
     var active = Model.ActiveTabKey;
+    var renderBody = isPartial
+        || string.Equals(ViewContext.HttpContext.Request.Method, "POST", StringComparison.OrdinalIgnoreCase)
+        || Model.EditId is int;
 }
 
+@if (!isPartial)
+{
 <div class="hd-fleet-header mb-3">
     <div class="hd-fleet-header-main">
         <h1 class="hd-title hd-fleet-title mb-0">
             <span class="hd-fleet-title-fleet">Application Lists and Tracking</span>
         </h1>
-        <ul class="nav nav-tabs hd-ops-tabs mb-0" role="tablist">
+        <ul class="nav nav-tabs hd-ops-tabs mb-0" id="hd-ops-tabs" role="tablist">
             @foreach (var t in AppListsModel.Tabs)
             {
                 var isActive = t.Key == active;
+                var src = t.Key == "analyze" && !string.IsNullOrWhiteSpace(Model.FocusHostname)
+                    ? $"/AppLists?tab={t.Key}&host={Uri.EscapeDataString(Model.FocusHostname)}&partial=1"
+                    : $"/AppLists?tab={t.Key}&partial=1";
                 <li class="nav-item" role="presentation">
                     <a class="nav-link @(isActive ? "active" : null)"
-                       asp-page="/AppLists"
-                       asp-route-tab="@t.Key"
-                       asp-route-host="@(t.Key == "analyze" ? Model.FocusHostname : null)"
+                       href="/AppLists?tab=@t.Key"
+                       data-hd-ops-tab="@t.Key"
+                       data-hd-ops-src="@src"
                        role="tab"
                        aria-selected="@(isActive ? "true" : "false")">@t.Label</a>
                 </li>
             }
         </ul>
+        <p class="hd-sub mb-0 mt-2">Curated software lists and per-PC analyze. Classification is Discovery; usage totals are Application Usage.</p>
     </div>
     <div class="d-flex gap-2 align-items-center flex-wrap">
-        <a class="hd-btn hd-btn-black hd-btn-sm" asp-page="/Discovery">Discovery</a>
-        <a class="hd-btn hd-btn-black hd-btn-sm" asp-page="/Apps">Usage</a>
-        <a class="hd-btn hd-btn-black hd-btn-sm" asp-page="/AppListChangelog">Changelog</a>
-        <a class="btn btn-ghost btn-sm" asp-page="/Help" asp-fragment="app-lists">Help</a>
+        <a class="hd-btn hd-btn-silver hd-btn-sm" asp-page="/AppListChangelog">Changelog</a>
     </div>
 </div>
 
-<div id="hd-toast-region" class="hd-toast-region">
-    @if (TempData["Message"] is string msg)
-    {
-        <div class="hd-toast hd-toast-success" role="status" data-autodismiss="5000">
-            <span>@msg</span>
-            <button type="button" class="hd-toast-close" aria-label="Dismiss">&times;</button>
-        </div>
-    }
-    @if (TempData["Error"] is string err)
-    {
-        <div class="hd-toast hd-toast-error" role="alert" data-autodismiss="5000">
-            <span>@err</span>
-            <button type="button" class="hd-toast-close" aria-label="Dismiss">&times;</button>
-        </div>
-    }
-</div>
+<partial name="_Toasts" />
 
-@if (active == "create")
+@if (!renderBody)
+{
+<div class="hd-ops-pane" id="hd-ops-pane" data-hd-ops-active="@active" data-hd-ops-base="/AppLists" aria-live="polite">
+    <div class="hd-ops-loading text-secondary py-4" data-hd-ops-loading>Loading…</div>
+    <div class="hd-ops-body" data-hd-ops-body hidden></div>
+</div>
+}
+}
+@if (renderBody)
+{
+if (active == "create")
 {
     <partial name="_AppListsCreate" model="Model" />
 }
@@ -717,10 +722,9 @@ else if (active == "analyze")
         </details>
     </div>
 </div>
-
-@section Scripts {
-<script src="~/js/machine-tree.js" asp-append-version="true"></script>
 }
+
+<script src="~/js/machine-tree.js" asp-append-version="true"></script>
 <script src="~/js/hd-table.js" asp-append-version="true"></script>
 <script>
 (() => {
@@ -848,5 +852,12 @@ else if (active == "analyze")
   });
 })();
 </script>
+}
+
+@section Scripts {
+    @if (!renderBody)
+    {
+        <script src="~/js/ops-tabs.js" asp-append-version="true"></script>
+    }
 }
 

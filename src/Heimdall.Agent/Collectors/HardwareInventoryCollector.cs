@@ -306,23 +306,13 @@ public static class HardwareInventoryCollector
     {
         try
         {
-            var names = new List<string>();
+            var names = new List<string?>();
             using var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_VideoController");
             foreach (ManagementObject obj in searcher.Get())
-            {
-                var name = Clean(obj["Name"]?.ToString());
-                if (name is null) continue;
-                if (name.Contains("Microsoft Basic", StringComparison.OrdinalIgnoreCase) ||
-                    name.Contains("Remote Desktop", StringComparison.OrdinalIgnoreCase))
-                    continue;
-                if (!names.Contains(name, StringComparer.OrdinalIgnoreCase))
-                    names.Add(name);
-            }
+                names.Add(obj["Name"]?.ToString());
 
-            if (names.Count == 0)
-                return null;
-
-            return string.Join("; ", names);
+            // Drop Microsoft remote/basic stubs; drop Intel iGPU when NVIDIA/AMD (or Arc) is present.
+            return GpuInventoryFilter.Join(GpuInventoryFilter.FilterNames(names));
         }
         catch
         {

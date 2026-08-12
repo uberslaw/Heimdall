@@ -2,6 +2,7 @@
 @model HistoricalDashboardMachineModel
 @{
     ViewData["Title"] = string.IsNullOrWhiteSpace(Model.Hostname) ? "Fleet machine" : Model.Hostname;
+    ViewData["HelpFragment"] = "historical-dashboard";
 }
 
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
@@ -18,7 +19,6 @@
     <div class="d-flex gap-2">
         <a class="hd-btn hd-btn-black" asp-page="/Flood" asp-route-tab="live">Live Fleet</a>
         <a class="hd-btn hd-btn-black" asp-page="/Flood" asp-route-tab="historical">Analytics</a>
-        <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="historical-dashboard">Help</a>
     </div>
 </div>
 

@@ -270,8 +270,19 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
             machine.HardwareModel = heartbeat.HardwareModel.Trim();
         if (string.IsNullOrWhiteSpace(machine.HardwareCpu) && !string.IsNullOrWhiteSpace(heartbeat.HardwareCpu))
             machine.HardwareCpu = heartbeat.HardwareCpu.Trim();
-        if (string.IsNullOrWhiteSpace(machine.HardwareGpu) && !string.IsNullOrWhiteSpace(heartbeat.HardwareGpu))
-            machine.HardwareGpu = heartbeat.HardwareGpu.Trim();
+
+        // GPU: fill blank from heartbeat, then scrub stubs / redundant Intel iGPU on stored value
+        // so older agents and fill-once rows converge without a full inventory overwrite.
+        var gpuFromAgent = GpuInventoryFilter.Normalize(heartbeat.HardwareGpu);
+        if (string.IsNullOrWhiteSpace(machine.HardwareGpu) && gpuFromAgent is not null)
+            machine.HardwareGpu = gpuFromAgent;
+        else if (!string.IsNullOrWhiteSpace(machine.HardwareGpu))
+        {
+            var scrubbed = GpuInventoryFilter.Normalize(machine.HardwareGpu);
+            if (!string.Equals(machine.HardwareGpu, scrubbed, StringComparison.Ordinal))
+                machine.HardwareGpu = scrubbed;
+        }
+
         if (machine.HardwareRamGb is null && heartbeat.HardwareRamGb is > 0)
             machine.HardwareRamGb = heartbeat.HardwareRamGb;
         if (machine.HardwareDiskGb is null && heartbeat.HardwareDiskGb is > 0)
@@ -1349,6 +1360,24 @@ public static class SeedData
                 LicenseCostPerYear REAL NOT NULL
             )
             """);
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS AppLicensePurchases (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Vendor TEXT NOT NULL DEFAULT '',
+                SoftwareName TEXT NOT NULL,
+                ProcessName TEXT NOT NULL,
+                ProcessCatalogEntryId INTEGER NULL,
+                LicenseCost REAL NOT NULL DEFAULT 0,
+                MaintenanceCost REAL NOT NULL DEFAULT 0,
+                PurchaseYear INTEGER NOT NULL,
+                WorkloadKind TEXT NOT NULL DEFAULT 'Design',
+                ComputeBias TEXT NOT NULL DEFAULT 'Either',
+                Notes TEXT NULL,
+                CreatedUtc TEXT NOT NULL,
+                FOREIGN KEY (ProcessCatalogEntryId) REFERENCES ProcessCatalogEntries(Id) ON DELETE SET NULL
+            )
+            """);
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN PurchaseDate TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN AppsAnalyzedAt TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingAppAnalysis INTEGER NOT NULL DEFAULT 0");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN AppAnalysisStatus INTEGER NOT NULL DEFAULT 0");
@@ -1656,6 +1685,7 @@ public static class SeedData
                 RunName TEXT NOT NULL,
                 MachineId INTEGER NOT NULL,
                 TcfPath TEXT NOT NULL,
+                CmdPath TEXT NULL,
                 RequestedUtc TEXT NOT NULL,
                 RequestedBy TEXT NULL,
                 StartedUtc TEXT NULL,
@@ -1681,6 +1711,7 @@ public static class SeedData
         // if you applied the TuflowRunRecords table from an earlier version of this patch.
         await TryExec(db, "ALTER TABLE TuflowRunRecords ADD COLUMN RunName TEXT NOT NULL DEFAULT ''");
         await TryExec(db, "ALTER TABLE TuflowRunRecords ADD COLUMN ClockTimeRemainingHours REAL NULL");
+        await TryExec(db, "ALTER TABLE TuflowRunRecords ADD COLUMN CmdPath TEXT NULL");
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ProcessCpuPercent REAL NULL");
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ProcessGpuPercent REAL NULL");
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ProcessDiskReadMBps REAL NULL");

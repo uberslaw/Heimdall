@@ -22,11 +22,12 @@ Heimdall-Client/
     └── (self-contained publish files)
 ```
 
-## Repo sources (maintainers)
+## Maintainer docs
 
 | Path | Purpose |
 |------|---------|
-| `scripts/Install.cmd` / `Install-Client.ps1` | Guided client install |
+| `docs/CLIENT.md` | Full agent architecture (also in Help → Client / agent) |
+| `docs/portable-client/` | Docs copied into pack (not installable) |
 | `scripts/Heimdall-Setup.cmd` / `.ps1` | Guided Setup UI (pack, API, tools) |
 | `scripts/Heimdall-LaunchControl.*` | Compat wrappers → Setup |
 | `scripts/Pack-WorkstationCollector.cmd` | Builds `dist/Heimdall-Client` |

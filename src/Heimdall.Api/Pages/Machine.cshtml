@@ -4,6 +4,7 @@
 @using Heimdall.Shared.Contracts
 @{
     ViewData["Title"] = string.IsNullOrWhiteSpace(Model.Hostname) ? "Machine" : Model.Hostname;
+    ViewData["HelpFragment"] = "machine-detail";
     var d = Model.Detail;
     var shortLabel = Model.RangeDays == 1 ? "1d" : $"{Model.RangeDays}d";
     var appLists = Model.AppListsView;
@@ -13,18 +14,19 @@
         name.Length <= max ? name : name[..max] + "…";
 }
 
-<p class="hd-meta-line mb-2">
-    <a asp-page="/Index" asp-route-range="@Model.Range">← Computers</a>
+<div class="d-flex flex-wrap gap-2 mb-3" role="navigation" aria-label="Machine shortcuts">
+    <a class="hd-btn hd-btn-silver hd-btn-sm" asp-page="/Index" asp-route-range="@Model.Range">← Computers</a>
     @if (d is not null)
     {
-        <span> · </span>
-        <a asp-page="/Stats" asp-route-ScopeKind="Machine" asp-route-ScopeValue="@d.Hostname" asp-route-Days="@Model.RangeDays">Open in Stats</a>
-        <span> · </span>
-        <a asp-page="/Socratize" asp-route-Host="@d.Hostname">Socratize</a>
-        <span> · </span>
-        <a asp-page="/AppLists" asp-route-host="@d.Hostname">Analyze apps</a>
+        <a class="hd-btn hd-btn-silver hd-btn-sm"
+           asp-page="/Stats"
+           asp-route-ScopeKind="Machine"
+           asp-route-ScopeValue="@d.Hostname"
+           asp-route-Days="@Model.RangeDays">Open in Stats</a>
+        <a class="hd-btn hd-btn-silver hd-btn-sm" asp-page="/Socratize" asp-route-Host="@d.Hostname">Socratize</a>
+        <a class="hd-btn hd-btn-silver hd-btn-sm" asp-page="/AppLists" asp-route-host="@d.Hostname">Analyze apps</a>
     }
-</p>
+</div>
 
 @if (TempData["Message"] is string toastMsg)
 {
@@ -49,8 +51,7 @@ else if (Model.HostNotFound)
 }
 else if (d is not null)
 {
-    <h1 class="hd-title">@d.Hostname</h1>
-    <p class="hd-sub">@Model.RangeLabel utilisation · apps used on this machine</p>
+    <h1 class="hd-title hd-title-rose-gold mb-3">@d.Hostname</h1>
 
     <div class="hd-grid mb-3">
         <div class="hd-stat">
@@ -438,33 +439,63 @@ else if (d is not null)
                 }
             </div>
 
-            <div class="row g-3">
-                <div class="col-lg-6">
-                    <h4 class="h6">Top folders</h4>
-                    @if (scan.TopFolders.Count == 0)
-                    {
-                        <p class="text-secondary small mb-0">No folders reported.</p>
-                    }
-                    else
-                    {
-                        <pre class="hd-disk-usage-tree small mb-0">@foreach (var f in scan.TopFolders)
-{<text>@MachineModel.FormatBytes(f.SizeBytes).PadLeft(10)  @f.Path
-</text>}</pre>
-                    }
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+                <ul class="nav nav-tabs hd-ops-tabs mb-0" id="disk-usage-view-tabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button type="button" class="nav-link active" id="disk-usage-tab-folders"
+                                role="tab" aria-selected="true" aria-controls="disk-usage-view-folders"
+                                data-disk-view="folders">Top folders</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button type="button" class="nav-link" id="disk-usage-tab-files"
+                                role="tab" aria-selected="false" aria-controls="disk-usage-view-files"
+                                data-disk-view="files">Large files (≥ threshold)</button>
+                    </li>
+                </ul>
+                <div class="d-flex flex-wrap gap-2">
+                    <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="disk-usage-copy-all"
+                            title="Copy all scan results with full paths">Copy all</button>
+                    <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="disk-usage-download-txt"
+                            title="Download all scan results as a .txt with full paths"
+                            data-filename="@MachineModel.FormatDiskUsageExportFileName(Model.Hostname, Model.DiskUsageScanUtc ?? scan.CompletedUtc)">Download .txt</button>
                 </div>
-                <div class="col-lg-6">
-                    <h4 class="h6">Large files (≥ threshold)</h4>
-                    @if (scan.LargeFiles.Count == 0)
-                    {
-                        <p class="text-secondary small mb-0">None at or above the threshold.</p>
-                    }
-                    else
-                    {
-                        <pre class="hd-disk-usage-tree small mb-0">@foreach (var f in scan.LargeFiles)
-{<text>@MachineModel.FormatBytes(f.SizeBytes).PadLeft(10)  @f.Path
-</text>}</pre>
-                    }
-                </div>
+            </div>
+            <script type="application/json" id="disk-usage-export-text">@Html.Raw(System.Text.Json.JsonSerializer.Serialize(MachineModel.FormatDiskUsageExportText(Model.Hostname, scan, Model.DiskUsageScanUtc)))</script>
+            <div id="disk-usage-view-folders" class="hd-disk-usage-panel" role="tabpanel" aria-labelledby="disk-usage-tab-folders">
+                @if (scan.TopFolders.Count == 0)
+                {
+                    <p class="text-secondary small mb-0">No folders reported.</p>
+                }
+                else
+                {
+                    <div class="hd-disk-usage-list small">
+                        @foreach (var f in scan.TopFolders)
+                        {
+                            <div class="hd-disk-usage-row">
+                                <span class="hd-disk-usage-size">@MachineModel.FormatBytes(f.SizeBytes)</span>
+                                <span class="hd-disk-usage-path" title="@f.Path">@f.Path</span>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+            <div id="disk-usage-view-files" class="hd-disk-usage-panel d-none" role="tabpanel" aria-labelledby="disk-usage-tab-files" hidden>
+                @if (scan.LargeFiles.Count == 0)
+                {
+                    <p class="text-secondary small mb-0">None at or above the threshold.</p>
+                }
+                else
+                {
+                    <div class="hd-disk-usage-list small">
+                        @foreach (var f in scan.LargeFiles)
+                        {
+                            <div class="hd-disk-usage-row">
+                                <span class="hd-disk-usage-size">@MachineModel.FormatBytes(f.SizeBytes)</span>
+                                <span class="hd-disk-usage-path" title="@f.Path">@f.Path</span>
+                            </div>
+                        }
+                    </div>
+                }
             </div>
         }
     </div>
@@ -526,14 +557,26 @@ else if (d is not null)
                     }
                 </div>
                 <p class="text-secondary small mb-0">
-                    <span title="@cur.TcfPath">@System.IO.Path.GetFileName(cur.TcfPath)</span>
+                    @{
+                        var curPrimary = !string.IsNullOrWhiteSpace(cur.CmdPath) ? cur.CmdPath : cur.TcfPath;
+                        var curPrimaryName = string.IsNullOrWhiteSpace(curPrimary) ? null : System.IO.Path.GetFileName(curPrimary);
+                    }
+                    <span title="@curPrimary">@(curPrimaryName ?? "—")</span>
+                    @if (!string.IsNullOrWhiteSpace(cur.CmdPath) && !string.IsNullOrWhiteSpace(cur.TcfPath)
+                         && !string.Equals(cur.CmdPath, cur.TcfPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        <div class="text-secondary small" title="@cur.TcfPath">tcf: @System.IO.Path.GetFileName(cur.TcfPath)</div>
+                    }
                     @if (!string.IsNullOrEmpty(cur.LastCheckpointFile))
                     {
                         <div>Last checkpoint: @cur.LastCheckpointFile</div>
                     }
-                    @if (!string.IsNullOrEmpty(cur.ErrorSummary))
+                    @{
+                        var curFailDetail = !string.IsNullOrEmpty(cur.ErrorSummary) ? cur.ErrorSummary : cur.Message;
+                    }
+                    @if (!string.IsNullOrEmpty(curFailDetail) && (cur.State == TuflowRunStates.Failed || !string.IsNullOrEmpty(cur.ErrorSummary)))
                     {
-                        <div style="color:#f0a0a0;">@cur.ErrorSummary</div>
+                        <div style="color:#f0a0a0;">@curFailDetail</div>
                     }
                 </p>
             }
@@ -552,7 +595,7 @@ else if (d is not null)
                                 <th data-sort="text">Run</th>
                                 <th data-sort="text">By</th>
                                 <th data-sort="text">Requested</th>
-                                <th data-sort="text">.tcf</th>
+                                <th data-sort="text">File</th>
                                 <th data-sort="text">Outcome</th>
                                 <th data-sort="text">Duration</th>
                                 <th data-sort="text">Detail</th>
@@ -565,7 +608,7 @@ else if (d is not null)
                                     <td>@run.RunName</td>
                                     <td class="text-secondary small">@UsernameDisplay.FormatOrDash(run.RequestedBy)</td>
                                     <td>@MachineModel.FormatLocalTimestamp(run.RequestedUtc)</td>
-                                    <td class="text-secondary small" title="@run.TcfPath">@System.IO.Path.GetFileName(run.TcfPath)</td>
+                                    <td class="text-secondary small" title="@run.DisplayFileFullPath">@run.DisplayFileName</td>
                                     <td><span class="badge-pill @MachineModel.TuflowStateBadgeClass(run.State)">@run.State</span></td>
                                     <td class="text-secondary small">@MachineModel.FormatDuration(run.StartedUtc, run.EndedUtc)</td>
                                     <td class="text-secondary small">
@@ -642,7 +685,7 @@ else if (d is not null)
                                     <input type="hidden" asp-for="Range" />
                                     <input type="hidden" asp-for="StatsDuration" />
                                     <input type="hidden" name="RemoveAssignmentId" value="@a.AssignmentId" />
-                                    <button type="submit" class="btn btn-ghost btn-sm" onclick="return confirm('Remove @a.Name from this machine?');">Remove</button>
+                                    <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm" onclick="return confirm('Remove @a.Name from this machine?');">Remove</button>
                                 </form>
                             }
                             else
@@ -668,8 +711,8 @@ else if (d is not null)
                         }
                     </select>
                 </div>
-                <div class="col-md-4 col-lg-2">
-                    <button type="submit" class="btn btn-hd w-100">Apply</button>
+                <div class="col-auto">
+                    <button type="submit" class="hd-btn hd-btn-gold">Apply</button>
                 </div>
             </form>
 
@@ -694,7 +737,7 @@ else if (d is not null)
                                 </label>
                             }
                         </div>
-                        <button type="submit" class="btn btn-ghost btn-sm">Save tracking overrides</button>
+                        <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Save tracking overrides</button>
                     </form>
                 </details>
             }
@@ -721,8 +764,8 @@ else if (d is not null)
                     }
                 </select>
             </div>
-            <div class="col-md-3 col-lg-2">
-                <button type="submit" class="btn btn-hd w-100">Apply</button>
+            <div class="col-auto">
+                <button type="submit" class="hd-btn hd-btn-gold">Apply</button>
             </div>
         </div>
     </form>
@@ -733,9 +776,9 @@ else if (d is not null)
             <div class="d-flex flex-wrap gap-2 align-items-center">
                 @if (Model.AppTableRows.Count > 0)
                 {
-                    <button type="button" class="btn btn-ghost btn-sm" id="machine-apps-select-all" title="Check all rows">Select all</button>
-                    <button type="button" class="btn btn-ghost btn-sm" id="machine-apps-deselect-all" title="Uncheck all rows">Deselect all</button>
-                    <button type="button" class="btn btn-ghost btn-sm" id="machine-apps-expand-all" aria-pressed="false">Show full details</button>
+                    <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="machine-apps-select-all" title="Check all rows">Select all</button>
+                    <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="machine-apps-deselect-all" title="Uncheck all rows">Deselect all</button>
+                    <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="machine-apps-expand-all" aria-pressed="false">Show full details</button>
                 }
             </div>
         </div>
@@ -962,6 +1005,92 @@ else if (d is not null)
     });
 
     syncVisibility();
+  }
+
+  const diskViewTabs = document.getElementById('disk-usage-view-tabs');
+  if (diskViewTabs) {
+    const storeKey = 'hd-disk-usage-view';
+    const panels = {
+      folders: document.getElementById('disk-usage-view-folders'),
+      files: document.getElementById('disk-usage-view-files')
+    };
+    const buttons = diskViewTabs.querySelectorAll('[data-disk-view]');
+    const showView = (view) => {
+      const key = view === 'files' ? 'files' : 'folders';
+      Object.entries(panels).forEach(([name, el]) => {
+        if (!el) return;
+        const on = name === key;
+        el.classList.toggle('d-none', !on);
+        el.hidden = !on;
+      });
+      buttons.forEach(btn => {
+        const on = btn.getAttribute('data-disk-view') === key;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      try { sessionStorage.setItem(storeKey, key); } catch (_) { /* ignore */ }
+    };
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => showView(btn.getAttribute('data-disk-view')));
+    });
+    let initial = 'folders';
+    try {
+      const stored = sessionStorage.getItem(storeKey);
+      if (stored === 'files' || stored === 'folders') initial = stored;
+    } catch (_) { /* ignore */ }
+    showView(initial);
+  }
+
+  const diskExportEl = document.getElementById('disk-usage-export-text');
+  const diskCopyBtn = document.getElementById('disk-usage-copy-all');
+  const diskDlBtn = document.getElementById('disk-usage-download-txt');
+  const getDiskExportText = () => {
+    if (!diskExportEl) return '';
+    try { return JSON.parse(diskExportEl.textContent || '""'); }
+    catch (_) { return diskExportEl.textContent || ''; }
+  };
+  if (diskCopyBtn && diskExportEl) {
+    diskCopyBtn.addEventListener('click', async () => {
+      const text = getDiskExportText();
+      if (!text) return;
+      const label = diskCopyBtn.textContent;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        diskCopyBtn.textContent = 'Copied';
+        setTimeout(() => { diskCopyBtn.textContent = label; }, 1500);
+      } catch (_) {
+        diskCopyBtn.textContent = 'Copy failed';
+        setTimeout(() => { diskCopyBtn.textContent = label; }, 2000);
+      }
+    });
+  }
+  if (diskDlBtn && diskExportEl) {
+    diskDlBtn.addEventListener('click', () => {
+      const text = getDiskExportText();
+      if (!text) return;
+      const name = diskDlBtn.getAttribute('data-filename') || 'heimdall-disk-usage.txt';
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    });
   }
 
   const statusEl = document.getElementById('disk-usage-status');

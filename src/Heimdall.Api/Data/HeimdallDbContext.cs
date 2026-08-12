@@ -19,6 +19,7 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<MachineBooking> MachineBookings => Set<MachineBooking>();
     public DbSet<UtilizationCriteria> UtilizationCriteria => Set<UtilizationCriteria>();
     public DbSet<AppLicenseCost> AppLicenseCosts => Set<AppLicenseCost>();
+    public DbSet<AppLicensePurchase> AppLicensePurchases => Set<AppLicensePurchase>();
     public DbSet<AppList> AppLists => Set<AppList>();
     public DbSet<AppListEntry> AppListEntries => Set<AppListEntry>();
     public DbSet<AppListAssignment> AppListAssignments => Set<AppListAssignment>();
@@ -153,6 +154,15 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
         modelBuilder.Entity<AppLicenseCost>(e =>
         {
             e.HasIndex(x => x.ProcessName).IsUnique();
+        });
+
+        modelBuilder.Entity<AppLicensePurchase>(e =>
+        {
+            e.HasIndex(x => new { x.ProcessName, x.PurchaseYear, x.SoftwareName });
+            e.HasOne(x => x.ProcessCatalogEntry)
+                .WithMany()
+                .HasForeignKey(x => x.ProcessCatalogEntryId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<AppList>(e =>

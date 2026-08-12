@@ -52,7 +52,7 @@ else if (d is not null)
         <div class="hd-stat">
             <div class="label">Last used</div>
             <div class="value" style="font-size:1rem;margin-top:0.35rem">
-                @(d.LastUsedUtc?.ToLocalTime().ToString("g") ?? "—")
+                @(d.LastUsedUtc is DateTimeOffset lu ? IndexModel.FormatLocalTimestamp(lu) : "—")
             </div>
         </div>
         <div class="hd-stat">
@@ -104,8 +104,8 @@ else if (d is not null)
                     </select>
                 </div>
             }
-            <div class="col-md-3 col-lg-2">
-                <button type="submit" class="btn btn-hd w-100">Apply</button>
+            <div class="col-auto">
+                <button type="submit" class="hd-btn hd-btn-gold">Apply</button>
             </div>
         </div>
     </form>
@@ -148,7 +148,7 @@ else if (d is not null)
                         <td data-sort-value="@m.AvgConcurrentProcesses.ToString("0.###")">@ConcurrentDisplay.Render(m.AvgConcurrentProcesses)</td>
                         <td data-sort-value="@m.RunCount">@m.RunCount</td>
                         <td data-sort-value="@m.AvgRunSeconds">@DurationDisplay.Render(m.AvgRunSeconds)</td>
-                        <td data-sort-value="@m.LastUsedUtc.ToUnixTimeSeconds()">@m.LastUsedUtc.ToLocalTime().ToString("g")</td>
+                        <td data-sort-value="@m.LastUsedUtc.ToUnixTimeSeconds()">@IndexModel.FormatLocalTimestamp(m.LastUsedUtc)</td>
                     </tr>
                 }
                 </tbody>
@@ -177,7 +177,7 @@ else if (d is not null)
                         <td data-sort-value="@u.AvgConcurrentProcesses.ToString("0.###")">@ConcurrentDisplay.Render(u.AvgConcurrentProcesses)</td>
                         <td data-sort-value="@u.RunCount">@u.RunCount</td>
                         <td data-sort-value="@u.AvgRunSeconds">@DurationDisplay.Render(u.AvgRunSeconds)</td>
-                        <td data-sort-value="@u.LastUsedUtc.ToUnixTimeSeconds()">@u.LastUsedUtc.ToLocalTime().ToString("g")</td>
+                        <td data-sort-value="@u.LastUsedUtc.ToUnixTimeSeconds()">@IndexModel.FormatLocalTimestamp(u.LastUsedUtc)</td>
                     </tr>
                 }
                 </tbody>

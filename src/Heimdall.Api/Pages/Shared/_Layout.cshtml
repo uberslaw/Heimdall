@@ -4,6 +4,7 @@
 @inject IWebHostEnvironment Environment
 @inject HeimdallDbContext Db
 @inject FloodAccessGuard FloodAccess
+@inject ApiBuildStamp ApiBuild
 @{
     var activeTheme = await ThemeResolution.ResolveAsync(Configuration, Context.Request.Cookies, Db);
     var uiTheme = activeTheme.BasePreset;
@@ -20,6 +21,7 @@
         ? ThemeFonts.BuildGoogleFontsUrl(activeTheme.Custom.HeadingFont, activeTheme.Custom.BodyFont)
         : null;
     var showFloodNav = FloodAccess.CanAccessFlood(Context);
+    var helpFragment = HelpNav.ResolveFragment(Context.Request, ViewData[HelpNav.ViewDataKey]);
 }
 <!DOCTYPE html>
 <html lang="en" class="@(isDevChrome ? "hd-dev-mode" : "")" data-theme="@uiTheme"
@@ -55,127 +57,133 @@
                 <a class="hd-brand hd-brand-cosmic" asp-page="/Fleet">
                     <img class="hd-brand-logo" src="~/img/heimdall-logo-cosmic.png" alt="Heimdall" width="440" height="144" />
                 </a>
+                <span class="hd-api-build-stamp"
+                      title="API last build (local time) · @ApiBuild.BuiltAtUtc.ToString("yyyy-MM-dd HH:mm") UTC">
+                    API last build: @ApiBuild.DisplayLocal
+                </span>
             </div>
-            <nav class="hd-links">
-                @{
-                    var fleetPath = Context.Request.Path.Value ?? "";
-                    var onFleet = fleetPath.Equals("/Fleet", StringComparison.OrdinalIgnoreCase)
-                                  || fleetPath.Equals("/Ops", StringComparison.OrdinalIgnoreCase)
-                                  || fleetPath.Equals("/", StringComparison.OrdinalIgnoreCase);
-                    var fleetTab = Context.Request.Query["tab"].FirstOrDefault() ?? "machines";
-                    fleetTab = FleetModel.NormalizeTab(fleetTab);
-                }
-                <div class="dropdown hd-nav-dropdown">
-                    <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                        Fleet
-                    </button>
-                    <div class="dropdown-menu hd-nav-dropdown-menu">
-                        @foreach (var t in FleetModel.Tabs)
-                        {
-                            var isActive = onFleet && t.Key == fleetTab;
-                            <a class="dropdown-item @(isActive ? "active" : null)"
-                               asp-page="/Fleet"
-                               asp-route-tab="@t.Key">@t.Label</a>
-                        }
-                    </div>
-                </div>
-                <div class="dropdown hd-nav-dropdown">
-                    <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                        Applications
-                    </button>
-                    <div class="dropdown-menu hd-nav-dropdown-menu">
-                        <a class="dropdown-item" asp-page="/AppLists">Application Lists and Tracking</a>
-                        <a class="dropdown-item" asp-page="/Apps">Application Usage</a>
-                        <a class="dropdown-item" asp-page="/Discovery">Discovery &amp; Classification</a>
-                        <a class="dropdown-item" asp-page="/Socratize">Socratize</a>
-                        <a class="dropdown-item" asp-page="/Teams">Teams</a>
-                    </div>
-                </div>
-                <a class="hd-nav-link" asp-page="/StaffAccess">Staff</a>
-                @if (showFloodNav)
-                {
+            <div class="hd-nav-end">
+                <nav class="hd-links">
+                    @{
+                        var fleetPath = Context.Request.Path.Value ?? "";
+                        var onFleet = fleetPath.Equals("/Fleet", StringComparison.OrdinalIgnoreCase)
+                                      || fleetPath.Equals("/Ops", StringComparison.OrdinalIgnoreCase)
+                                      || fleetPath.Equals("/", StringComparison.OrdinalIgnoreCase);
+                        var fleetTab = Context.Request.Query["tab"].FirstOrDefault() ?? "machines";
+                        fleetTab = FleetModel.NormalizeTab(fleetTab);
+                    }
                     <div class="dropdown hd-nav-dropdown">
                         <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                            Flood
+                            Fleet
                         </button>
                         <div class="dropdown-menu hd-nav-dropdown-menu">
-                            <a class="dropdown-item" asp-page="/Flood">Flood hub</a>
-                            <a class="dropdown-item" asp-page="/TuflowRuns">TUFLOW Runs</a>
+                            @foreach (var t in FleetModel.Tabs)
+                            {
+                                var isActive = onFleet && t.Key == fleetTab;
+                                <a class="dropdown-item @(isActive ? "active" : null)"
+                                   asp-page="/Fleet"
+                                   asp-route-tab="@t.Key">@t.Label</a>
+                            }
                         </div>
                     </div>
-                }
-                <div class="dropdown hd-nav-dropdown">
-                    <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Admin">
-                        Admin
-                    </button>
-                    <div class="dropdown-menu dropdown-menu-end hd-nav-dropdown-menu hd-settings-menu">
-                        <div class="hd-settings-section">
-                            <span class="hd-settings-label">Configuration</span>
-                            <div class="d-flex flex-column gap-1">
-                                <a class="dropdown-item px-0" asp-page="/Config">Tracking config</a>
-                                <a class="dropdown-item px-0" asp-page="/Utilization">Utilization criteria</a>
-                            </div>
+                    <div class="dropdown hd-nav-dropdown">
+                        <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            Applications
+                        </button>
+                        <div class="dropdown-menu hd-nav-dropdown-menu">
+                            <a class="dropdown-item" asp-page="/AppLists">Application Lists and Tracking</a>
+                            <a class="dropdown-item" asp-page="/Apps">Application Usage</a>
+                            <a class="dropdown-item" asp-page="/Discovery">Discovery &amp; Classification</a>
+                            <a class="dropdown-item" asp-page="/Socratize">Socratize</a>
+                            <a class="dropdown-item" asp-page="/Teams">Teams</a>
                         </div>
-                        <div class="hd-settings-section">
-                            <span class="hd-settings-label">Access</span>
-                            <div class="d-flex flex-column gap-1">
-                                <a class="dropdown-item px-0" asp-page="/Auth">Auth</a>
-                                <a class="dropdown-item px-0" asp-page="/RemoteAccessGroups">Remote Access Groups</a>
-                            </div>
+                    </div>
+                    <div class="dropdown hd-nav-dropdown">
+                        <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            Staff
+                        </button>
+                        <div class="dropdown-menu hd-nav-dropdown-menu">
+                            <a class="dropdown-item" asp-page="/StaffAccess">Staff Access</a>
+                            @if (showFloodNav)
+                            {
+                                <a class="dropdown-item" asp-page="/Flood">Flood hub</a>
+                                <a class="dropdown-item" asp-page="/TuflowRuns">TUFLOW Runs</a>
+                            }
                         </div>
-                        <div class="hd-settings-section">
-                            <span class="hd-settings-label">Support</span>
-                            <div class="d-flex flex-column gap-1">
-                                <a class="dropdown-item px-0" asp-page="/Help">Help</a>
+                    </div>
+                    <div class="dropdown hd-nav-dropdown">
+                        <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Admin">
+                            Admin
+                        </button>
+                        <div class="dropdown-menu dropdown-menu-end hd-nav-dropdown-menu hd-settings-menu">
+                            <div class="hd-settings-section">
+                                <span class="hd-settings-label">Configuration</span>
+                                <div class="d-flex flex-column gap-1">
+                                    <a class="dropdown-item px-0" asp-page="/Config">Tracking config</a>
+                                    <a class="dropdown-item px-0" asp-page="/Utilization">Utilization criteria</a>
+                                    <a class="dropdown-item px-0" asp-page="/Finance">Finance</a>
+                                </div>
                             </div>
-                        </div>
-                        <div class="hd-settings-section">
-                            <span class="hd-settings-label">Database mode</span>
-                            <div class="hd-mode-status small mb-2">
-                                Current:
+                            <div class="hd-settings-section">
+                                <span class="hd-settings-label">Access</span>
+                                <div class="d-flex flex-column gap-1">
+                                    <a class="dropdown-item px-0" asp-page="/Auth">Auth</a>
+                                    <a class="dropdown-item px-0" asp-page="/RemoteAccessGroups">Remote Access Groups</a>
+                                </div>
+                            </div>
+                            <div class="hd-settings-section">
+                                <span class="hd-settings-label">Database mode</span>
+                                <div class="hd-mode-status small mb-2">
+                                    Current:
+                                    @if (isLiveMode)
+                                    {
+                                        <strong>Live</strong>
+                                    }
+                                    else
+                                    {
+                                        <strong>Sandbox (DEV)</strong>
+                                    }
+                                    <div class="text-secondary mt-1"><code class="small">@dbPathDisplay</code></div>
+                                </div>
                                 @if (isLiveMode)
                                 {
-                                    <strong>Live</strong>
+                                    <a class="dropdown-item px-0"
+                                       href="/database-mode?mode=@HeimdallDatabaseMode.Sandbox&amp;returnUrl=@Uri.EscapeDataString(returnUrl)">
+                                        Switch to Dev sandbox
+                                    </a>
                                 }
                                 else
                                 {
-                                    <strong>Sandbox (DEV)</strong>
+                                    <a class="dropdown-item px-0"
+                                       href="/database-mode?mode=@HeimdallDatabaseMode.Live&amp;returnUrl=@Uri.EscapeDataString(returnUrl)">
+                                        Switch to Live
+                                    </a>
                                 }
-                                <div class="text-secondary mt-1"><code class="small">@dbPathDisplay</code></div>
+                                @if (!string.IsNullOrWhiteSpace(liveDashboardUrl) && !isLiveMode)
+                                {
+                                    <a class="dropdown-item px-0" href="@liveDashboardUrl" target="_blank" rel="noopener">
+                                        Open Live dashboard (other URL)
+                                    </a>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(devDashboardUrl) && isLiveMode)
+                                {
+                                    <a class="dropdown-item px-0" href="@devDashboardUrl" target="_blank" rel="noopener">
+                                        Open Dev dashboard (other URL)
+                                    </a>
+                                }
                             </div>
-                            @if (isLiveMode)
-                            {
-                                <a class="dropdown-item px-0"
-                                   href="/database-mode?mode=@HeimdallDatabaseMode.Sandbox&amp;returnUrl=@Uri.EscapeDataString(returnUrl)">
-                                    Switch to Dev sandbox
-                                </a>
-                            }
-                            else
-                            {
-                                <a class="dropdown-item px-0"
-                                   href="/database-mode?mode=@HeimdallDatabaseMode.Live&amp;returnUrl=@Uri.EscapeDataString(returnUrl)">
-                                    Switch to Live
-                                </a>
-                            }
-                            @if (!string.IsNullOrWhiteSpace(liveDashboardUrl) && !isLiveMode)
-                            {
-                                <a class="dropdown-item px-0" href="@liveDashboardUrl" target="_blank" rel="noopener">
-                                    Open Live dashboard (other URL)
-                                </a>
-                            }
-                            @if (!string.IsNullOrWhiteSpace(devDashboardUrl) && isLiveMode)
-                            {
-                                <a class="dropdown-item px-0" href="@devDashboardUrl" target="_blank" rel="noopener">
-                                    Open Dev dashboard (other URL)
-                                </a>
-                            }
-                        </div>
-                        <div class="hd-settings-section">
-                            <a class="dropdown-item px-0" asp-page="/Theme">Theme</a>
+                            <div class="hd-settings-section">
+                                <a class="dropdown-item px-0" asp-page="/Theme">Theme</a>
+                            </div>
                         </div>
                     </div>
-                </div>
-            </nav>
+                </nav>
+                <a class="hd-btn hd-btn-silver hd-btn-sm hd-global-help"
+                   asp-page="/Help"
+                   asp-fragment="@helpFragment"
+                   data-hd-global-help
+                   title="Help">Help</a>
+            </div>
         </div>
     </header>
     <div class="container py-4">

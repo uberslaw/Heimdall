@@ -2,6 +2,10 @@
 @model DiscoveryModel
 @{
     ViewData["Title"] = "Discovery & Classification";
+    ViewData["HelpFragment"] = "discovery";
+    var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
+    if (isPartial)
+        Layout = null;
     const int colCount = 7; // Name&Location, Version, Cat, SubCat, Classification, Installs, Actions
     var sort = Model.Sort?.ToLowerInvariant() ?? "name";
     var dir = Model.Dir?.ToLowerInvariant() == "asc" ? "asc" : "desc";
@@ -10,6 +14,8 @@
     string SortClass(string col) => sort == col ? (dir == "asc" ? "sorted-asc" : "sorted-desc") : "";
 }
 
+@if (!isPartial)
+{
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
     <div>
         <h1 class="hd-title mb-1">Discovery &amp; Classification</h1>
@@ -39,9 +45,8 @@
         </p>
     </div>
     <div class="d-flex gap-2">
-        <a class="hd-btn hd-btn-black" asp-page="/Apps">Application Usage</a>
-        <a class="hd-btn hd-btn-black" asp-page="/AppLists">App lists</a>
-        <a class="hd-btn hd-btn-black" asp-page="/Help" asp-fragment="discovery" title="How Discovery works">Help</a>
+        <a class="hd-btn hd-btn-silver" asp-page="/Apps">Application Usage</a>
+        <a class="hd-btn hd-btn-silver" asp-page="/AppLists">App lists</a>
     </div>
 </div>
 
@@ -78,7 +83,9 @@
         </div>
     }
 </div>
+}
 
+<div id="discovery-swap">
 @if (Model.Tab == "spec-review")
 {
     <partial name="_SpecReview" model="Model" />
@@ -100,19 +107,19 @@ else
         </div>
         <div class="col-auto">
             <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="blankPathOnly" value="true" id="blank-path-only" @(Model.BlankPathOnly ? "checked" : null) onchange="this.form.submit()" />
+                <input class="form-check-input" type="checkbox" name="blankPathOnly" value="true" id="blank-path-only" @(Model.BlankPathOnly ? "checked" : null) onchange="this.form.requestSubmit()" />
                 <label class="form-check-label" for="blank-path-only">Missing path only@(Model.BlankPathCount > 0 ? $" ({Model.BlankPathCount})" : "")</label>
             </div>
         </div>
         <div class="col-auto">
             <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="hideIgnored" value="true" id="hide-ignored" @(Model.HideIgnored ? "checked" : null) onchange="this.form.submit()" />
+                <input class="form-check-input" type="checkbox" name="hideIgnored" value="true" id="hide-ignored" @(Model.HideIgnored ? "checked" : null) onchange="this.form.requestSubmit()" />
                 <label class="form-check-label" for="hide-ignored">Hide ignored@(Model.IgnoredCount > 0 ? $" ({Model.IgnoredCount})" : "")</label>
             </div>
         </div>
         <div class="col-auto">
             <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="showClassified" value="true" id="show-classified" @(Model.ShowClassified ? "checked" : null) onchange="this.form.submit()" />
+                <input class="form-check-input" type="checkbox" name="showClassified" value="true" id="show-classified" @(Model.ShowClassified ? "checked" : null) onchange="this.form.requestSubmit()" />
                 <label class="form-check-label" for="show-classified">Show classified</label>
             </div>
         </div>
@@ -637,6 +644,7 @@ else
     </p>
 </div>
 }
+</div>
 
 @section Scripts {
 @if (Model.Tab == "classify")

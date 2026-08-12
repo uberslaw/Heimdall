@@ -1,0 +1,77 @@
+@model IReadOnlyList<Heimdall.Api.Services.FinanceQueryService.PurchaseCopySource>
+@{
+    var sources = Model ?? [];
+    var same = sources.Where(s => s.SameSpecs).ToList();
+    var other = sources.Where(s => !s.SameSpecs).ToList();
+}
+
+@if (sources.Count > 0)
+{
+    <div class="row g-2 mb-3">
+        <div class="col-md-6 col-lg-5">
+            <label class="form-label small mb-1" for="hd-copy-purchase-from">Copy purchase / warranty from</label>
+            <select id="hd-copy-purchase-from" class="form-select form-select-sm" aria-label="Copy purchase and warranty from another machine">
+                <option value="">Select a machine…</option>
+                @if (same.Count > 0)
+                {
+                    <optgroup label="Same specs">
+                        @foreach (var s in same)
+                        {
+                            <option value="@s.MachineId"
+                                    data-cost="@(s.PurchaseCost?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "")"
+                                    data-currency="@(s.PurchaseCurrency ?? "")"
+                                    data-purchase="@(s.PurchaseDate?.ToString("yyyy-MM-dd") ?? "")"
+                                    data-wstart="@(s.WarrantyStartDate?.ToString("yyyy-MM-dd") ?? "")"
+                                    data-wend="@(s.WarrantyEndDate?.ToString("yyyy-MM-dd") ?? "")">
+                                @s.Label@(s.PurchaseCost is decimal c ? $" · {c:N0}" : "")
+                            </option>
+                        }
+                    </optgroup>
+                }
+                @if (other.Count > 0)
+                {
+                    <optgroup label="Other machines">
+                        @foreach (var s in other)
+                        {
+                            <option value="@s.MachineId"
+                                    data-cost="@(s.PurchaseCost?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "")"
+                                    data-currency="@(s.PurchaseCurrency ?? "")"
+                                    data-purchase="@(s.PurchaseDate?.ToString("yyyy-MM-dd") ?? "")"
+                                    data-wstart="@(s.WarrantyStartDate?.ToString("yyyy-MM-dd") ?? "")"
+                                    data-wend="@(s.WarrantyEndDate?.ToString("yyyy-MM-dd") ?? "")">
+                                @s.Label@(s.PurchaseCost is decimal c ? $" · {c:N0}" : "")
+                            </option>
+                        }
+                    </optgroup>
+                }
+            </select>
+            <div class="form-text">Fills cost, purchase date, and warranty dates — review before save.</div>
+        </div>
+    </div>
+    <script>
+        (function () {
+            var sel = document.getElementById('hd-copy-purchase-from');
+            if (!sel || sel.dataset.bound === '1') return;
+            sel.dataset.bound = '1';
+            sel.addEventListener('change', function () {
+                var opt = sel.selectedOptions && sel.selectedOptions[0];
+                if (!opt || !opt.value) return;
+                var form = sel.closest('form');
+                if (!form) return;
+                function set(name, val) {
+                    var el = form.querySelector('[name="' + name + '"]');
+                    if (el) el.value = val || '';
+                }
+                var cost = opt.getAttribute('data-cost') || '';
+                var currency = opt.getAttribute('data-currency') || '';
+                set('PurchaseCost', cost);
+                if (currency) set('PurchaseCurrency', currency);
+                else if (cost) set('PurchaseCurrency', 'AUD');
+                set('PurchaseDate', opt.getAttribute('data-purchase'));
+                set('WarrantyStartDate', opt.getAttribute('data-wstart'));
+                set('WarrantyEndDate', opt.getAttribute('data-wend'));
+                sel.selectedIndex = 0;
+            });
+        })();
+    </script>
+}

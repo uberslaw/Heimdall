@@ -47,23 +47,26 @@ internal static class ClientUpdateHelper
                 "Heimdall", "update");
             Directory.CreateDirectory(updateRoot);
             var zipPath = Path.Combine(updateRoot, "heimdall-client-agent.zip");
-            var extractDir = Path.Combine(updateRoot, "extracted");
+            // Unique per attempt — a previous installer (or AV) often still holds handles on the fixed
+            // "extracted" folder, which made Directory.Delete throw and surface as
+            // "cannot access …\update\extracted because it is being used by another process".
+            var extractDir = Path.Combine(updateRoot, "extracted-" + Guid.NewGuid().ToString("n"));
+
+            TryCleanupStaleExtractDirs(updateRoot, logger);
 
             logger.LogInformation("Client update: downloading pack (expect version {Version})", request.Version);
 
             var ok = await api.DownloadClientPackAsync(request.DownloadPath, zipPath, ct);
             if (!ok)
-                return (false, false, "Failed: Downloading pack from API failed");
+                return (false, false, "Pack download from API failed");
 
             var sha = HashFile(zipPath);
             if (!string.Equals(sha, request.ZipSha256, StringComparison.OrdinalIgnoreCase))
             {
                 var exp = request.ZipSha256.Length >= 12 ? request.ZipSha256[..12] : request.ZipSha256;
-                return (false, false, $"Failed: zip SHA256 mismatch (got {sha[..12]}… expected {exp}…)");
+                return (false, false, $"zip SHA256 mismatch (got {sha[..12]}… expected {exp}…)");
             }
 
-            if (Directory.Exists(extractDir))
-                Directory.Delete(extractDir, recursive: true);
             ZipFile.ExtractToDirectory(zipPath, extractDir);
 
             var packRoot = extractDir;
@@ -74,7 +77,7 @@ internal static class ClientUpdateHelper
             {
                 var found = Directory.EnumerateFiles(extractDir, "Install-WorkstationCollector.cmd", SearchOption.AllDirectories).FirstOrDefault();
                 if (found is null)
-                    return (false, false, "Failed: Install-WorkstationCollector.cmd missing from pack");
+                    return (false, false, "Install-WorkstationCollector.cmd missing from pack");
                 packRoot = Path.GetDirectoryName(found)!;
             }
 
@@ -99,18 +102,70 @@ internal static class ClientUpdateHelper
             logger.LogWarning("Client update: spawning silent installer for version {Version}", request.Version);
             var proc = Process.Start(psi);
             if (proc is null)
-                return (false, false, "Failed: could not start installer process");
+                return (false, false, "could not start installer process");
 
             return (true, true, $"Applying: silent installer started (pid {proc.Id}), target version {request.Version}");
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Client update failed");
-            return (false, false, "Failed: " + ex.Message);
+            // Do not prefix "Failed: " — ClientVersion FormatUpdateProgress already prepends Phase.
+            return (false, false, ex.Message);
         }
         finally
         {
             lock (Gate) { _inFlight = false; }
+        }
+    }
+
+    /// <summary>
+    /// Best-effort cleanup of prior extract folders. Locked dirs are renamed aside so they no longer
+    /// block the next attempt; rename failures are ignored (unique extract path still proceeds).
+    /// </summary>
+    private static void TryCleanupStaleExtractDirs(string updateRoot, ILogger logger)
+    {
+        IEnumerable<string> candidates;
+        try
+        {
+            candidates = Directory.EnumerateDirectories(updateRoot)
+                .Where(d =>
+                {
+                    var name = Path.GetFileName(d);
+                    return name.Equals("extracted", StringComparison.OrdinalIgnoreCase)
+                           || name.StartsWith("extracted-", StringComparison.OrdinalIgnoreCase)
+                           || name.StartsWith("extracted.old.", StringComparison.OrdinalIgnoreCase);
+                })
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Client update: could not enumerate extract dirs under {Root}", updateRoot);
+            return;
+        }
+
+        foreach (var dir in candidates)
+        {
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+                continue;
+            }
+            catch (Exception deleteEx)
+            {
+                logger.LogDebug(deleteEx, "Client update: could not delete {Dir}; trying rename", dir);
+            }
+
+            try
+            {
+                var quarantine = Path.Combine(
+                    updateRoot,
+                    "extracted.old." + DateTime.UtcNow.ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("n")[..8]);
+                Directory.Move(dir, quarantine);
+            }
+            catch (Exception renameEx)
+            {
+                logger.LogDebug(renameEx, "Client update: leaving locked extract dir {Dir}", dir);
+            }
         }
     }
 
