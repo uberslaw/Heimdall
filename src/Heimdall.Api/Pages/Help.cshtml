@@ -19,6 +19,7 @@
         <a class="btn btn-ghost btn-sm" href="#socratize">Socratize</a>
         <a class="btn btn-ghost btn-sm" href="#sessions">Sessions</a>
         <a class="btn btn-ghost btn-sm" href="#remote-machines">Online Status</a>
+        <a class="btn btn-ghost btn-sm" href="#storage">Storage</a>
         <a class="btn btn-ghost btn-sm" href="#tuflow-runs">TUFLOW Runs</a>
         <a class="btn btn-ghost btn-sm" href="#historical-dashboard">Flood hub</a>
         <a class="btn btn-ghost btn-sm" href="#staff-access">Staff RDP</a>
@@ -44,12 +45,24 @@
 <div id="ops" class="visually-hidden" aria-hidden="true"></div>
 <section id="fleet" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Fleet</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> Digital Technology console — computers, live util, sessions, online status, client version, cost, and stats in one place.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> Digital Technology console — computers, live util, sessions, online status, storage, client version, cost, and stats in one place.</p>
     <ol class="small mb-0">
         <li>Open <a asp-page="/Fleet">Fleet</a>. Tabs load on demand (only the active tab’s data runs on first paint).</li>
         <li>Legacy URLs (<code>/</code>, <code>/Ops</code>, Sessions, Online Status, Client Version, Cost, Stats) redirect into the matching Fleet tab.</li>
         <li><strong>Live</strong> shows estate-wide 30s util gauges for every known machine (not Flood-gated).</li>
+        <li><strong>Storage</strong> shows drive free-space bars and weekly deep-scan results (top folders / large files / hotspots).</li>
         <li>Online Status still uses on-demand Ping / Test RDP — probes are not run on every page load.</li>
+    </ol>
+</section>
+
+<section id="storage" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Fleet → Storage</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> central disk-space view — per-machine volume fill, last deep scan, and known hotspots (<code>ccmcache</code>, <code>Projects</code>, user profiles).</p>
+    <ol class="small mb-0">
+        <li>Open <a asp-page="/Fleet" asp-route-tab="storage">Fleet → Storage</a>. Cards show drive used/free with green (&lt;70%), amber (70–85%), red (&gt;85%) bars from heartbeat volume data.</li>
+        <li>Click a card to expand top non-system folders, large files, and hotspots from the last deep scan.</li>
+        <li>The API queues a weekly fleet scan (<code>Heimdall:StorageScan</code> — day/time UTC, min agent version). <strong>Run scan now</strong> queues all eligible hosts; expand a card for a single host. Offline agents keep the pending request until they check in.</li>
+        <li>Fleet scans use agent disk usage (≥ v6): top 5 non-system folders, top 5 files ≥ 1&nbsp;GB, plus hotspot sizes. Per-host custom scans remain on the machine detail Storage panel.</li>
     </ol>
 </section>
 

@@ -1,6 +1,7 @@
 @page
 @model FleetLiveModel
 @using Heimdall.Api.Services
+@using Heimdall.Shared.Contracts
 @{
     ViewData["Title"] = "Live";
     ViewData["HelpFragment"] = "fleet-live";
@@ -13,10 +14,10 @@
         <tr>
             <th class="hd-col-host hd-th-tip" data-sort="text" scope="col"
                 data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
-                title="Friendly name when set, otherwise hostname. Hostname and IP show underneath when a friendly name is used. Click to sort.">Machine</th>
+                title="Friendly name when set, otherwise hostname. Rose gold link; orange halo when agent is offline (no check-in in 5 minutes). Hostname and IP show underneath when a friendly name is used. Click to sort.">Machine</th>
             <th class="hd-col-user hd-th-tip" data-sort="text" scope="col"
                 data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
-                title="Username from the latest fleet sample (~30s). Empty when nobody is reported on that sample. Click to sort.">User</th>
+                title="Username from the latest fleet sample (~30s). Green = active session; rose gold = disconnected. Empty when nobody is reported on that sample. Click to sort.">User</th>
             <th class="hd-th-tip" data-sort="text" scope="col"
                 data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
                 title="From the latest sample: Active = TUFLOW is running and the machine is busy (GPU &gt; 5%, CPU &gt; 10%, or disk read/write &gt; 5 MB/s). Idle = TUFLOW is running but below those thresholds. N/A = TUFLOW not detected. Click to sort.">Active</th>
@@ -62,11 +63,17 @@
         var statusLabel = HistoricalDashboardModel.ActiveIdleLabel(r.Status);
         var statusClass = HistoricalDashboardModel.FleetStatusTextClass(r.Status);
         var hasFriendly = !string.IsNullOrWhiteSpace(r.FriendlyName);
-        var stale = (DateTimeOffset.UtcNow - r.LastSeenUtc).TotalMinutes > 15;
+        var offline = r.LastSeenUtc < DateTimeOffset.UtcNow.Add(-RemoteMachineService.OnlineWindow);
         var checkInLabel = HistoricalDashboardModel.FormatContact(r.LastSeenUtc);
+        var userSessionClass = r.SessionState switch
+        {
+            SessionState.Active => "hd-live-user-active",
+            SessionState.Disconnected => "hd-live-user-disc",
+            _ => null
+        };
         <tr data-machine-id="@r.MachineId">
-            <td class="hd-col-host" data-sort-value="@r.DisplayName" data-live="host" title="@(stale ? $"Last agent check-in: {checkInLabel} (stale)" : r.Hostname)">
-                <a class="hd-live-host @(stale ? "hd-live-host-stale" : null)" asp-page="/Machine" asp-route-hostname="@r.Hostname" asp-route-range="1d" title="@(stale ? $"Last agent check-in: {checkInLabel}" : r.Hostname)">@r.DisplayName</a>
+            <td class="hd-col-host" data-sort-value="@r.DisplayName" data-live="host" title="@(offline ? $"Last agent check-in: {checkInLabel} (offline)" : r.Hostname)">
+                <a class="hd-live-host @(offline ? "hd-live-host-offline" : null)" asp-page="/Machine" asp-route-hostname="@r.Hostname" asp-route-range="1d" title="@(offline ? $"Last agent check-in: {checkInLabel}" : r.Hostname)">@r.DisplayName</a>
                 @if (hasFriendly)
                 {
                     <div class="hd-live-hostname text-secondary small">@r.Hostname</div>
@@ -79,7 +86,8 @@
             <td class="hd-col-user" data-sort-value="@liveUser" data-live="user">
                 @if (!string.IsNullOrWhiteSpace(liveUser))
                 {
-                    <a asp-page="/User" asp-route-username="@liveUser" asp-route-range="1d">@liveUser</a>
+                    <a class="@userSessionClass" asp-page="/User" asp-route-username="@liveUser" asp-route-range="1d"
+                       title="@(r.SessionState == SessionState.Active ? "Active session" : r.SessionState == SessionState.Disconnected ? "Disconnected session" : null)">@liveUser</a>
                 }
                 else
                 {
@@ -359,6 +367,7 @@
             if (oldLink.textContent !== newLink.textContent) oldLink.textContent = newLink.textContent;
             if (newLink.getAttribute('href') && oldLink.getAttribute('href') !== newLink.getAttribute('href'))
               oldLink.setAttribute('href', newLink.getAttribute('href'));
+            oldLink.classList.toggle('hd-live-host-offline', newLink.classList.contains('hd-live-host-offline'));
             oldLink.classList.toggle('hd-live-host-stale', newLink.classList.contains('hd-live-host-stale'));
             if (newLink.hasAttribute('title')) oldLink.title = newLink.title;
           }

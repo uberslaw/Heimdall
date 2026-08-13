@@ -2119,30 +2119,42 @@ table.hd-table.hd-live-fleet-table td.hd-col-host {
 }
 
 .hd-live-fleet-table .hd-live-host {
-  color: var(--hd-silver, #c8ced8);
+  color: var(--hd-rose-gold);
   font-weight: 600;
   text-decoration: none;
+  border-radius: 0.2rem;
+  box-shadow: none;
+  transition: box-shadow 0.15s ease, color 0.15s ease;
 }
 
 .hd-live-fleet-table .hd-live-ip {
   color: var(--hd-silver, #c8ced8);
 }
 
+.hd-live-fleet-table .hd-live-host.hd-live-host-offline,
 .hd-live-fleet-table .hd-live-host.hd-live-host-stale {
-  color: #e07070;
+  color: var(--hd-rose-gold);
+  box-shadow:
+    0 0 0 1px rgba(255, 140, 60, 0.45),
+    0 0 10px 2px rgba(255, 140, 60, 0.35);
 }
 
 .hd-live-fleet-table .hd-live-host:hover,
 .hd-live-fleet-table .hd-live-host:focus {
-  color: var(--hd-silver-bright, #e8ecf2);
+  color: var(--hd-rose-gold-light);
   text-decoration: underline;
-  text-decoration-color: var(--hd-silver-rim, currentColor);
+  text-decoration-color: var(--hd-rose-gold-deep, currentColor);
 }
 
+.hd-live-fleet-table .hd-live-host.hd-live-host-offline:hover,
+.hd-live-fleet-table .hd-live-host.hd-live-host-offline:focus,
 .hd-live-fleet-table .hd-live-host.hd-live-host-stale:hover,
 .hd-live-fleet-table .hd-live-host.hd-live-host-stale:focus {
-  color: #f09090;
-  text-decoration-color: rgba(224, 112, 112, 0.55);
+  color: var(--hd-rose-gold-light);
+  text-decoration-color: rgba(255, 140, 60, 0.65);
+  box-shadow:
+    0 0 0 1px rgba(255, 140, 60, 0.55),
+    0 0 12px 3px rgba(255, 140, 60, 0.42);
 }
 
 .hd-live-fleet-table .hd-col-user,
@@ -2150,11 +2162,31 @@ table.hd-table.hd-live-fleet-table td.hd-col-host {
   color: var(--hd-silver, #c8ced8);
 }
 
+.hd-live-fleet-table .hd-col-user a.hd-live-user-active {
+  color: #3db8a0;
+}
+
+.hd-live-fleet-table .hd-col-user a.hd-live-user-disc {
+  color: var(--hd-rose-gold);
+}
+
 .hd-live-fleet-table .hd-col-user a:hover,
 .hd-live-fleet-table .hd-col-user a:focus {
   color: var(--hd-silver-bright, #e8ecf2);
   text-decoration: underline;
   text-decoration-color: var(--hd-silver-rim, currentColor);
+}
+
+.hd-live-fleet-table .hd-col-user a.hd-live-user-active:hover,
+.hd-live-fleet-table .hd-col-user a.hd-live-user-active:focus {
+  color: #8fe0cf;
+  text-decoration-color: rgba(61, 184, 160, 0.55);
+}
+
+.hd-live-fleet-table .hd-col-user a.hd-live-user-disc:hover,
+.hd-live-fleet-table .hd-col-user a.hd-live-user-disc:focus {
+  color: var(--hd-rose-gold-light);
+  text-decoration-color: var(--hd-rose-gold-deep, currentColor);
 }
 
 .hd-live-fleet-table .hd-live-host,
@@ -3833,6 +3865,82 @@ button.hd-machines-stat-filter:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--hd-text, #e8ecf1);
+}
+
+/* Fleet → Storage card grid */
+.hd-storage-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem 1rem;
+}
+
+@media (max-width: 1100px) {
+  .hd-storage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .hd-storage-grid { grid-template-columns: 1fr; }
+}
+
+.hd-storage-card {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  min-width: 0;
+}
+
+.hd-storage-card-toggle {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+.hd-storage-card-toggle:focus-visible {
+  outline: 2px solid var(--hd-accent, #3db8a0);
+  outline-offset: 2px;
+}
+
+.hd-storage-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.hd-storage-host {
+  font-weight: 650;
+  color: var(--hd-text, #e8ecf1);
+  text-decoration: none;
+}
+
+.hd-storage-host:hover {
+  text-decoration: underline;
+}
+
+.hd-storage-hotspots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.hd-storage-chip {
+  display: inline-block;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  padding: 0.18rem 0.45rem;
+  border-radius: 4px;
+  border: 1px solid var(--hd-border, rgba(255, 255, 255, 0.14));
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--hd-muted, #9aa3b2);
+}
+
+.hd-storage-expand {
+  border-top: 1px solid var(--hd-border, rgba(255, 255, 255, 0.1));
+  margin-top: 0.65rem;
 }
 
 /* Status card: CPU | GPU / Disk | Network — two columns so Disk lines up under CPU */

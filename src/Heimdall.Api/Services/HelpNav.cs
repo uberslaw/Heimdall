@@ -27,6 +27,7 @@ public static class HelpNav
                 "live" => "fleet-live",
                 "sessions" => "sessions",
                 "online" => "remote-machines",
+                "storage" => "storage",
                 "clients" => "client-version",
                 "cost" => "cost",
                 "stats" => "stats",
@@ -107,6 +108,9 @@ public static class HelpNav
 
         if (path.Equals("/Cost", StringComparison.OrdinalIgnoreCase))
             return "cost";
+
+        if (path.Equals("/Storage", StringComparison.OrdinalIgnoreCase))
+            return "storage";
 
         if (path.Equals("/Stats", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/ClientVersion", StringComparison.OrdinalIgnoreCase))

@@ -72,6 +72,7 @@ builder.Services.AddScoped<SessionDrilldownService>();
 builder.Services.AddScoped<PublishedVersionService>();
 builder.Services.AddSingleton<ClientPackReadinessService>();
 builder.Services.AddScoped<ClientUpdateService>();
+builder.Services.AddScoped<StorageScanService>();
 builder.Services.AddSingleton<DiagnosticBundleService>();
 builder.Services.AddScoped<FleetDashboardService>();
 builder.Services.AddScoped<MachineUtilisationService>();
@@ -81,6 +82,7 @@ builder.Services.AddHostedService<FleetSnapshotRetentionHostedService>();
 builder.Services.AddHostedService<SiteUsageRetentionHostedService>();
 builder.Services.AddHostedService<ClientUpdateStuckHostedService>();
 builder.Services.AddHostedService<SpecReviewHostedService>();
+builder.Services.AddHostedService<StorageScanHostedService>();
 
 var app = builder.Build();
 

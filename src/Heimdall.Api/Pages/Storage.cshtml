@@ -1,0 +1,271 @@
+@page
+@model StorageModel
+@using Heimdall.Api.Services
+@using Heimdall.Shared.Contracts
+@{
+    ViewData["Title"] = "Storage";
+    ViewData["HelpFragment"] = "storage";
+    var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
+    if (isPartial)
+        Layout = null;
+    var opts = Model.ScanOptions;
+}
+
+@if (!isPartial)
+{
+    <h1 class="hd-title mb-1">Storage</h1>
+}
+
+<partial name="_Toasts" />
+
+<div class="hd-panel mb-3">
+    <div class="d-flex flex-wrap align-items-end justify-content-between gap-3">
+        <div>
+            <p class="text-secondary small mb-1">
+                Drive free space from agent heartbeats. Deep scans (top non-system folders, files ≥ 1&nbsp;GB, hotspots)
+                run weekly from the API or on demand — agent v@(opts.MinAgentVersion)+.
+            </p>
+            <p class="text-secondary small mb-0">
+                Weekly:
+                @(opts.Enabled ? "enabled" : "disabled")
+                · @opts.DayOfWeek @opts.TimeUtc.ToString("HH:mm") UTC
+                @if (Model.LastWeeklyRunUtc is { } lastWeekly)
+                {
+                    <text>· last run @StorageModel.FormatLocalTimestamp(lastWeekly)</text>
+                }
+                · @Model.Cards.Count machine@(Model.Cards.Count == 1 ? "" : "s")
+                · @Model.OnlineCount online
+                · @Model.WithVolumesCount with volumes
+                @if (Model.PendingScanCount > 0)
+                {
+                    <text>· @Model.PendingScanCount scan(s) pending</text>
+                }
+            </p>
+        </div>
+        <form method="post" asp-page-handler="RunAll" class="d-flex flex-wrap gap-2">
+            <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm"
+                    title="Queue a fleet storage scan on all eligible agents (skips hosts that already have a scan pending). Offline hosts keep the request until they check in."
+                    onclick="return confirm('Queue a fleet storage scan on all eligible machines?\n\nAgents v@(opts.MinAgentVersion)+ will pick it up on config refresh / ~20s poll.\nOffline machines keep the pending request.');">
+                Run scan now (all)
+            </button>
+        </form>
+    </div>
+</div>
+
+<form method="get" action="/Fleet" class="row g-2 align-items-end mb-3">
+    <input type="hidden" name="tab" value="storage" />
+    <div class="col-auto flex-grow-1" style="min-width:12rem;max-width:22rem">
+        <label class="form-label small mb-0" for="storage-q">Search</label>
+        <input class="form-control form-control-sm" id="storage-q" name="q" value="@Model.Q" placeholder="Hostname…" />
+    </div>
+    <div class="col-auto">
+        <label class="form-label small mb-0" for="storage-sort">Sort</label>
+        <select class="form-select form-select-sm" id="storage-sort" name="sort">
+            @if (Model.Sort == "name")
+            {
+                <option value="full">Most full first</option>
+                <option value="name" selected>Name</option>
+                <option value="scan">Last scan</option>
+            }
+            else if (Model.Sort == "scan")
+            {
+                <option value="full">Most full first</option>
+                <option value="name">Name</option>
+                <option value="scan" selected>Last scan</option>
+            }
+            else
+            {
+                <option value="full" selected>Most full first</option>
+                <option value="name">Name</option>
+                <option value="scan">Last scan</option>
+            }
+        </select>
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Apply</button>
+    </div>
+</form>
+
+@if (Model.Cards.Count == 0)
+{
+    <p class="text-secondary mb-0">No machines match. Agents appear after their first heartbeat.</p>
+}
+else
+{
+    <div class="hd-storage-grid">
+        @foreach (var card in Model.Cards)
+        {
+            var expandId = "storage-exp-" + card.Hostname.GetHashCode().ToString("x");
+            <article class="hd-storage-card hd-panel" data-hostname="@card.Hostname">
+                <button type="button"
+                        class="hd-storage-card-toggle"
+                        data-bs-toggle="collapse"
+                        data-bs-target="#@expandId"
+                        aria-expanded="false"
+                        aria-controls="@expandId">
+                    <div class="hd-storage-card-head">
+                        <div>
+                            <a class="hd-storage-host" asp-page="/Machine" asp-route-hostname="@card.Hostname"
+                               onclick="event.stopPropagation()">@card.Hostname</a>
+                            @if (!string.IsNullOrWhiteSpace(card.FriendlyName))
+                            {
+                                <div class="text-secondary small">@card.FriendlyName</div>
+                            }
+                        </div>
+                        <div class="hd-storage-card-status text-secondary small text-end">
+                            @if (card.Online)
+                            {
+                                <span class="badge-pill badge-active">Online</span>
+                            }
+                            else
+                            {
+                                <span class="badge-pill badge-off">Stale</span>
+                            }
+                            @if (card.PendingScan)
+                            {
+                                <div class="text-warning mt-1">Scan pending</div>
+                            }
+                            else if (card.ScanUtc is { } scanUtc)
+                            {
+                                <div class="mt-1">Scan @StorageModel.FormatLocalTimestamp(scanUtc)</div>
+                            }
+                            else
+                            {
+                                <div class="mt-1">No deep scan</div>
+                            }
+                        </div>
+                    </div>
+
+                    @if (card.Volumes.Count == 0)
+                    {
+                        <p class="text-secondary small mb-0 mt-2">No volume data yet.</p>
+                    }
+                    else
+                    {
+                        <div class="hd-disk-volumes mt-2">
+                            @foreach (var v in card.Volumes)
+                            {
+                                var pct = v.UsedPct;
+                                var tone = StorageModel.BarToneClass(pct);
+                                <div class="hd-disk-volume">
+                                    <div class="hd-disk-volume-head">
+                                        <strong>@v.Name</strong>
+                                        @if (!string.IsNullOrWhiteSpace(v.Label))
+                                        {
+                                            <span class="text-secondary small">@v.Label</span>
+                                        }
+                                        <span class="hd-disk-volume-meta text-secondary small">
+                                            @v.UsedGb.ToString("0.#") GB used · @v.FreeGb.ToString("0.#") GB free · @v.TotalGb.ToString("0.#") GB
+                                        </span>
+                                    </div>
+                                    <div class="hd-disk-bar" role="progressbar" aria-valuenow="@((int)pct)" aria-valuemin="0" aria-valuemax="100">
+                                        <div class="hd-disk-bar-fill @tone" style="width:@pct.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)%"></div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @if (card.HotspotBadges.Count > 0)
+                    {
+                        <div class="hd-storage-hotspots mt-2">
+                            @foreach (var b in card.HotspotBadges)
+                            {
+                                <span class="hd-storage-chip" title="@b.Key">@b.Label · @StorageModel.FormatBytes(b.SizeBytes)</span>
+                            }
+                        </div>
+                    }
+                </button>
+
+                <div class="collapse" id="@expandId">
+                    <div class="hd-storage-expand pt-2">
+                        @if (card.Scan is { } scan)
+                        {
+                            <div class="small text-secondary mb-2">
+                                Deep scan @scan.RootPath
+                                · @scan.ElapsedSeconds.ToString("0.#")s
+                                · @scan.FilesSeen.ToString("N0") files
+                                @if (scan.Truncated)
+                                {
+                                    <span class="text-warning"> · truncated</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(scan.Error))
+                                {
+                                    <span class="text-danger"> · @scan.Error</span>
+                                }
+                            </div>
+
+                            @if (scan.Hotspots.Count > 0)
+                            {
+                                <h3 class="h6 mb-1">Hotspots</h3>
+                                <div class="hd-disk-usage-list small mb-2">
+                                    @foreach (var h in scan.Hotspots.Where(x => x.Exists || x.SizeBytes > 0).OrderByDescending(x => x.SizeBytes))
+                                    {
+                                        <div class="hd-disk-usage-row">
+                                            <span class="hd-disk-usage-size">@StorageModel.FormatBytes(h.SizeBytes)</span>
+                                            <span class="hd-disk-usage-path" title="@h.Path">@StorageModel.HotspotLabel(h) — @h.Path</span>
+                                        </div>
+                                    }
+                                </div>
+                            }
+
+                            <h3 class="h6 mb-1">Top folders</h3>
+                            @if (scan.TopFolders.Count == 0)
+                            {
+                                <p class="text-secondary small mb-2">None reported.</p>
+                            }
+                            else
+                            {
+                                <div class="hd-disk-usage-list small mb-2">
+                                    @foreach (var f in scan.TopFolders)
+                                    {
+                                        <div class="hd-disk-usage-row">
+                                            <span class="hd-disk-usage-size">@StorageModel.FormatBytes(f.SizeBytes)</span>
+                                            <span class="hd-disk-usage-path" title="@f.Path">@f.Path</span>
+                                        </div>
+                                    }
+                                </div>
+                            }
+
+                            <h3 class="h6 mb-1">Large files (≥ 1 GB on fleet scans)</h3>
+                            @if (scan.LargeFiles.Count == 0)
+                            {
+                                <p class="text-secondary small mb-2">None at or above the threshold.</p>
+                            }
+                            else
+                            {
+                                <div class="hd-disk-usage-list small mb-2">
+                                    @foreach (var f in scan.LargeFiles)
+                                    {
+                                        <div class="hd-disk-usage-row">
+                                            <span class="hd-disk-usage-size">@StorageModel.FormatBytes(f.SizeBytes)</span>
+                                            <span class="hd-disk-usage-path" title="@f.Path">@f.Path</span>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <p class="text-secondary small mb-2">No deep scan result yet. Queue a fleet scan or open the machine page.</p>
+                        }
+
+                        <div class="d-flex flex-wrap gap-2">
+                            <form method="post" asp-page-handler="RunOne">
+                                <input type="hidden" name="Hostname" value="@card.Hostname" />
+                                <input type="hidden" name="Q" value="@Model.Q" />
+                                <input type="hidden" name="Sort" value="@Model.Sort" />
+                                <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm"
+                                        @(card.PendingScan || !card.SupportsScan ? "disabled" : null)
+                                        title="@(card.SupportsScan ? "Queue fleet-profile scan for this host" : $"Needs agent v{opts.MinAgentVersion}+")">
+                                    Scan this machine
+                                </button>
+                            </form>
+                            <a class="hd-btn hd-btn-silver hd-btn-sm" asp-page="/Machine" asp-route-hostname="@card.Hostname">Machine detail</a>
+                        </div>
+                    </div>
+                </div>
+            </article>
+        }
+    </div>
+}

@@ -8,14 +8,44 @@
     ".NETCoreApp,Version=v10.0": {
       "Heimdall.Api/0.1.0": {
         "dependencies": {
+          "Azure.Identity": "1.17.0",
           "Heimdall.Shared": "0.1.0",
           "Microsoft.AspNetCore.Authentication.Negotiate": "10.0.10",
           "Microsoft.EntityFrameworkCore.Sqlite": "10.0.10",
           "Microsoft.Extensions.Hosting.WindowsServices": "10.0.10",
-          "System.DirectoryServices.AccountManagement": "10.0.0"
+          "Microsoft.Graph": "5.94.0",
+          "System.DirectoryServices.AccountManagement": "10.0.0",
+          "System.Security.Cryptography.ProtectedData": "10.0.0",
+          "System.ServiceProcess.ServiceController": "10.0.10"
         },
         "runtime": {
           "Heimdall.Api.dll": {}
+        }
+      },
+      "Azure.Core/1.49.0": {
+        "dependencies": {
+          "Microsoft.Bcl.AsyncInterfaces": "8.0.0",
+          "System.ClientModel": "1.7.0",
+          "System.Memory.Data": "8.0.1"
+        },
+        "runtime": {
+          "lib/net8.0/Azure.Core.dll": {
+            "assemblyVersion": "1.49.0.0",
+            "fileVersion": "1.4900.25.47211"
+          }
+        }
+      },
+      "Azure.Identity/1.17.0": {
+        "dependencies": {
+          "Azure.Core": "1.49.0",
+          "Microsoft.Identity.Client": "4.76.0",
+          "Microsoft.Identity.Client.Extensions.Msal": "4.76.0"
+        },
+        "runtime": {
+          "lib/net8.0/Azure.Identity.dll": {
+            "assemblyVersion": "1.17.0.0",
+            "fileVersion": "1.1700.25.50703"
+          }
         }
       },
       "Microsoft.AspNetCore.Authentication.Negotiate/10.0.10": {
@@ -26,6 +56,14 @@
           "lib/net10.0/Microsoft.AspNetCore.Authentication.Negotiate.dll": {
             "assemblyVersion": "10.0.10.0",
             "fileVersion": "10.0.1026.32716"
+          }
+        }
+      },
+      "Microsoft.Bcl.AsyncInterfaces/8.0.0": {
+        "runtime": {
+          "lib/netstandard2.1/Microsoft.Bcl.AsyncInterfaces.dll": {
+            "assemblyVersion": "8.0.0.0",
+            "fileVersion": "8.0.23.53103"
           }
         }
       },
@@ -108,6 +146,215 @@
           "lib/net10.0/Microsoft.Extensions.Hosting.WindowsServices.dll": {
             "assemblyVersion": "10.0.0.10",
             "fileVersion": "10.0.1026.32716"
+          }
+        }
+      },
+      "Microsoft.Graph/5.94.0": {
+        "dependencies": {
+          "Microsoft.Graph.Core": "3.2.4"
+        },
+        "runtime": {
+          "lib/net5.0/Microsoft.Graph.dll": {
+            "assemblyVersion": "5.94.0.0",
+            "fileVersion": "5.94.0.0"
+          }
+        }
+      },
+      "Microsoft.Graph.Core/3.2.4": {
+        "dependencies": {
+          "Microsoft.IdentityModel.Protocols.OpenIdConnect": "8.6.1",
+          "Microsoft.IdentityModel.Validators": "8.6.1",
+          "Microsoft.Kiota.Abstractions": "1.17.1",
+          "Microsoft.Kiota.Authentication.Azure": "1.17.1",
+          "Microsoft.Kiota.Http.HttpClientLibrary": "1.17.1",
+          "Microsoft.Kiota.Serialization.Form": "1.17.1",
+          "Microsoft.Kiota.Serialization.Json": "1.17.1",
+          "Microsoft.Kiota.Serialization.Multipart": "1.17.1",
+          "Microsoft.Kiota.Serialization.Text": "1.17.1"
+        },
+        "runtime": {
+          "lib/net6.0/Microsoft.Graph.Core.dll": {
+            "assemblyVersion": "3.2.4.0",
+            "fileVersion": "3.2.4.0"
+          }
+        }
+      },
+      "Microsoft.Identity.Client/4.76.0": {
+        "dependencies": {
+          "Microsoft.IdentityModel.Abstractions": "8.6.1"
+        },
+        "runtime": {
+          "lib/net8.0/Microsoft.Identity.Client.dll": {
+            "assemblyVersion": "4.76.0.0",
+            "fileVersion": "4.76.0.0"
+          }
+        }
+      },
+      "Microsoft.Identity.Client.Extensions.Msal/4.76.0": {
+        "dependencies": {
+          "Microsoft.Identity.Client": "4.76.0",
+          "System.Security.Cryptography.ProtectedData": "10.0.0"
+        },
+        "runtime": {
+          "lib/net8.0/Microsoft.Identity.Client.Extensions.Msal.dll": {
+            "assemblyVersion": "4.76.0.0",
+            "fileVersion": "4.76.0.0"
+          }
+        }
+      },
+      "Microsoft.IdentityModel.Abstractions/8.6.1": {
+        "runtime": {
+          "lib/net9.0/Microsoft.IdentityModel.Abstractions.dll": {
+            "assemblyVersion": "8.6.1.0",
+            "fileVersion": "8.6.1.60307"
+          }
+        }
+      },
+      "Microsoft.IdentityModel.JsonWebTokens/8.6.1": {
+        "dependencies": {
+          "Microsoft.IdentityModel.Tokens": "8.6.1"
+        },
+        "runtime": {
+          "lib/net9.0/Microsoft.IdentityModel.JsonWebTokens.dll": {
+            "assemblyVersion": "8.6.1.0",
+            "fileVersion": "8.6.1.60307"
+          }
+        }
+      },
+      "Microsoft.IdentityModel.Logging/8.6.1": {
+        "dependencies": {
+          "Microsoft.IdentityModel.Abstractions": "8.6.1"
+        },
+        "runtime": {
+          "lib/net9.0/Microsoft.IdentityModel.Logging.dll": {
+            "assemblyVersion": "8.6.1.0",
+            "fileVersion": "8.6.1.60307"
+          }
+        }
+      },
+      "Microsoft.IdentityModel.Protocols/8.6.1": {
+        "dependencies": {
+          "Microsoft.IdentityModel.Tokens": "8.6.1"
+        },
+        "runtime": {
+          "lib/net9.0/Microsoft.IdentityModel.Protocols.dll": {
+            "assemblyVersion": "8.6.1.0",
+            "fileVersion": "8.6.1.60307"
+          }
+        }
+      },
+      "Microsoft.IdentityModel.Protocols.OpenIdConnect/8.6.1": {
+        "dependencies": {
+          "Microsoft.IdentityModel.Protocols": "8.6.1",
+          "System.IdentityModel.Tokens.Jwt": "8.6.1"
+        },
+        "runtime": {
+          "lib/net9.0/Microsoft.IdentityModel.Protocols.OpenIdConnect.dll": {
+            "assemblyVersion": "8.6.1.0",
+            "fileVersion": "8.6.1.60307"
+          }
+        }
+      },
+      "Microsoft.IdentityModel.Tokens/8.6.1": {
+        "dependencies": {
+          "Microsoft.IdentityModel.Logging": "8.6.1"
+        },
+        "runtime": {
+          "lib/net9.0/Microsoft.IdentityModel.Tokens.dll": {
+            "assemblyVersion": "8.6.1.0",
+            "fileVersion": "8.6.1.60307"
+          }
+        }
+      },
+      "Microsoft.IdentityModel.Validators/8.6.1": {
+        "dependencies": {
+          "Microsoft.IdentityModel.Protocols": "8.6.1",
+          "Microsoft.IdentityModel.Protocols.OpenIdConnect": "8.6.1",
+          "Microsoft.IdentityModel.Tokens": "8.6.1",
+          "System.IdentityModel.Tokens.Jwt": "8.6.1"
+        },
+        "runtime": {
+          "lib/net9.0/Microsoft.IdentityModel.Validators.dll": {
+            "assemblyVersion": "8.6.1.0",
+            "fileVersion": "8.6.1.60307"
+          }
+        }
+      },
+      "Microsoft.Kiota.Abstractions/1.17.1": {
+        "dependencies": {
+          "Std.UriTemplate": "2.0.1"
+        },
+        "runtime": {
+          "lib/net8.0/Microsoft.Kiota.Abstractions.dll": {
+            "assemblyVersion": "1.17.1.0",
+            "fileVersion": "1.17.1.0"
+          }
+        }
+      },
+      "Microsoft.Kiota.Authentication.Azure/1.17.1": {
+        "dependencies": {
+          "Azure.Core": "1.49.0",
+          "Microsoft.Kiota.Abstractions": "1.17.1"
+        },
+        "runtime": {
+          "lib/net8.0/Microsoft.Kiota.Authentication.Azure.dll": {
+            "assemblyVersion": "1.17.1.0",
+            "fileVersion": "1.17.1.0"
+          }
+        }
+      },
+      "Microsoft.Kiota.Http.HttpClientLibrary/1.17.1": {
+        "dependencies": {
+          "Microsoft.Kiota.Abstractions": "1.17.1"
+        },
+        "runtime": {
+          "lib/net8.0/Microsoft.Kiota.Http.HttpClientLibrary.dll": {
+            "assemblyVersion": "1.17.1.0",
+            "fileVersion": "1.17.1.0"
+          }
+        }
+      },
+      "Microsoft.Kiota.Serialization.Form/1.17.1": {
+        "dependencies": {
+          "Microsoft.Kiota.Abstractions": "1.17.1"
+        },
+        "runtime": {
+          "lib/net8.0/Microsoft.Kiota.Serialization.Form.dll": {
+            "assemblyVersion": "1.17.1.0",
+            "fileVersion": "1.17.1.0"
+          }
+        }
+      },
+      "Microsoft.Kiota.Serialization.Json/1.17.1": {
+        "dependencies": {
+          "Microsoft.Kiota.Abstractions": "1.17.1"
+        },
+        "runtime": {
+          "lib/net8.0/Microsoft.Kiota.Serialization.Json.dll": {
+            "assemblyVersion": "1.17.1.0",
+            "fileVersion": "1.17.1.0"
+          }
+        }
+      },
+      "Microsoft.Kiota.Serialization.Multipart/1.17.1": {
+        "dependencies": {
+          "Microsoft.Kiota.Abstractions": "1.17.1"
+        },
+        "runtime": {
+          "lib/net8.0/Microsoft.Kiota.Serialization.Multipart.dll": {
+            "assemblyVersion": "1.17.1.0",
+            "fileVersion": "1.17.1.0"
+          }
+        }
+      },
+      "Microsoft.Kiota.Serialization.Text/1.17.1": {
+        "dependencies": {
+          "Microsoft.Kiota.Abstractions": "1.17.1"
+        },
+        "runtime": {
+          "lib/net8.0/Microsoft.Kiota.Serialization.Text.dll": {
+            "assemblyVersion": "1.17.1.0",
+            "fileVersion": "1.17.1.0"
           }
         }
       },
@@ -261,6 +508,25 @@
           }
         }
       },
+      "Std.UriTemplate/2.0.1": {
+        "runtime": {
+          "lib/net5.0/Std.UriTemplate.dll": {
+            "assemblyVersion": "2.0.1.0",
+            "fileVersion": "2.0.1.0"
+          }
+        }
+      },
+      "System.ClientModel/1.7.0": {
+        "dependencies": {
+          "System.Memory.Data": "8.0.1"
+        },
+        "runtime": {
+          "lib/net9.0/System.ClientModel.dll": {
+            "assemblyVersion": "1.7.0.0",
+            "fileVersion": "1.700.25.47207"
+          }
+        }
+      },
       "System.Configuration.ConfigurationManager/10.0.0": {
         "dependencies": {
           "System.Security.Cryptography.ProtectedData": "10.0.0"
@@ -337,6 +603,26 @@
           }
         }
       },
+      "System.IdentityModel.Tokens.Jwt/8.6.1": {
+        "dependencies": {
+          "Microsoft.IdentityModel.JsonWebTokens": "8.6.1",
+          "Microsoft.IdentityModel.Tokens": "8.6.1"
+        },
+        "runtime": {
+          "lib/net9.0/System.IdentityModel.Tokens.Jwt.dll": {
+            "assemblyVersion": "8.6.1.0",
+            "fileVersion": "8.6.1.60307"
+          }
+        }
+      },
+      "System.Memory.Data/8.0.1": {
+        "runtime": {
+          "lib/net8.0/System.Memory.Data.dll": {
+            "assemblyVersion": "8.0.0.1",
+            "fileVersion": "8.0.1024.46610"
+          }
+        }
+      },
       "System.Security.Cryptography.ProtectedData/10.0.0": {
         "runtime": {
           "lib/net10.0/System.Security.Cryptography.ProtectedData.dll": {
@@ -377,12 +663,33 @@
       "serviceable": false,
       "sha512": ""
     },
+    "Azure.Core/1.49.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-wmY5VEEVTBJN+8KVB6qSVZYDCMpHs1UXooOijx/NH7OsMtK92NlxhPBpPyh4cR+07R/zyDGvA5+Fss4TpwlO+g==",
+      "path": "azure.core/1.49.0",
+      "hashPath": "azure.core.1.49.0.nupkg.sha512"
+    },
+    "Azure.Identity/1.17.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-QZiMa1O5lTniWTSDPyPVdBKOS0/M5DWXTfQ2xLOot96yp8Q5A69iScGtzCIxfbg/4bmp/TynibZ2VK1v3qsSNA==",
+      "path": "azure.identity/1.17.0",
+      "hashPath": "azure.identity.1.17.0.nupkg.sha512"
+    },
     "Microsoft.AspNetCore.Authentication.Negotiate/10.0.10": {
       "type": "package",
       "serviceable": true,
       "sha512": "sha512-OWroK6dgXRKygJ95IlYVkZdH/HBcLSO6MyeSe8ZkFco+kUQlOndfHsWE1tjWjPFHnh5cPT6T7vE5kU7QOiqQxQ==",
       "path": "microsoft.aspnetcore.authentication.negotiate/10.0.10",
       "hashPath": "microsoft.aspnetcore.authentication.negotiate.10.0.10.nupkg.sha512"
+    },
+    "Microsoft.Bcl.AsyncInterfaces/8.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-3WA9q9yVqJp222P3x1wYIGDAkpjAku0TMUaaQV22g6L67AI0LdOIrVS7Ht2vJfLHGSPVuqN94vIr15qn+HEkHw==",
+      "path": "microsoft.bcl.asyncinterfaces/8.0.0",
+      "hashPath": "microsoft.bcl.asyncinterfaces.8.0.0.nupkg.sha512"
     },
     "Microsoft.Data.Sqlite.Core/10.0.10": {
       "type": "package",
@@ -440,6 +747,132 @@
       "path": "microsoft.extensions.hosting.windowsservices/10.0.10",
       "hashPath": "microsoft.extensions.hosting.windowsservices.10.0.10.nupkg.sha512"
     },
+    "Microsoft.Graph/5.94.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-eHzO1P2Wxe68HIKK8ZsPmdVeBDa26rP0cAg1CtQhYUzRFXlxxZaOqsYCoqVEHAcZfgUqyFar7KSsFMdvN/dMFw==",
+      "path": "microsoft.graph/5.94.0",
+      "hashPath": "microsoft.graph.5.94.0.nupkg.sha512"
+    },
+    "Microsoft.Graph.Core/3.2.4": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-0kBbgRiWUrrc7Um0oDcXl9t8Hxzgoz9SddErRDhqdDm4TWDlT8ItYuIfjwoFPHO1O51kwkDtTxzDRwZThbW5Uw==",
+      "path": "microsoft.graph.core/3.2.4",
+      "hashPath": "microsoft.graph.core.3.2.4.nupkg.sha512"
+    },
+    "Microsoft.Identity.Client/4.76.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-j2FtmljuCveDJ7umBVYm6Bx3iVGA71U07Dc7byGr2Hrj7XlByZSknruCBUeYN3V75nn1VEhXegxE0MerxvxrXQ==",
+      "path": "microsoft.identity.client/4.76.0",
+      "hashPath": "microsoft.identity.client.4.76.0.nupkg.sha512"
+    },
+    "Microsoft.Identity.Client.Extensions.Msal/4.76.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-D0n3yMTa3gnDh1usrJmyxGWKYeqbQNCWLgQ0Tswf7S6nk9YobiCOX+M2V8EX5SPqkZxpwkTT6odAhaafu3TIeA==",
+      "path": "microsoft.identity.client.extensions.msal/4.76.0",
+      "hashPath": "microsoft.identity.client.extensions.msal.4.76.0.nupkg.sha512"
+    },
+    "Microsoft.IdentityModel.Abstractions/8.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-OwmvCXYTttrxV3qT7QKDkoQP4/DB4RWjTwEqV+dNfb2opHn29WGDzoF+r4BVFQVy+BDYMhRlhIp8g3jSyJd+4Q==",
+      "path": "microsoft.identitymodel.abstractions/8.6.1",
+      "hashPath": "microsoft.identitymodel.abstractions.8.6.1.nupkg.sha512"
+    },
+    "Microsoft.IdentityModel.JsonWebTokens/8.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-CAu9DWsPZVtnyE3bOJ83rlPWpahY37sP/0bIOdRlxS90W88zSI4V3FyoCDlXxV8+gloT+a247pwPXfSNjYyAxw==",
+      "path": "microsoft.identitymodel.jsonwebtokens/8.6.1",
+      "hashPath": "microsoft.identitymodel.jsonwebtokens.8.6.1.nupkg.sha512"
+    },
+    "Microsoft.IdentityModel.Logging/8.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-BdWlVgJYdmcR9TMUOhaZ3vJyaRO7zr7xgK+cRT4R2q59Xl7JMmTB4ctb/VOsyDhxXb497jDNNvLwldp+2ZVBEg==",
+      "path": "microsoft.identitymodel.logging/8.6.1",
+      "hashPath": "microsoft.identitymodel.logging.8.6.1.nupkg.sha512"
+    },
+    "Microsoft.IdentityModel.Protocols/8.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-myul8Jm/kWOtbD+yDeU0LfDPGHDDhNO2Q6U40QlmL0LAK0u1wYl76yKM3/Mzv7ceOkporWAQoAb85QIFnXraOA==",
+      "path": "microsoft.identitymodel.protocols/8.6.1",
+      "hashPath": "microsoft.identitymodel.protocols.8.6.1.nupkg.sha512"
+    },
+    "Microsoft.IdentityModel.Protocols.OpenIdConnect/8.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-RTZIO/vZOPoy7dZzk3JfAD+EAWZg32xvcF7yNK8DcnIJy86OI1l2AIT7tZp0FG95cLrACV6X8xlc0StOfgB8ag==",
+      "path": "microsoft.identitymodel.protocols.openidconnect/8.6.1",
+      "hashPath": "microsoft.identitymodel.protocols.openidconnect.8.6.1.nupkg.sha512"
+    },
+    "Microsoft.IdentityModel.Tokens/8.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-FvED2com8LIFl9yFXneiX0uxNf9fuf8jKDFcvxC93qXOAfFa8fdLkCiur1vWF+PvgQHhsHVBe6CtDZHzsN8nCQ==",
+      "path": "microsoft.identitymodel.tokens/8.6.1",
+      "hashPath": "microsoft.identitymodel.tokens.8.6.1.nupkg.sha512"
+    },
+    "Microsoft.IdentityModel.Validators/8.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-FwST3dwbP4IgPsVVueMau8pHdFllesFSiZy+6L7/BtuflE8Tl1Z7MQW1/4ujmOOYQoBZCjdUQPzOFrC7NlqaBw==",
+      "path": "microsoft.identitymodel.validators/8.6.1",
+      "hashPath": "microsoft.identitymodel.validators.8.6.1.nupkg.sha512"
+    },
+    "Microsoft.Kiota.Abstractions/1.17.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-nznpJUkC8F0iwZBael68nIS90g0wKgipJsLwarknd8hsGom0nJhyogZvIJUIzRWfNNSp0JhsxRYEW0WhvmppKw==",
+      "path": "microsoft.kiota.abstractions/1.17.1",
+      "hashPath": "microsoft.kiota.abstractions.1.17.1.nupkg.sha512"
+    },
+    "Microsoft.Kiota.Authentication.Azure/1.17.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-BkzhCChAH+IOfH7NnB86ynvRqPfHRDdxQw1XJ/ShwsG66A9dRLJ/T4K+d+U5l4EiaCllgXDN6+TUEc5KXMgOgw==",
+      "path": "microsoft.kiota.authentication.azure/1.17.1",
+      "hashPath": "microsoft.kiota.authentication.azure.1.17.1.nupkg.sha512"
+    },
+    "Microsoft.Kiota.Http.HttpClientLibrary/1.17.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-7cSZoEJ8G9YT3UxCILASZIB0GbmVnO3jdLDAMgMeU4O/SNemKtgA58pvKYJVrIZnJ9Up/mflQZFkGrSCOij4WQ==",
+      "path": "microsoft.kiota.http.httpclientlibrary/1.17.1",
+      "hashPath": "microsoft.kiota.http.httpclientlibrary.1.17.1.nupkg.sha512"
+    },
+    "Microsoft.Kiota.Serialization.Form/1.17.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-L35vwCSp01r7FoRunmSrKVfGnDBx1+3kcRnSMdleukRIAEeldnrNrjcitqVNSXhCqqnsVIT//B5dBvOCcZFCcA==",
+      "path": "microsoft.kiota.serialization.form/1.17.1",
+      "hashPath": "microsoft.kiota.serialization.form.1.17.1.nupkg.sha512"
+    },
+    "Microsoft.Kiota.Serialization.Json/1.17.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-EIUiZDVi1XS83k8ybtHMZr7NzHTtiIVGGIif6hiQV2CUEEhTQKxK/eggwajw8+CRfSPrs7ksvKNJleQnAIecHA==",
+      "path": "microsoft.kiota.serialization.json/1.17.1",
+      "hashPath": "microsoft.kiota.serialization.json.1.17.1.nupkg.sha512"
+    },
+    "Microsoft.Kiota.Serialization.Multipart/1.17.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-bbWg8iQrxBqPVRHfZnNuo1x9oHiRJJfRreTsAb9aO8ViO46wtB7niMgCWt69XG9iQdzAy9pKF8Quho14bNOAmg==",
+      "path": "microsoft.kiota.serialization.multipart/1.17.1",
+      "hashPath": "microsoft.kiota.serialization.multipart.1.17.1.nupkg.sha512"
+    },
+    "Microsoft.Kiota.Serialization.Text/1.17.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-dx1kIbBt21DqRt1tTPt3XkC8doEY1xFf+amPmPedCOM6X8IqdVs8xHymE/66aSWr5alufhEebu/bDxpR90M7mQ==",
+      "path": "microsoft.kiota.serialization.text/1.17.1",
+      "hashPath": "microsoft.kiota.serialization.text.1.17.1.nupkg.sha512"
+    },
     "SQLitePCLRaw.bundle_e_sqlite3/2.1.11": {
       "type": "package",
       "serviceable": true,
@@ -468,6 +901,20 @@
       "path": "sqlitepclraw.provider.e_sqlite3/2.1.11",
       "hashPath": "sqlitepclraw.provider.e_sqlite3.2.1.11.nupkg.sha512"
     },
+    "Std.UriTemplate/2.0.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-Ix5VXZwLfolwVHyGTSSJl6KIJ2le6E9YjLdZBMS1Xxzw7VJankRvQW8JoUL69tEgfcw+0qjgWrlxANrhvS0QCQ==",
+      "path": "std.uritemplate/2.0.1",
+      "hashPath": "std.uritemplate.2.0.1.nupkg.sha512"
+    },
+    "System.ClientModel/1.7.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-NKKA3/O6B7PxmtIzOifExHdfoWthy3AD4EZ1JfzcZU8yGZTbYrK1qvXsHUL/1yQKKqWSKgIR1Ih/yf2gOaHc4w==",
+      "path": "system.clientmodel/1.7.0",
+      "hashPath": "system.clientmodel.1.7.0.nupkg.sha512"
+    },
     "System.Configuration.ConfigurationManager/10.0.0": {
       "type": "package",
       "serviceable": true,
@@ -495,6 +942,20 @@
       "sha512": "sha512-VQdfESaky3eXlvEuvtBndmZjOt65g+Ah6/0j39MPgPJ3gkbGuURlTFDRq0Y2uX64z5qVEVe1Ln6B4a06+vIzTQ==",
       "path": "system.directoryservices.protocols/10.0.10",
       "hashPath": "system.directoryservices.protocols.10.0.10.nupkg.sha512"
+    },
+    "System.IdentityModel.Tokens.Jwt/8.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-EXL1Tj+pizswtHHPiQyNumrTo8XOLX7SoTm7Bz00/DyiIoG2H/kQItoajSvr1MYtvDNXveqULsoWDoJFI3aHzQ==",
+      "path": "system.identitymodel.tokens.jwt/8.6.1",
+      "hashPath": "system.identitymodel.tokens.jwt.8.6.1.nupkg.sha512"
+    },
+    "System.Memory.Data/8.0.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-BVYuec3jV23EMRDeR7Dr1/qhx7369dZzJ9IWy2xylvb4YfXsrUxspWc4UWYid/tj4zZK58uGZqn2WQiaDMhmAg==",
+      "path": "system.memory.data/8.0.1",
+      "hashPath": "system.memory.data.8.0.1.nupkg.sha512"
     },
     "System.Security.Cryptography.ProtectedData/10.0.0": {
       "type": "package",

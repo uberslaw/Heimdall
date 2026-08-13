@@ -147,7 +147,10 @@
         body.set("ajax", "1");
         if (token) body.set("__RequestVerificationToken", token);
 
-        var res = await fetch("?handler=" + handler + "&ajax=1", {
+        // Always hit RemoteMachines — this tab is often embedded under /Fleet?tab=online,
+        // so a relative "?handler=…" would post to Fleet and fall back to a full refresh.
+        var url = "/RemoteMachines?handler=" + encodeURIComponent(handler) + "&ajax=1";
+        var res = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/x-www-form-urlencoded",
@@ -166,6 +169,8 @@
 
     function bindAjaxForms() {
         document.querySelectorAll("form[data-handler]").forEach(function (form) {
+            if (form.dataset.hdAjaxBound === "1") return;
+            form.dataset.hdAjaxBound = "1";
             form.addEventListener("submit", function (e) {
                 e.preventDefault();
                 var handler = form.getAttribute("data-handler");

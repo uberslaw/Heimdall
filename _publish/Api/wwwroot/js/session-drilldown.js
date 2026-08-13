@@ -76,6 +76,15 @@
         });
     }
 
+    /** Strip DOMAIN\ (incl. Global\) for display — mirrors UsernameDisplay.Format. */
+    function formatUsername(username, domain) {
+        var u = (username || "").trim();
+        if (!u) return "—";
+        var slash = u.indexOf("\\");
+        if (slash > 0 && slash < u.length - 1) return u.slice(slash + 1).trim() || "—";
+        return u;
+    }
+
     function formatPercent(v) {
         return typeof v === "number" ? v.toFixed(1).replace(/\.0$/, "") + "%" : "—";
     }
@@ -133,7 +142,7 @@
             return '<p class="text-secondary mb-0">No open sessions right now.</p>';
         }
         var rows = users.map(function (u) {
-            var who = u.domain ? escapeHtml(u.domain) + "\\" + escapeHtml(u.username) : escapeHtml(u.username);
+            var who = escapeHtml(formatUsername(u.username, u.domain));
             var client = u.clientName || u.clientAddress || "—";
             var disc = "—";
             if (u.stateLabel === "Disconnected") {

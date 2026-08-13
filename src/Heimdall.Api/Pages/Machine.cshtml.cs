@@ -344,7 +344,10 @@ public class MachineModel(
             MinFileMb = minMb,
             TopFolderCount = 25,
             MaxLargeFiles = 100,
-            MaxSeconds = 180
+            MaxSeconds = 180,
+            ExcludeSystemFolders = false,
+            IncludeHotspots = true,
+            FleetProfile = false
         };
         machine.PendingDiskUsageScanJson = JsonSerializer.Serialize(request);
         machine.DiskUsageScanProgressJson = JsonSerializer.Serialize(new DiskUsageScanProgressDto
@@ -641,6 +644,14 @@ public class MachineModel(
         {
             foreach (var f in scan.LargeFiles)
                 sb.AppendLine($"{FormatBytes(f.SizeBytes)}  {f.Path}");
+        }
+
+        if (scan.Hotspots.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("=== Hotspots ===");
+            foreach (var h in scan.Hotspots.Where(x => x.Exists || x.SizeBytes > 0).OrderByDescending(x => x.SizeBytes))
+                sb.AppendLine($"{FormatBytes(h.SizeBytes)}  [{h.Key}]  {h.Path}");
         }
 
         return sb.ToString().TrimEnd() + "\r\n";

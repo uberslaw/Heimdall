@@ -313,7 +313,7 @@ else if (d is not null)
                 @foreach (var v in Model.DiskVolumes)
                 {
                     var pct = v.UsedPct;
-                    var tone = pct >= 90 ? "hd-disk-bar-crit" : pct >= 80 ? "hd-disk-bar-warn" : "hd-disk-bar-ok";
+                    var tone = pct >= 85 ? "hd-disk-bar-crit" : pct >= 70 ? "hd-disk-bar-warn" : "hd-disk-bar-ok";
                     <div class="hd-disk-volume">
                         <div class="hd-disk-volume-head">
                             <strong>@v.Name</strong>
@@ -511,6 +511,20 @@ else if (d is not null)
                     </div>
                 }
             </div>
+
+            @if (scan.Hotspots.Count > 0)
+            {
+                <h3 class="h6 mt-3 mb-2">Hotspots</h3>
+                <div class="hd-disk-usage-list small">
+                    @foreach (var h in scan.Hotspots.Where(x => x.Exists || x.SizeBytes > 0).OrderByDescending(x => x.SizeBytes))
+                    {
+                        <div class="hd-disk-usage-row">
+                            <span class="hd-disk-usage-size">@MachineModel.FormatBytes(h.SizeBytes)</span>
+                            <span class="hd-disk-usage-path" title="@h.Path">@h.Key — @h.Path</span>
+                        </div>
+                    }
+                </div>
+            }
         }
     </div>
 

@@ -265,6 +265,14 @@ public class FleetDashboardService(HeimdallDbContext db)
         var recent = await LoadSnapshotsForMachinesAsync(machineIds, recentFrom, toUtc: null, ct);
 
         var byMachine = recent.GroupBy(s => s.MachineId).ToDictionary(g => g.Key, g => g.ToList());
+        var openSessions = machineIds.Count == 0
+            ? []
+            : await db.Sessions.AsNoTracking()
+                .Where(s => machineIds.Contains(s.MachineId) && s.State != SessionState.Ended)
+                .ToListAsync(ct);
+        var sessionsByMachine = openSessions
+            .GroupBy(s => s.MachineId)
+            .ToDictionary(g => g.Key, g => g.ToList());
         var rows = new List<LiveFleetRow>();
 
         foreach (var m in machines)
@@ -282,6 +290,20 @@ public class FleetDashboardService(HeimdallDbContext db)
                     : latest.IsActive
                         ? FleetStatus.Active
                         : FleetStatus.Idle;
+
+            sessionsByMachine.TryGetValue(m.MachineId, out var open);
+            open ??= [];
+            var sampleUser = string.IsNullOrWhiteSpace(latest?.Username) ? null : latest!.Username.Trim();
+            SessionState? sessionState = null;
+            if (sampleUser is not null)
+            {
+                sessionState = open
+                    .Where(s => string.Equals(s.Username, sampleUser, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(s => s.State == SessionState.Active)
+                    .ThenByDescending(s => s.LastObservedUtc)
+                    .Select(s => (SessionState?)s.State)
+                    .FirstOrDefault();
+            }
 
             rows.Add(new LiveFleetRow(
                 m.MachineId,
@@ -305,7 +327,8 @@ public class FleetDashboardService(HeimdallDbContext db)
                 latest?.SampledAtUtc,
                 m.LastSeenUtc,
                 m.TeamId,
-                m.TeamName));
+                m.TeamName,
+                sessionState));
         }
 
         return rows;
@@ -567,7 +590,8 @@ public class FleetDashboardService(HeimdallDbContext db)
         DateTimeOffset? LastSampleUtc,
         DateTimeOffset LastSeenUtc,
         int? TeamId = null,
-        string? TeamName = null)
+        string? TeamName = null,
+        SessionState? SessionState = null)
     {
         public string DisplayName =>
             string.IsNullOrWhiteSpace(FriendlyName) ? Hostname : FriendlyName!;

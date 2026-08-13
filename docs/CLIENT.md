@@ -47,7 +47,7 @@ The agent runs a single loop (`Worker.cs`) with several independent timers:
 | **Staff live sampling** | 10 s while active | Viewer-gated (`GET /api/resource-sampling/.../status`); used by Staff Access live metrics |
 | **Fleet sampling** | **30 s always-on** | `POST /api/fleet/snapshot` — CPU/GPU/RAM/disk/network + TUFLOW flags for every known machine |
 | **TUFLOW poll** | ~20 s | Picks up queued TUFLOW start/stop from config |
-| **Disk usage scan poll** | ~20 s | On-demand folder scan when queued from machine detail |
+| **Disk usage scan poll** | ~20 s | On-demand / weekly fleet folder scan when queued (`PendingDiskUsageScan`) |
 
 If the API is unreachable, ingest batches are **queued** in `queue.db` and retried. Live/fleet samples are **dropped** on failure (stale points are worse than gaps).
 

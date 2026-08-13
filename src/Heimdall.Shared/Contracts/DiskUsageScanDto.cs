@@ -23,6 +23,18 @@ public sealed class DiskUsageScanRequestDto
 
     /// <summary>Soft time budget in seconds; agent stops walking and returns partial results. Default 180.</summary>
     public int MaxSeconds { get; init; } = 180;
+
+    /// <summary>
+    /// When true, top folders exclude Windows system roots (Windows, Program Files, …).
+    /// Those roots are skipped in the main walk; known hotspots are still measured separately.
+    /// </summary>
+    public bool ExcludeSystemFolders { get; init; }
+
+    /// <summary>When true, measure known hotspots (ccmcache, Projects, user profiles).</summary>
+    public bool IncludeHotspots { get; init; } = true;
+
+    /// <summary>Fleet/weekly profile marker for UI (optional).</summary>
+    public bool FleetProfile { get; init; }
 }
 
 /// <summary>Lightweight agent → API progress while a scan is running.</summary>
@@ -61,6 +73,8 @@ public sealed class DiskUsageScanResultDto
     public int FilesSeen { get; init; }
     public List<DiskUsageFolderDto> TopFolders { get; init; } = [];
     public List<DiskUsageFileDto> LargeFiles { get; init; } = [];
+    /// <summary>Known hotspot sizes (ccmcache, Projects, user profiles). Empty on older agents.</summary>
+    public List<DiskUsageHotspotDto> Hotspots { get; init; } = [];
 }
 
 public sealed class DiskUsageFolderDto
@@ -77,8 +91,29 @@ public sealed class DiskUsageFileDto
     public long SizeBytes { get; init; }
 }
 
+/// <summary>Prioritized storage hotspot (ccmcache, Projects, Users profile, …).</summary>
+public sealed class DiskUsageHotspotDto
+{
+    /// <summary>Stable key: <c>ccmcache</c>, <c>Projects</c>, <c>Users</c>, or <c>UserProfile</c>.</summary>
+    public required string Key { get; init; }
+
+    public required string Path { get; init; }
+    public long SizeBytes { get; init; }
+    public int FileCount { get; init; }
+    public bool Exists { get; init; }
+}
+
 /// <summary>Fast poll payload (same cadence idea as TUFLOW pending).</summary>
 public sealed class DiskUsagePendingDto
 {
     public DiskUsageScanRequestDto? PendingDiskUsageScan { get; init; }
+}
+
+/// <summary>Well-known path keys used by the agent scanner and Storage dashboard.</summary>
+public static class DiskUsageHotspotKeys
+{
+    public const string CcmCache = "ccmcache";
+    public const string Projects = "Projects";
+    public const string Users = "Users";
+    public const string UserProfile = "UserProfile";
 }
