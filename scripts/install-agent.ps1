@@ -344,6 +344,20 @@ try {
         }
     }
 
+    Invoke-Logged "Register heimdall-rdp protocol (one-click Connect from this PC)" {
+        $rdpLaunch = Join-Path $PSScriptRoot "Heimdall-LaunchRdp.vbs"
+        if (-not (Test-Path -LiteralPath $rdpLaunch)) {
+            Write-Log "Heimdall-LaunchRdp.vbs not next to installer - skipped" -Level WARN
+            return
+        }
+        $cscript = Join-Path $env:SystemRoot "System32\cscript.exe"
+        & $cscript //nologo $rdpLaunch /register
+        if ($LASTEXITCODE -ne 0) {
+            throw "heimdall-rdp registration failed (exit $LASTEXITCODE)"
+        }
+        Write-Log "Registered heimdall-rdp URL protocol (wscript) for mstsc launch"
+    }
+
     Write-Banner "SUCCESS - Heimdall Agent installed" Green
     Write-Log "API:     $ApiUrl"
     Write-Log "Service: HeimdallAgent"

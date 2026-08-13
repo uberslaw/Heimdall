@@ -145,7 +145,14 @@ public sealed class HeimdallApiClient(HttpClient http, IConfiguration config, IL
         }
     }
 
-    public async Task<bool> DownloadClientPackAsync(string downloadPath, string destFile, CancellationToken ct)
+    /// <summary>
+    /// Downloads the client pack zip. Returns success and optional productVersion from
+    /// <c>X-Heimdall-Client-Version</c> (folder naming / diagnostics).
+    /// </summary>
+    public async Task<(bool Ok, string? ClientVersion)> DownloadClientPackAsync(
+        string downloadPath,
+        string destFile,
+        CancellationToken ct)
     {
         try
         {
@@ -158,17 +165,23 @@ public sealed class HeimdallApiClient(HttpClient http, IConfiguration config, IL
             if (!response.IsSuccessStatusCode)
             {
                 logger.LogWarning("Client pack download failed: {Status}", response.StatusCode);
-                return false;
+                return (false, null);
             }
+
+            string? version = null;
+            if (response.Headers.TryGetValues("X-Heimdall-Client-Version", out var values))
+                version = values.FirstOrDefault();
+            else if (response.Content.Headers.TryGetValues("X-Heimdall-Client-Version", out var contentValues))
+                version = contentValues.FirstOrDefault();
 
             await using var fs = File.Create(destFile);
             await response.Content.CopyToAsync(fs, ct);
-            return true;
+            return (true, string.IsNullOrWhiteSpace(version) ? null : version.Trim());
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Client pack download error");
-            return false;
+            return (false, null);
         }
     }
 

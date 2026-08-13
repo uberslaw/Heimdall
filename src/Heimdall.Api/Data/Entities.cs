@@ -115,6 +115,8 @@ public class Machine
 
     /// <summary>JSON ClientUpdateRequestDto queued for silent agent self-update.</summary>
     public string? PendingClientUpdateJson { get; set; }
+    /// <summary>JSON ClientDepositRequestDto queued for DepositClientPack (versioned Temp drop).</summary>
+    public string? PendingClientDepositJson { get; set; }
     /// <summary>Client update workflow progress (phase, detail, timestamps).</summary>
     public string? ClientUpdateProgressJson { get; set; }
 
@@ -296,6 +298,8 @@ public class ProcessCatalogEntry
     /// <summary>Heuristic suggestion computed when first seen and not yet explicitly classified; see ProcessCatalogService.</summary>
     public AppGroup? SuggestedGroup { get; set; }
     public string? SuggestionReason { get; set; }
+    /// <summary>When true, this catalog app can appear on the public Remote Workstations pool (search and notes).</summary>
+    public bool AllowAdvertiseRdp { get; set; }
 }
 
 /// <summary>Performance metric threshold policy scoped to All / Region / Office / Group / Machine.</summary>
@@ -344,10 +348,43 @@ public class MachineBooking
     public int MachineId { get; set; }
     public Machine Machine { get; set; } = null!;
     public required string BookedByEmail { get; set; }
+    /// <summary>Optional display name (honor-system public bookings).</summary>
+    public string? BookedByName { get; set; }
     public DateTimeOffset StartUtc { get; set; }
     public DateTimeOffset EndUtc { get; set; }
     public DateTimeOffset CreatedUtc { get; set; }
     public string? Notes { get; set; }
+}
+
+public enum MachineSoftwareCapabilitySource
+{
+    Detected = 0,
+    Manual = 1
+}
+
+public enum MachineSoftwareCapabilityStatus
+{
+    Pending = 0,
+    Approved = 1,
+    Rejected = 2
+}
+
+/// <summary>
+/// Software / capability tag on a public-pool machine. Only Approved labels appear in the public filter.
+/// </summary>
+public class MachineSoftwareCapability
+{
+    public int Id { get; set; }
+    public int MachineId { get; set; }
+    public Machine Machine { get; set; } = null!;
+    /// <summary>Display label e.g. Revit, AutoCAD.</summary>
+    public required string Label { get; set; }
+    public MachineSoftwareCapabilitySource Source { get; set; }
+    public MachineSoftwareCapabilityStatus Status { get; set; }
+    public DateTimeOffset CreatedUtc { get; set; }
+    public DateTimeOffset? ReviewedUtc { get; set; }
+    public string? ProposedBy { get; set; }
+    public string? ReviewedBy { get; set; }
 }
 
 /// <summary>Maps a Windows username (and optional domain) to a team.</summary>
@@ -842,4 +879,29 @@ public class CustomTheme
 
     public DateTime CreatedUtc { get; set; }
     public DateTime UpdatedUtc { get; set; }
+}
+
+/// <summary>
+/// First-party site usage event (page view, dwell duration, or link click) for the Admin Usage report.
+/// </summary>
+public class SiteUsageEvent
+{
+    public long Id { get; set; }
+    public DateTimeOffset OccurredUtc { get; set; }
+    /// <summary>pageview | duration | click</summary>
+    public required string EventType { get; set; }
+    public required string Path { get; set; }
+    /// <summary>Sanitized query string (secret keys stripped).</summary>
+    public string? Query { get; set; }
+    /// <summary>Windows identity, staff email, or anonymous:{sessionShort}.</summary>
+    public string? UserName { get; set; }
+    public string? SessionId { get; set; }
+    /// <summary>Correlates duration/click rows with the originating pageview.</summary>
+    public string? PageViewId { get; set; }
+    public int? DurationSeconds { get; set; }
+    public string? LinkHref { get; set; }
+    public string? LinkText { get; set; }
+    public string? IpAddress { get; set; }
+    public string? UserAgent { get; set; }
+    public string? Referrer { get; set; }
 }

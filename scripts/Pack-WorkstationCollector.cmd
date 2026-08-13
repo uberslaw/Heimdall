@@ -188,9 +188,21 @@ copy /Y "%ROOT%\scripts\Install-Client.ps1" "%OUT%\Install-Client.ps1" >nul
 copy /Y "%ROOT%\scripts\Heimdall-VersionCompare.ps1" "%OUT%\Heimdall-VersionCompare.ps1" >nul
 copy /Y "%ROOT%\scripts\Heimdall-CollectorInstall.ps1" "%OUT%\Heimdall-CollectorInstall.ps1" >nul
 copy /Y "%ROOT%\scripts\Install-WorkstationCollector.cmd" "%OUT%\Install-WorkstationCollector.cmd" >nul
+copy /Y "%ROOT%\scripts\Install-WorkstationCollector.ps1" "%OUT%\Install-WorkstationCollector.ps1" >nul
+if not exist "%OUT%\Install-WorkstationCollector.ps1" (
+  echo [ERROR] Failed to copy Install-WorkstationCollector.ps1 into pack
+  goto fail
+)
+copy /Y "%ROOT%\scripts\Heimdall-AgentHeal.ps1" "%OUT%\Heimdall-AgentHeal.ps1" >nul
+if not exist "%OUT%\Heimdall-AgentHeal.ps1" (
+  echo [ERROR] Failed to copy Heimdall-AgentHeal.ps1 into pack
+  goto fail
+)
 copy /Y "%ROOT%\scripts\Heimdall-Setup.cmd" "%OUT%\Heimdall-Setup.cmd" >nul
 copy /Y "%ROOT%\scripts\Heimdall-LaunchControl.cmd" "%OUT%\Heimdall-LaunchControl.cmd" >nul
 copy /Y "%ROOT%\scripts\Heimdall-LaunchControl.ps1" "%OUT%\Heimdall-LaunchControl.ps1" >nul
+copy /Y "%ROOT%\scripts\Heimdall-LaunchRdp.vbs" "%OUT%\Heimdall-LaunchRdp.vbs" >nul
+copy /Y "%ROOT%\scripts\Register-HeimdallRdp.cmd" "%OUT%\Register-HeimdallRdp.cmd" >nul
 copy /Y "%ROOT%\docs\portable-client\README.md" "%OUT%\README.md" >nul
 copy /Y "%ROOT%\docs\portable-client\FILES.md" "%OUT%\FILES.md" >nul
 

@@ -1,0 +1,58 @@
+@page
+@model DiagnosticsModel
+@{
+    ViewData["Title"] = "Diagnostics";
+    ViewData["HelpFragment"] = "diagnostics";
+}
+
+<h1 class="hd-title mb-1">Diagnostics</h1>
+<p class="hd-sub">Collect troubleshooting output for a remote API host — no Cursor machine required.</p>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success">
+        <div>@msg</div>
+        @if (!string.IsNullOrWhiteSpace(Model.LastBundleDirectory))
+        {
+            <div class="mt-2 small"><strong>Folder:</strong> <code>@Model.LastBundleDirectory</code></div>
+        }
+        @if (!string.IsNullOrWhiteSpace(Model.LastZipPath))
+        {
+            <div class="small"><strong>Zip:</strong> <code>@Model.LastZipPath</code></div>
+        }
+    </div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<section class="hd-panel mb-4">
+    <h2 class="h5">Known locations</h2>
+    <p class="text-secondary small mb-2">
+        Use these paths when the API will not start or you are on the host without the dashboard.
+    </p>
+    <ul class="small mb-0">
+        <li><strong>Always-on API logs</strong> — <code>@Model.ApiLogsDir</code> (<code>heimdall-api-yyyyMMdd.log</code>, ~14 days)</li>
+        <li><strong>Ops / admin actions</strong> — <code>@Model.OpsLogsDir</code> (pack, deploy, deposit, restart, cleanup, database mode)</li>
+        <li><strong>Install / pack script logs</strong> — <code>@Model.LogsRoot</code></li>
+        <li><strong>Collect dump (this page + offline script)</strong> — <code>@Model.DumpRoot</code></li>
+        <li><strong>Windows Event Log</strong> — Application log for <code>HeimdallApi</code> / .NET Runtime / Service Control Manager</li>
+    </ul>
+</section>
+
+<section class="hd-panel mb-4">
+    <h2 class="h5">Collect diagnostics</h2>
+    <p class="text-secondary small mb-3">
+        Builds a folder + zip under <code>@Model.DumpRoot</code> with environment, service status,
+        health (if reachable), recent ProgramData logs, redacted appsettings, Event Log excerpt,
+        DB path/size pointers (not the DB itself), and pack status. API keys are redacted (last 4 only).
+    </p>
+    <form method="post" asp-page-handler="Collect">
+        <button type="submit" class="btn btn-hd">Collect diagnostics</button>
+    </form>
+    <p class="text-secondary small mt-3 mb-0">
+        If the service will not start, run <code>scripts\Collect-Diagnostics.cmd</code> on the API host
+        (same dump root). Primary always-on files remain under <code>%ProgramData%\Heimdall\logs\</code>.
+    </p>
+</section>

@@ -105,6 +105,12 @@ public sealed class Worker(
                     {
                         await TryProcessClientUpdateAsync(remote.PendingClientUpdate, stoppingToken);
                     }
+
+                    if (remote.PendingCommands.Any(c =>
+                            string.Equals(c, RemoteMachineCommands.DepositClientPack, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        await TryProcessDepositClientPackAsync(remote.PendingClientDeposit, stoppingToken);
+                    }
                     logger.LogInformation("Config refreshed v{Version}; tracking {Count} processes{Inventory}{Commands}",
                         _config.ConfigVersion, _config.IncludeProcesses.Count,
                         remote.PendingAppAnalysis ? "; inventory requested" : "",
@@ -810,6 +816,25 @@ public sealed class Worker(
         }
     }
 
+    private async Task TryProcessDepositClientPackAsync(ClientDepositRequestDto? depositRequest, CancellationToken ct)
+    {
+        const string command = RemoteMachineCommands.DepositClientPack;
+        if (_executedPendingCommands.Contains(command))
+            return;
+
+        var (ack, success, detail) = await ClientPackDepositHelper.TryDepositAsync(api, logger, ct, depositRequest);
+        RecordCommandReport(command, success, detail);
+        if (!ack)
+            return;
+
+        _executedPendingCommands.Add(command);
+        lock (_commandsToAck)
+        {
+            if (!_commandsToAck.Contains(command, StringComparer.OrdinalIgnoreCase))
+                _commandsToAck.Add(command);
+        }
+    }
+
     private void ProcessPendingCommands(IReadOnlyList<string> commands)
     {
         if (commands.Count == 0)
@@ -820,12 +845,24 @@ public sealed class Worker(
             if (_executedPendingCommands.Contains(command))
                 continue;
 
-            // Handled asynchronously via PendingClientUpdate payload
-            if (string.Equals(command, RemoteMachineCommands.UpdateClient, StringComparison.OrdinalIgnoreCase))
+            // Handled asynchronously via PendingClientUpdate payload / deposit helper
+            if (string.Equals(command, RemoteMachineCommands.UpdateClient, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(command, RemoteMachineCommands.DepositClientPack, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            if (TermServiceHelper.TryExecuteCommand(command, logger, out var detail))
+            if (TermServiceHelper.TryExecuteCommand(command, logger, out var detail)
+                || TuflowRunHelper.TryExecuteCommand(command, logger, out detail)
+                || ClientMaintenanceHelper.TryExecuteCommand(command, logger, out detail))
             {
+                // Cleanup / Restart skipped because UpdateClient or durable install.lock is held — keep pending.
+                if ((string.Equals(command, RemoteMachineCommands.CleanupClientStaging, StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(command, RemoteMachineCommands.RestartAgent, StringComparison.OrdinalIgnoreCase))
+                    && detail.Contains("Skipped:", StringComparison.OrdinalIgnoreCase))
+                {
+                    RecordCommandReport(command, success: false, detail);
+                    continue;
+                }
+
                 _executedPendingCommands.Add(command);
                 lock (_commandsToAck)
                 {
@@ -836,7 +873,10 @@ public sealed class Worker(
             }
             else
             {
-                if (TuflowRunHelper.TryExecuteCommand(command, logger, out detail))
+                logger.LogWarning("Pending command failed: {Command} — {Detail}", command, detail);
+                RecordCommandReport(command, success: false, detail);
+                // Ack unknown commands so old agents do not retry forever with the same error.
+                if (detail.Contains("Unknown command", StringComparison.OrdinalIgnoreCase))
                 {
                     _executedPendingCommands.Add(command);
                     lock (_commandsToAck)
@@ -844,12 +884,6 @@ public sealed class Worker(
                         if (!_commandsToAck.Contains(command, StringComparer.OrdinalIgnoreCase))
                             _commandsToAck.Add(command);
                     }
-                    RecordCommandReport(command, success: true, detail);
-                }
-                else
-                {
-                    logger.LogWarning("Pending command failed: {Command} — {Detail}", command, detail);
-                    RecordCommandReport(command, success: false, detail);
                 }
             }
         }

@@ -25,11 +25,11 @@ Left buttons run actions. Right side has **two Steps branches** (click a step fo
 1. **Client install** (default) — prepare → create pack → push/copy → `Install.lnk` on target → verify on dashboard  
 2. **Server install** — prepare → install API → verify dashboard → then switch to Client branch for agents  
 
-Left actions include: Install API, Create client pack, **Push client pack to PC…** (hostname → `\\HOST\C$\Temp\Heimdall-Client`), Install agent, health/logs/backup/diagnostics.
+Left actions include: Install API, Create client pack, **Push client pack to PC…** (hostname → `\\HOST\C$\Temp\Heimdall-Client-v{version}`), Install agent, health/logs/backup/diagnostics.
 
 On client PCs you only need **`Install.lnk`** (from the pushed/copied pack). Logs: `%ProgramData%\Heimdall\logs\`.
 
-**Push requirements:** your account needs admin rights on the target (C$ / SMB). After push, on the target PC run `C:\Temp\Heimdall-Client\Install.lnk` elevated.
+**Push requirements:** your account needs admin rights on the target (C$ / SMB). After push, on the target PC run `C:\Temp\Heimdall-Client-v{version}\Install.lnk` elevated (version from pack `VERSION.json`).
 
 **If you still see “Pack collector” / old Steps text:** pull latest `main`, then run `scripts\New-HeimdallShortcuts.cmd` and reopen `scripts\Heimdall-Setup.lnk` (or `Heimdall-LaunchControl.lnk` — same UI).
 
@@ -320,7 +320,19 @@ Staff Access can tie sign-in to the user's **Windows account** (Negotiate/NTLM/K
 
 If install or runtime fails, collect a bundle and paste/upload it in Cursor chat (or email the zip).
 
-**Elevated optional** (service queries work better as admin):
+**Known locations on the API host**
+
+| Path | Purpose |
+|------|---------|
+| `%ProgramData%\Heimdall\logs\api\` | Rolling API runtime logs (`heimdall-api-yyyyMMdd.log`) — use when the service will not start |
+| `%ProgramData%\Heimdall\logs\ops\` | Admin/ops action log (pack, deploy, deposit, restart, …) |
+| `%ProgramData%\Heimdall\logs\` | Install / pack / Launch Control script logs |
+| `C:\Temp\Heimdall.API\Logs\` | Grab-and-go diagnostic dumps (Admin Collect + offline script) |
+| Windows Application Event Log | `HeimdallApi` / .NET Runtime / Service Control Manager |
+
+**While the API is running:** Admin → **Diagnostics** → **Collect diagnostics** (writes under `C:\Temp\Heimdall.API\Logs`).
+
+**When the service will not start** (elevated optional — service queries work better as admin):
 
 ```text
 scripts\Collect-Diagnostics.cmd
@@ -332,14 +344,16 @@ Or:
 .\scripts\collect-diagnostics.ps1
 ```
 
+Default output root is `C:\Temp\Heimdall.API\Logs\diagnostics-{stamp}\` (+ sibling `.zip`). The script still gathers ProgramData logs, services, Event Log, and redacted appsettings even if `/api/health` is unreachable.
+
 The script gathers:
 
-- Recent install logs under `%ProgramData%\Heimdall\logs\`
+- Recent logs under `%ProgramData%\Heimdall\logs\` (including `api\` / `ops\` when present)
 - Service status for `HeimdallApi` / `HeimdallAgent`
 - `GET /api/health` if reachable
 - Hostname, OS info
 - Redacted agent/API appsettings (API key → last 4 chars only)
-- Recent stdout/stderr-style service / log snippets when available
+- Recent Application Event Log entries mentioning Heimdall / .NET / SCM
 
 It prints a **folder or zip path** at the end and pauses. Upload that zip (or the folder contents) when asking for help.
 

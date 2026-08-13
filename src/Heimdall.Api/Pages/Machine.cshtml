@@ -53,7 +53,7 @@ else if (d is not null)
 {
     <h1 class="hd-title hd-title-rose-gold mb-3">@d.Hostname</h1>
 
-    <div class="hd-grid mb-3">
+    <div class="hd-grid hd-grid-fill mb-3">
         <div class="hd-stat">
             <div class="label d-flex align-items-center justify-content-between gap-2">
                 <span>Friendly name</span>
@@ -65,7 +65,7 @@ else if (d is not null)
             </div>
             @if (Model.EditFriendly)
             {
-                <form method="post" asp-page-handler="SaveFriendlyName" class="mt-1">
+                <form method="post" asp-page-handler="SaveFriendlyName">
                     <input type="hidden" name="Hostname" value="@Model.Hostname" />
                     <input type="hidden" name="Range" value="@Model.Range" />
                     <input type="hidden" name="StatsDuration" value="@Model.StatsDuration" />
@@ -81,8 +81,8 @@ else if (d is not null)
             {
                 <div class="value" style="font-size:1.1rem;">@(string.IsNullOrWhiteSpace(Model.FriendlyName) ? "—" : Model.FriendlyName)</div>
             }
-            <div class="text-secondary small mt-1">@(string.IsNullOrWhiteSpace(Model.LastIp) ? "No IP yet" : Model.LastIp)</div>
-            <form method="post" asp-page-handler="SaveTeam" class="mt-2">
+            <div class="text-secondary small">@(string.IsNullOrWhiteSpace(Model.LastIp) ? "No IP yet" : Model.LastIp)</div>
+            <form method="post" asp-page-handler="SaveTeam">
                 <input type="hidden" name="Hostname" value="@Model.Hostname" />
                 <input type="hidden" name="Range" value="@Model.Range" />
                 <input type="hidden" name="StatsDuration" value="@Model.StatsDuration" />
@@ -123,49 +123,63 @@ else if (d is not null)
             </div>
             @if (Model.ResourceGlance is { } glance)
             {
-                <div class="hd-resource-glance text-secondary small mt-1 font-monospace"
+                <div class="hd-resource-glance text-secondary small font-monospace"
                      title="Latest agent sample @MachineModel.FormatLocalTimestamp(glance.SampledAtUtc) (@glance.Source). Disk/network bands are POC MB/s thresholds, not industry standards.">
                     <span>CPU @MachineModel.FormatGlancePct(glance.CpuPercent)</span>
                     <span>GPU @MachineModel.FormatGlancePct(glance.GpuPercent)</span>
                     <span>Disk @glance.DiskLevel</span>
                     <span>Network @glance.NetworkLevel</span>
                 </div>
-                <div class="text-secondary small mt-1">@MachineModel.FormatLocalTimestamp(glance.SampledAtUtc)</div>
+                <div class="text-secondary small">@MachineModel.FormatLocalTimestamp(glance.SampledAtUtc)</div>
             }
             else
             {
-                <div class="text-secondary small mt-1">No resource sample yet</div>
+                <div class="text-secondary small">No resource sample yet</div>
             }
         </div>
         <div class="hd-stat">
             <div class="label">Agent Check-in</div>
-            <div class="value" style="font-size:1rem;margin-top:0.35rem">
-                @d.LastSeenUtc.ToLocalTime().ToString("g")
-                <br/><span class="text-secondary small">@IndexModel.FormatRelativeUtc(d.LastSeenUtc)</span>
+            <div class="value" style="font-size:1rem;">@d.LastSeenUtc.ToLocalTime().ToString("g")</div>
+            <div class="text-secondary small">@IndexModel.FormatRelativeUtc(d.LastSeenUtc)</div>
+            @{
+                var agentVer = Model.ReportedAgentVersion;
+                var simpleVer = VersionCompare.TryGetSimpleVersion(agentVer);
+            }
+            <div class="text-secondary small" title="@(agentVer ?? "")">
+                @if (simpleVer is int sv)
+                {
+                    <span>Agent v@(sv)</span>
+                    @if (!VersionCompare.IsPureIntegerVersion(agentVer))
+                    {
+                        <span> (legacy)</span>
+                    }
+                }
+                else
+                {
+                    <span>Agent version unknown</span>
+                }
             </div>
         </div>
         <div class="hd-stat">
             <div class="label">Last user</div>
-            <div class="value" style="font-size:1rem;margin-top:0.35rem">
-                @UsernameDisplay.FormatOrDash(d.LastUser)
-                @if (d.LastUserDepartedUtc is DateTimeOffset departed)
-                {
-                    <div class="text-secondary small">@((d.LastSessionState == SessionState.Disconnected ? "Disconnected" : "Log off")) · @MachineModel.FormatLocalTimestamp(departed)</div>
-                }
-                else if (d.LastUserStillLoggedIn)
-                {
-                    <div class="text-secondary small">Still logged in</div>
-                }
-                else if (!string.IsNullOrWhiteSpace(d.LastUser))
-                {
-                    <div class="text-secondary small">Time unknown</div>
-                }
-            </div>
+            <div class="value" style="font-size:1rem;">@UsernameDisplay.FormatOrDash(d.LastUser)</div>
+            @if (d.LastUserDepartedUtc is DateTimeOffset departed)
+            {
+                <div class="text-secondary small">@((d.LastSessionState == SessionState.Disconnected ? "Disconnected" : "Log off")) · @MachineModel.FormatLocalTimestamp(departed)</div>
+            }
+            else if (d.LastUserStillLoggedIn)
+            {
+                <div class="text-secondary small">Still logged in</div>
+            }
+            else if (!string.IsNullOrWhiteSpace(d.LastUser))
+            {
+                <div class="text-secondary small">Time unknown</div>
+            }
         </div>
         <div class="hd-stat">
             <div class="label">365d utilisation</div>
             <div class="value">@Model.Utilisation365Pct.ToString("0")%</div>
-            <div class="text-secondary small mt-1">
+            <div class="text-secondary small">
                 @if (Model.TrackingBeganUtc is DateTimeOffset began)
                 {
                     <span>Tracking began: @MachineModel.FormatTrackingBegan(began)</span>

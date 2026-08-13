@@ -738,6 +738,7 @@ public class ConfigService(HeimdallDbContext db)
             PendingCommands = RemoteMachineService.DeserializeCommands(machine?.PendingCommandsJson),
             PendingTuflowStart = TuflowRunService.DeserializeStartRequest(machine?.PendingTuflowStartJson),
             PendingClientUpdate = ClientUpdateService.DeserializeRequest(machine?.PendingClientUpdateJson),
+            PendingClientDeposit = ClientUpdateService.DeserializeDepositRequest(machine?.PendingClientDepositJson),
             PendingDiskUsageScan = DeserializeDiskUsageScanRequest(machine?.PendingDiskUsageScanJson),
             FleetSamplingEnabled = fleetSamplingEnabled,
             FleetProcessNames = ["tuflow"]
@@ -1235,6 +1236,7 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingTuflowStartJson TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN TuflowRunStatusJson TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingClientUpdateJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingClientDepositJson TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN ClientUpdateProgressJson TEXT NULL");
         await TryExec(db, "ALTER TABLE ProcessRuns ADD COLUMN PeakGpuPercent REAL NULL");
         await TryExec(db, "ALTER TABLE ProcessRuns ADD COLUMN DiskReadBytes INTEGER NULL");
@@ -1611,6 +1613,30 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE ProcessCatalogEntries ADD COLUMN Description TEXT NULL");
         await TryExec(db, "ALTER TABLE ProcessCatalogEntries ADD COLUMN Category TEXT NULL");
         await TryExec(db, "ALTER TABLE ProcessCatalogEntries ADD COLUMN Subcategory TEXT NULL");
+        var advertiseColAdded = false;
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE ProcessCatalogEntries ADD COLUMN AllowAdvertiseRdp INTEGER NOT NULL DEFAULT 0");
+            advertiseColAdded = true;
+        }
+        catch { /* column already exists */ }
+        if (advertiseColAdded)
+        {
+            await TryExec(db, $"""
+                UPDATE ProcessCatalogEntries
+                SET AllowAdvertiseRdp = 1
+                WHERE ProcessName IN (
+                    SELECT ProcessName FROM ProcessGroupAssignments WHERE "Group" = {(int)AppGroup.Specialization}
+                )
+                OR ProcessName IN (
+                    SELECT e.ProcessName
+                    FROM AppListEntries e
+                    INNER JOIN AppLists a ON a.Id = e.AppListId
+                    WHERE a.SystemKey = 'Specialization'
+                )
+                """);
+        }
 
         // Custom UI themes (Theme page) — full colour/font token model layered on a built-in base preset.
         await TryExec(db, """
@@ -1837,6 +1863,49 @@ public static class SeedData
             """);
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_MachineBookings_MachineId_StartUtc_EndUtc ON MachineBookings(MachineId, StartUtc, EndUtc)");
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_MachineBookings_BookedByEmail ON MachineBookings(BookedByEmail)");
+        await TryExec(db, "ALTER TABLE MachineBookings ADD COLUMN BookedByName TEXT NULL");
+
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS MachineSoftwareCapabilities (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MachineId INTEGER NOT NULL,
+                Label TEXT NOT NULL,
+                Source INTEGER NOT NULL DEFAULT 0,
+                Status INTEGER NOT NULL DEFAULT 0,
+                CreatedUtc TEXT NOT NULL,
+                ReviewedUtc TEXT NULL,
+                ProposedBy TEXT NULL,
+                ReviewedBy TEXT NULL,
+                FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_MachineSoftwareCapabilities_MachineId_Label ON MachineSoftwareCapabilities(MachineId, Label)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_MachineSoftwareCapabilities_Status ON MachineSoftwareCapabilities(Status)");
+
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS SiteUsageEvents (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                OccurredUtc TEXT NOT NULL,
+                EventType TEXT NOT NULL,
+                Path TEXT NOT NULL,
+                Query TEXT NULL,
+                UserName TEXT NULL,
+                SessionId TEXT NULL,
+                PageViewId TEXT NULL,
+                DurationSeconds INTEGER NULL,
+                LinkHref TEXT NULL,
+                LinkText TEXT NULL,
+                IpAddress TEXT NULL,
+                UserAgent TEXT NULL,
+                Referrer TEXT NULL
+            )
+            """);
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SiteUsageEvents_OccurredUtc ON SiteUsageEvents(OccurredUtc)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SiteUsageEvents_EventType_OccurredUtc ON SiteUsageEvents(EventType, OccurredUtc)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SiteUsageEvents_UserName_OccurredUtc ON SiteUsageEvents(UserName, OccurredUtc)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SiteUsageEvents_Path_OccurredUtc ON SiteUsageEvents(Path, OccurredUtc)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SiteUsageEvents_PageViewId ON SiteUsageEvents(PageViewId)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SiteUsageEvents_SessionId ON SiteUsageEvents(SessionId)");
 
         await EnsureCanonicalTeamsAsync(db);
     }

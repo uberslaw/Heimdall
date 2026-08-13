@@ -12,7 +12,11 @@ var builder = WebApplication.CreateBuilder(args);
 // Required for SCM registration; without this, Windows service start times out (Error 1053).
 builder.Host.UseWindowsService(options => options.ServiceName = "HeimdallApi");
 
+// Always-on rolling file logs under %ProgramData%\Heimdall\logs\api\ (known location if UI is down).
+builder.Logging.AddProvider(new Heimdall.Api.Logging.RollingFileLoggerProvider());
+
 builder.Services.Configure<StaffAccessOptions>(builder.Configuration.GetSection("Heimdall:StaffAccess"));
+builder.Services.Configure<UsageAnalyticsOptions>(builder.Configuration.GetSection(UsageAnalyticsOptions.SectionName));
 builder.Services.Configure<EntraOptions>(builder.Configuration.GetSection(EntraOptions.SectionName));
 builder.Services.AddSingleton<EntraSecretStore>();
 builder.Services.AddSingleton<IPostConfigureOptions<EntraOptions>, EntraOptionsPostConfigure>();
@@ -22,6 +26,7 @@ builder.Services.AddSingleton<EntraGraphService>();
 builder.Services.AddScoped<DirectoryAuthSettingsService>();
 builder.Services.AddScoped<EntraTeamMembershipSyncService>();
 builder.Services.AddScoped<StaffAccessGuard>();
+builder.Services.AddScoped<SiteUsageAnalyticsService>();
 
 var staffAccessOpts = builder.Configuration.GetSection("Heimdall:StaffAccess").Get<StaffAccessOptions>() ?? new();
 if (staffAccessOpts.RequireWindowsAuth)
@@ -50,12 +55,14 @@ builder.Services.AddScoped<IngestService>();
 builder.Services.AddScoped<ConfigService>();
 builder.Services.AddScoped<ProcessGroupService>();
 builder.Services.AddScoped<ProcessCatalogService>();
+builder.Services.AddScoped<AdvertisedSoftwareService>();
 builder.Services.AddScoped<AppListService>();
 builder.Services.AddScoped<SpecReviewService>();
 builder.Services.AddScoped<StatsQueryService>();
 builder.Services.AddScoped<SocratizeQueryService>();
 builder.Services.AddScoped<RemoteMachineService>();
 builder.Services.AddScoped<MachineBookingService>();
+builder.Services.AddScoped<MachineSoftwareCapabilityService>();
 builder.Services.AddScoped<FloodAccessGuard>();
 builder.Services.AddSingleton<ApiBuildStamp>();
 builder.Services.AddScoped<TuflowRunService>();
@@ -65,11 +72,14 @@ builder.Services.AddScoped<SessionDrilldownService>();
 builder.Services.AddScoped<PublishedVersionService>();
 builder.Services.AddSingleton<ClientPackReadinessService>();
 builder.Services.AddScoped<ClientUpdateService>();
+builder.Services.AddSingleton<DiagnosticBundleService>();
 builder.Services.AddScoped<FleetDashboardService>();
 builder.Services.AddScoped<MachineUtilisationService>();
 builder.Services.AddScoped<FinanceQueryService>();
 builder.Services.AddHostedService<CatalogBackfillHostedService>();
 builder.Services.AddHostedService<FleetSnapshotRetentionHostedService>();
+builder.Services.AddHostedService<SiteUsageRetentionHostedService>();
+builder.Services.AddHostedService<ClientUpdateStuckHostedService>();
 builder.Services.AddHostedService<SpecReviewHostedService>();
 
 var app = builder.Build();
@@ -82,6 +92,8 @@ foreach (var mode in new[] { HeimdallDatabaseMode.Live, HeimdallDatabaseMode.San
     await using var db = new HeimdallDbContext(optionsBuilder.Options);
     await SeedData.EnsureSeededAsync(db);
 }
+
+RdpProtocolHandler.EnsureRegistered(app.Logger);
 
 if (!app.Environment.IsDevelopment())
 {
@@ -97,6 +109,7 @@ app.UseRouting();
 if (staffAccessOpts.RequireWindowsAuth)
     app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<SiteUsageAnalyticsMiddleware>();
 app.MapRazorPages();
 
 app.MapGet("/ui-theme", (HttpContext ctx, string theme, string? returnUrl) =>
@@ -131,6 +144,11 @@ app.MapGet("/database-mode", (HttpContext ctx, string mode, string? returnUrl) =
         SameSite = SameSiteMode.Lax,
         IsEssential = true
     });
+
+    OpsFileLog.Write(
+        "DatabaseMode",
+        $"mode={normalized}",
+        actor: ctx.User?.Identity?.Name);
 
     var dest = "/";
     if (!string.IsNullOrWhiteSpace(returnUrl)
@@ -303,10 +321,31 @@ app.MapGet("/api/admin/client-pack/status", (ClientPackReadinessService pack, Ht
     });
 });
 
-app.MapPost("/api/admin/client-pack/pack", (ClientPackReadinessService pack) =>
+app.MapPost("/api/admin/client-pack/pack", (ClientPackReadinessService pack, HttpRequest request) =>
 {
-    var (started, message) = pack.TryStartPack();
-    return started ? Results.Accepted(value: new { message }) : Results.BadRequest(new { message });
+    var force = string.Equals(request.Query["force"], "1", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(request.Query["force"], "true", StringComparison.OrdinalIgnoreCase);
+    var (started, message, outcome) = pack.TryStartPack(force);
+    if (started)
+        return Results.Accepted(value: new { message, outcome });
+    if (outcome == "already-ready")
+        return Results.Ok(new { message, outcome, skipped = true });
+    return Results.BadRequest(new { message, outcome });
+});
+
+app.MapPost("/api/admin/client-pack/refresh", (ClientPackReadinessService pack) =>
+{
+    var status = pack.RefreshFromDisk();
+    return Results.Ok(new
+    {
+        message = status.Message,
+        status = status.Status.ToString(),
+        deployUnlocked = status.DeployUnlocked,
+        packFolder = status.PackFolder,
+        packProductVersion = status.PackProductVersion,
+        liveSourceFingerprint = status.LiveSourceFingerprint,
+        packSourceFingerprint = status.PackSourceFingerprint
+    });
 });
 
 app.MapPost("/api/admin/client-pack/cancel", (ClientPackReadinessService pack) =>
@@ -315,7 +354,36 @@ app.MapPost("/api/admin/client-pack/cancel", (ClientPackReadinessService pack) =
     return cancelled ? Results.Ok(new { message }) : Results.BadRequest(new { message });
 });
 
-app.MapGet("/api/agent/client-pack", (ClientPackReadinessService pack, HttpRequest request) =>
+// Queue DepositClientPack: agents download the Ready pack to
+// C:\Temp\Heimdall-Client-v{version}-{yyyyMMdd-HHmmss} for manual Install.lnk
+// (does not silent-install / replace HeimdallAgent).
+app.MapPost("/api/admin/client-pack/deposit", async (
+    DepositClientPackRequestDto? body,
+    ClientUpdateService clientUpdates,
+    HttpRequest request,
+    CancellationToken ct) =>
+{
+    if (!IsAuthorized(request))
+        return Results.Unauthorized();
+
+    var hostnames = body?.Hostnames ?? [];
+    if (hostnames.Count == 0)
+        return Results.BadRequest(new DepositClientPackResponseDto
+        {
+            Queued = 0,
+            Skipped = 0,
+            Errors = 0,
+            Message = "Provide at least one hostname in hostnames[].",
+            Results = []
+        });
+
+    var result = await clientUpdates.QueueDepositClientPackAsync(hostnames, ct);
+    if (result.Queued == 0 && result.Errors > 0 && result.Skipped == 0)
+        return Results.BadRequest(result);
+    return Results.Ok(result);
+});
+
+app.MapGet("/api/agent/client-pack", (ClientPackReadinessService pack, HttpRequest request, HttpResponse response) =>
 {
     if (!IsAuthorized(request))
         return Results.Unauthorized();
@@ -333,7 +401,12 @@ app.MapGet("/api/agent/client-pack", (ClientPackReadinessService pack, HttpReque
             return Results.NotFound();
 
         var (zipPath, _) = pack.EnsureZip(packFolder);
-        return Results.File(zipPath, "application/zip", "heimdall-client-agent.zip");
+        var version = status.PackProductVersion
+            ?? ClientPackFingerprint.TryReadProductVersion(packFolder)
+            ?? "unknown";
+        var safeVer = Heimdall.Shared.ClientPackFolderNames.SanitizeVersion(version);
+        response.Headers["X-Heimdall-Client-Version"] = safeVer;
+        return Results.File(zipPath, "application/zip", $"heimdall-client-v{safeVer}.zip");
     }
     catch (Exception ex)
     {
@@ -467,5 +540,48 @@ app.MapGet("/api/health", () =>
         utc = DateTime.UtcNow
     });
 });
+
+// --- First-party site usage (browser beacons; no agent API key) ---
+
+app.MapPost("/api/usage/beacon", async (HttpContext ctx, SiteUsageAnalyticsService usage, CancellationToken ct) =>
+{
+    if (!usage.TryAcceptBeacon(ctx, out var reject))
+    {
+        return reject switch
+        {
+            "disabled" => Results.NoContent(),
+            "rate" => Results.StatusCode(StatusCodes.Status429TooManyRequests),
+            _ => Results.Forbid()
+        };
+    }
+
+    var maxBytes = Math.Clamp(usage.Options.BeaconMaxBodyBytes, 1024, 64_000);
+    if (ctx.Request.ContentLength is long len && len > maxBytes)
+        return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+
+    UsageBeaconPayload? payload;
+    try
+    {
+        ctx.Request.EnableBuffering();
+        using var reader = new StreamReader(ctx.Request.Body, leaveOpen: true);
+        // Cap read via ContentLength check above; also guard unbounded streams.
+        var json = await reader.ReadToEndAsync(ct);
+        if (json.Length > maxBytes)
+            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+        payload = string.IsNullOrWhiteSpace(json)
+            ? null
+            : System.Text.Json.JsonSerializer.Deserialize<UsageBeaconPayload>(json);
+    }
+    catch
+    {
+        return Results.BadRequest();
+    }
+
+    if (payload?.Events is null || payload.Events.Count == 0)
+        return Results.NoContent();
+
+    await usage.IngestBeaconAsync(ctx, payload, ct);
+    return Results.NoContent();
+}).DisableAntiforgery();
 
 app.Run();

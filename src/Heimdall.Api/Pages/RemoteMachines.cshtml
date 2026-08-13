@@ -12,38 +12,27 @@
 {
     <h1 class="hd-title mb-1">Online Status</h1>
 }
-<p class="hd-sub">
-    Ping, RDP handshake, and RDS service from this API host. Utilisation lives on Computers; live metrics on Live.
-</p>
 
 <partial name="_Toasts" />
 
 <div class="hd-grid">
     <div class="hd-stat">
-        <div class="label">Machines</div>
+        <div class="label" title="Hosts that have reported to this API.">Machines</div>
         <div class="value">@Model.Rows.Count</div>
     </div>
     <div class="hd-stat">
-        <div class="label">Online (5m)</div>
+        <div class="label" title="Agent contacted the API within 5 minutes. Not ping or RDP.">Online (agent 5m)</div>
         <div class="value">@Model.OnlineCount</div>
     </div>
     <div class="hd-stat">
-        <div class="label">Offline</div>
+        <div class="label" title="No agent heartbeat in 5 minutes. Ping and RDP can still succeed.">Offline (no agent)</div>
         <div class="value">@Model.OfflineCount</div>
     </div>
     <div class="hd-stat">
-        <div class="label">RDP accepting (last probe)</div>
+        <div class="label" title="Last RDP probe from this API host accepted the handshake (TCP 3389).">RDP accepting (last probe)</div>
         <div class="value">@Model.RdpAcceptingCount</div>
     </div>
 </div>
-
-<p class="text-secondary small mb-3">
-    <strong>Diagnostics:</strong> Ping uses ICMP from this API host (may be blocked by firewall). Click <strong>Ping</strong> to probe — results are not automatic.
-    RDS service status is reported by the agent on each heartbeat.
-    <strong>Restart RDS</strong> queues <code>RestartTermService</code> for the agent. A per-machine countdown estimates agent pickup (~config refresh interval, typically 300s).
-    When the agent acknowledges the restart (or TermService reports Running after the expected window), the API automatically runs an RDP test and updates the row.
-    RDP probe opens TCP 3389 from the API server and validates the RDP negotiation handshake (no WinRM required).
-</p>
 
 <div class="hd-panel hd-remote-panel">
     <table class="hd-table hd-remote-table hd-sortable">
@@ -59,13 +48,13 @@
         </colgroup>
         <thead>
             <tr>
-                <th data-sort="text">Status</th>
+                <th data-sort="text" title="Agent heartbeat within 5 minutes. Not ping or RDP.">Status</th>
                 <th data-sort="text">Machine</th>
-                <th class="hd-th-stacked" data-sort="text"><span>IP</span><span>Address</span></th>
-                <th class="hd-th-contact" data-sort="text">Agent last contact</th>
-                <th data-sort="text">Ping</th>
-                <th class="hd-th-stacked" data-sort="text"><span>RDS</span><span>Service</span></th>
-                <th data-sort="text">RDP status</th>
+                <th class="hd-th-stacked" data-sort="text" title="Last IP reported by the agent."><span>IP</span><span>Address</span></th>
+                <th class="hd-th-contact" data-sort="text" title="When this host last posted a heartbeat to the API.">Agent last contact</th>
+                <th data-sort="text" title="ICMP ping from this API host. Click Ping to probe — not automatic.">Ping</th>
+                <th class="hd-th-stacked" data-sort="text" title="TermService as reported by the agent on heartbeat."><span>RDS</span><span>Service</span></th>
+                <th data-sort="text" title="RDP handshake from this API host (TCP 3389). Click to probe.">RDP status</th>
                 <th>Actions</th>
             </tr>
         </thead>
@@ -87,14 +76,14 @@
                 <td>
                     @if (r.IsOnline)
                     {
-                        <span class="badge-pill badge-active hd-status-badge">
+                        <span class="badge-pill badge-active hd-status-badge" title="Agent contacted API within 5 minutes">
                             <span class="hd-status-full">Online</span>
                             <span class="hd-status-short" aria-hidden="true">On</span>
                         </span>
                     }
                     else
                     {
-                        <span class="badge-pill badge-ended hd-status-badge">
+                        <span class="badge-pill badge-ended hd-status-badge" title="No agent heartbeat in 5 minutes (Ping/RDP can still succeed)">
                             <span class="hd-status-full">Offline</span>
                             <span class="hd-status-short" aria-hidden="true">Off</span>
                         </span>
@@ -180,7 +169,7 @@
                     <a class="hd-btn hd-btn-silver hd-btn-sm hd-btn-compact hd-connect-rdp"
                        asp-page-handler="ConnectRdp"
                        asp-route-hostname="@r.Hostname"
-                       title="Open Remote Desktop (mstsc) to @r.Hostname">
+                       title="Open Remote Desktop (mstsc) to @(string.IsNullOrWhiteSpace(r.LastIp) ? r.Hostname : r.LastIp)">
                         <svg class="hd-btn-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
                             <path d="M8 1a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V1Zm1 13.5a.5.5 0 1 0 1 0 .5.5 0 0 0-1 0Zm2 0a.5.5 0 1 0 1 0 .5.5 0 0 0-1 0ZM9.5 1a.5.5 0 0 0 0 1h5a.5.5 0 0 0 0-1h-5ZM9 3.5a.5.5 0 0 0 .5.5h5a.5.5 0 0 0 0-1h-5a.5.5 0 0 0-.5.5ZM1.5 2A1.5 1.5 0 0 0 0 3.5v7A1.5 1.5 0 0 0 1.5 12H6v2h-.5a.5.5 0 0 0 0 1H7a.5.5 0 0 0 0-1H6.5v-2h.041a.5.5 0 0 0 .052-.004l.592-.032a.5.5 0 0 0 .46-.5V3.5a.5.5 0 0 0-.5-.5H1.5ZM1 3.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5h-4a.5.5 0 0 1-.5-.5v-7Z"/>
                         </svg>

@@ -762,6 +762,22 @@ html[data-theme="cosmic"] .hd-theme-opt.active {
   padding: 1rem 1.1rem;
 }
 
+.hd-grid-fill {
+  align-items: stretch;
+}
+
+.hd-grid-fill > .hd-stat {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.35rem;
+  min-height: 100%;
+}
+
+.hd-grid-fill > .hd-stat .value {
+  margin-top: 0;
+}
+
 a.hd-stat-link {
   display: block;
   text-decoration: none;
@@ -1675,7 +1691,8 @@ table.hd-sortable th.sorted-desc::after {
 #discovery-table col.hd-discovery-col-version { width: 9%; }
 #discovery-table col.hd-discovery-col-category { width: 11%; }
 #discovery-table col.hd-discovery-col-subcategory { width: 12%; }
-#discovery-table col.hd-discovery-col-classification { width: 16%; }
+#discovery-table col.hd-discovery-col-classification { width: 13%; }
+#discovery-table col.hd-discovery-col-advertise { width: 3.6rem; }
 #discovery-table col.hd-discovery-col-installs { width: 4.5rem; }
 #discovery-table col.hd-discovery-col-actions { width: 6.75rem; }
 
@@ -1717,6 +1734,7 @@ table.hd-sortable th.sorted-desc::after {
 .hd-discovery-cat-col,
 .hd-discovery-subcat-col,
 .hd-discovery-class-col,
+.hd-discovery-advertise-col,
 .hd-discovery-installs-col,
 .hd-discovery-actions-col {
   vertical-align: middle;
@@ -1761,6 +1779,15 @@ table.hd-sortable th.sorted-desc::after {
   width: 100%;
   font-size: 0.8rem;
   padding: 0.2rem 0.35rem;
+}
+
+.hd-discovery-advertise-col {
+  white-space: nowrap;
+  width: 3.6rem;
+}
+
+.hd-discovery-advertise-col .hd-discovery-advertise-cb {
+  cursor: pointer;
 }
 
 .hd-discovery-installs-col {

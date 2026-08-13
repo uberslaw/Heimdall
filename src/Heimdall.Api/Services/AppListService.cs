@@ -1287,7 +1287,10 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         bool ExcludedFromDefaultTracking,
         InventoryStatus Status,
         AppGroup? SuggestedGroup = null,
-        string? SuggestionReason = null);
+        string? SuggestionReason = null)
+    {
+        public string? ProgramDisplay => ProgramInstallRoot.TryGetDisplayName(ExecutablePath);
+    }
 
     public record AnalysisResult(string Hostname, IReadOnlyList<ProposedApp> Proposals, AppAnalysisStatus Status, bool queuedForAgent, int NewCatalogCount = 0);
     public record ActiveAppListInfo(int AssignmentId, int AppListId, string Name, string? TeamName, ConfigScope Scope, string? ScopeValue, bool IsAutoDiscovered, int EntryCount, bool CanUnassign);

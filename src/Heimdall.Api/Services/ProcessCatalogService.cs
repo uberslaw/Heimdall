@@ -517,13 +517,31 @@ public sealed class ProcessCatalogService(HeimdallDbContext db, ProcessGroupServ
 
     /// <summary>
     /// Heuristics (kept intentionally simple, documented for the Help page):
-    ///  1. Same install folder as another process that already has a confident classification.
-    ///  2. Same publisher (CompanyName from file version info) as another confidently-classified process.
+    ///  1. Same Program Files program root (see <see cref="Heimdall.Shared.ProgramInstallRoot"/>)
+    ///     as another process that already has a confident classification —
+    ///     e.g. siblings under C:\Program Files\PowerToys\ or Autodesk\Revit 2025\.
+    ///  2. Same immediate install folder (narrower fallback when program root is unavailable).
+    ///  3. Same publisher (CompanyName from file version info) as another confidently-classified process.
     /// Only ever a suggestion — never auto-applied; a human still confirms via the classification CSV or group buttons.
     /// </summary>
     private static (AppGroup? Group, string? Reason) SuggestClassification(
         CatalogItem item, List<ProcessCatalogEntry> pool, ProcessClassificationContext ctx)
     {
+        var program = ProgramInstallRoot.TryExtract(item.ExecutablePath);
+        if (program is not null)
+        {
+            var match = pool.FirstOrDefault(p =>
+                !string.Equals(p.ProcessName, item.ProcessName, StringComparison.OrdinalIgnoreCase) &&
+                ProgramInstallRoot.SameProgram(item.ExecutablePath, p.ExecutablePath) &&
+                ResolvedGroup(p.ProcessName, ctx) is not null);
+            if (match is not null)
+            {
+                var group = ResolvedGroup(match.ProcessName, ctx)!.Value;
+                return (group,
+                    $"Same program “{program.DisplayName}” as “{match.ProcessName}” ({ProcessClassification.GroupLabel(group)}).");
+            }
+        }
+
         var dir = TryGetDirectory(item.ExecutablePath);
         if (dir is not null)
         {
@@ -571,6 +589,40 @@ public sealed class ProcessCatalogService(HeimdallDbContext db, ProcessGroupServ
     }
 
     private static string? NullIfEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    /// <summary>
+    /// Distinct process names in the catalog that share the same Program Files program identity
+    /// as <paramref name="executablePath"/> (includes the seed process when present).
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetProcessNamesInSameProgramAsync(
+        string? executablePath,
+        string? seedProcessName = null,
+        CancellationToken ct = default)
+    {
+        var key = ProgramInstallRoot.TryGetKey(executablePath);
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(seedProcessName))
+            names.Add(ConfigService.NormalizeProcessName(seedProcessName));
+
+        if (key is null)
+            return names.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+
+        // Load candidates under Program Files only — filter program key in memory.
+        var candidates = await db.ProcessCatalogEntries.AsNoTracking()
+            .Where(e => e.ExecutablePath != null && e.ExecutablePath != ""
+                        && (e.ExecutablePath.StartsWith(@"C:\Program Files\")
+                            || e.ExecutablePath.StartsWith(@"C:\Program Files (x86)\")))
+            .Select(e => new { e.ProcessName, e.ExecutablePath })
+            .ToListAsync(ct);
+
+        foreach (var c in candidates)
+        {
+            if (ProgramInstallRoot.SameProgram(executablePath, c.ExecutablePath))
+                names.Add(ConfigService.NormalizeProcessName(c.ProcessName));
+        }
+
+        return names.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+    }
 
     public Task<int> CountAsync(CancellationToken ct = default) => db.ProcessCatalogEntries.CountAsync(ct);
 

@@ -80,6 +80,54 @@ public class ClientVersionModel(
         return RedirectToOpsClients();
     }
 
+    public async Task<IActionResult> OnPostRestartAgentAsync(CancellationToken ct)
+    {
+        if (SelectedHostnames.Count == 0)
+        {
+            TempData["Error"] = "Select at least one machine to restart.";
+            return RedirectToOpsClients();
+        }
+
+        var (queued, _, message) = await clientUpdates.QueueRestartAgentAsync(SelectedHostnames, ct);
+        if (queued == 0)
+            TempData["Error"] = message;
+        else
+            TempData["Message"] = message;
+        return RedirectToOpsClients();
+    }
+
+    public async Task<IActionResult> OnPostCleanupStagingAsync(CancellationToken ct)
+    {
+        if (SelectedHostnames.Count == 0)
+        {
+            TempData["Error"] = "Select at least one machine to clean staging folders.";
+            return RedirectToOpsClients();
+        }
+
+        var (queued, _, message) = await clientUpdates.QueueCleanupStagingAsync(SelectedHostnames, ct);
+        if (queued == 0)
+            TempData["Error"] = message;
+        else
+            TempData["Message"] = message;
+        return RedirectToOpsClients();
+    }
+
+    public async Task<IActionResult> OnPostDepositClientPackAsync(CancellationToken ct)
+    {
+        if (SelectedHostnames.Count == 0)
+        {
+            TempData["Error"] = "Select at least one machine to deposit the client pack.";
+            return RedirectToOpsClients();
+        }
+
+        var result = await clientUpdates.QueueDepositClientPackAsync(SelectedHostnames, ct);
+        if (result.Queued == 0)
+            TempData["Error"] = result.Message;
+        else
+            TempData["Message"] = result.Message;
+        return RedirectToOpsClients();
+    }
+
     private static IActionResult RedirectToOpsClients() =>
         new RedirectResult("/Fleet?tab=clients");
 

@@ -1,4 +1,4 @@
-﻿@page
+@page
 @model IndexModel
 @using Heimdall.Api.Services
 @{
@@ -287,45 +287,64 @@ else
 
   function bindTableSort(table) {
     const headers = [...table.querySelectorAll('thead th[data-sort]')];
-    headers.forEach((th, colIdx) => {
+    const sortKey = 'hd-sort:' + location.pathname + location.search + ':machines:' + (table.getAttribute('data-machines-group') || table.id || 'main');
+
+    function applySort(th, forceDir) {
+      const type = th.dataset.sort;
+      const colIdx = headers.indexOf(th);
+      const tbody = table.tBodies[0];
+      if (!tbody || colIdx < 0) return;
+      const machineRows = [...tbody.querySelectorAll('tr.hd-machine-row')];
+      let asc;
+      if (forceDir === 'asc' || forceDir === 'desc') asc = forceDir === 'asc';
+      else asc = th.dataset.dir === 'desc';
+      headers.forEach((h) => {
+        h.dataset.dir = '';
+        h.classList.remove('sorted-asc', 'sorted-desc');
+      });
+      th.dataset.dir = asc ? 'asc' : 'desc';
+      th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
+
+      const cellVal = (row) => {
+        const cell = row.children[colIdx];
+        let v = cell?.dataset.sortValue ?? cell?.textContent ?? '';
+        if (type === 'num' || type === 'date') {
+          v = parseFloat(v);
+          return Number.isNaN(v) ? -Infinity : v;
+        }
+        return String(v).toLowerCase();
+      };
+      machineRows.sort((a, b) => {
+        const va = cellVal(a);
+        const vb = cellVal(b);
+        if (typeof va === 'number' && typeof vb === 'number')
+          return asc ? va - vb : vb - va;
+        return asc
+          ? String(va).localeCompare(String(vb))
+          : String(vb).localeCompare(String(va));
+      });
+      machineRows.forEach((row) => tbody.appendChild(row));
+      applyStatusFilter(currentStatusFilter);
+      try {
+        sessionStorage.setItem(sortKey, JSON.stringify({ colIdx, dir: th.dataset.dir }));
+      } catch { /* ignore */ }
+    }
+
+    headers.forEach((th) => {
       if (th.dataset.sortBound === 'true') return;
       th.dataset.sortBound = 'true';
       th.style.cursor = 'pointer';
-      th.addEventListener('click', () => {
-        const type = th.dataset.sort;
-        const tbody = table.tBodies[0];
-        if (!tbody) return;
-        const machineRows = [...tbody.querySelectorAll('tr.hd-machine-row')];
-        const asc = th.dataset.dir === 'desc';
-        headers.forEach((h) => {
-          h.dataset.dir = '';
-          h.classList.remove('sorted-asc', 'sorted-desc');
-        });
-        th.dataset.dir = asc ? 'asc' : 'desc';
-        th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
-
-        const cellVal = (row) => {
-          const cell = row.children[colIdx];
-          let v = cell?.dataset.sortValue ?? cell?.textContent ?? '';
-          if (type === 'num' || type === 'date') {
-            v = parseFloat(v);
-            return Number.isNaN(v) ? -Infinity : v;
-          }
-          return String(v).toLowerCase();
-        };
-        machineRows.sort((a, b) => {
-          const va = cellVal(a);
-          const vb = cellVal(b);
-          if (typeof va === 'number' && typeof vb === 'number')
-            return asc ? va - vb : vb - va;
-          return asc
-            ? String(va).localeCompare(String(vb))
-            : String(vb).localeCompare(String(va));
-        });
-        machineRows.forEach((row) => tbody.appendChild(row));
-        applyStatusFilter(currentStatusFilter);
-      });
+      th.addEventListener('click', () => applySort(th));
     });
+
+    try {
+      const raw = sessionStorage.getItem(sortKey);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        const th = headers[saved.colIdx];
+        if (th) applySort(th, saved.dir === 'asc' ? 'asc' : 'desc');
+      }
+    } catch { /* ignore */ }
   }
 
   document.querySelectorAll('table[data-machines-table]').forEach(bindTableSort);
@@ -386,10 +405,21 @@ else
   });
 
   if (viewSelect) {
-    viewSelect.addEventListener('change', () => applyView(viewSelect.value));
+    viewSelect.addEventListener('change', () => {
+      applyView(viewSelect.value);
+      try {
+        sessionStorage.setItem('hd-machines-view:' + location.pathname + location.search, viewSelect.value);
+      } catch { /* ignore */ }
+    });
   }
 
-  applyView('by-group');
+  try {
+    const viewKey = 'hd-machines-view:' + location.pathname + location.search;
+    const savedView = sessionStorage.getItem(viewKey);
+    applyView(savedView || 'by-group');
+  } catch {
+    applyView('by-group');
+  }
 
   // Calculation tips on column headers (Bootstrap tooltip; title= is the fallback).
   if (window.bootstrap?.Tooltip) {

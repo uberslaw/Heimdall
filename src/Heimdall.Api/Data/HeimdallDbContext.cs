@@ -17,6 +17,7 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<Team> Teams => Set<Team>();
     public DbSet<PersonTeam> PersonTeams => Set<PersonTeam>();
     public DbSet<MachineBooking> MachineBookings => Set<MachineBooking>();
+    public DbSet<MachineSoftwareCapability> MachineSoftwareCapabilities => Set<MachineSoftwareCapability>();
     public DbSet<UtilizationCriteria> UtilizationCriteria => Set<UtilizationCriteria>();
     public DbSet<AppLicenseCost> AppLicenseCosts => Set<AppLicenseCost>();
     public DbSet<AppLicensePurchase> AppLicensePurchases => Set<AppLicensePurchase>();
@@ -40,6 +41,7 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<FleetMetricSnapshot> FleetMetricSnapshots => Set<FleetMetricSnapshot>();
     public DbSet<TuflowRunRecord> TuflowRunRecords => Set<TuflowRunRecord>();
     public DbSet<CustomTheme> CustomThemes => Set<CustomTheme>();
+    public DbSet<SiteUsageEvent> SiteUsageEvents => Set<SiteUsageEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -140,6 +142,16 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
         {
             e.HasIndex(x => new { x.MachineId, x.StartUtc, x.EndUtc });
             e.HasIndex(x => x.BookedByEmail);
+            e.HasOne(x => x.Machine)
+                .WithMany()
+                .HasForeignKey(x => x.MachineId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<MachineSoftwareCapability>(e =>
+        {
+            e.HasIndex(x => new { x.MachineId, x.Label }).IsUnique();
+            e.HasIndex(x => x.Status);
             e.HasOne(x => x.Machine)
                 .WithMany()
                 .HasForeignKey(x => x.MachineId)
@@ -330,6 +342,16 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
         modelBuilder.Entity<CustomTheme>(e =>
         {
             e.HasIndex(x => x.Name);
+        });
+
+        modelBuilder.Entity<SiteUsageEvent>(e =>
+        {
+            e.HasIndex(x => x.OccurredUtc);
+            e.HasIndex(x => new { x.EventType, x.OccurredUtc });
+            e.HasIndex(x => new { x.UserName, x.OccurredUtc });
+            e.HasIndex(x => new { x.Path, x.OccurredUtc });
+            e.HasIndex(x => x.PageViewId);
+            e.HasIndex(x => x.SessionId);
         });
     }
 }

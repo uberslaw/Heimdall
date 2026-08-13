@@ -34,6 +34,12 @@ public sealed class AgentConfigDto
     /// </summary>
     public ClientUpdateRequestDto? PendingClientUpdate { get; init; }
 
+    /// <summary>
+    /// Pack deposit request (version for C:\Temp\Heimdall-Client-v… folder). Cleared when the agent
+    /// acks DepositClientPack.
+    /// </summary>
+    public ClientDepositRequestDto? PendingClientDeposit { get; init; }
+
     /// <summary>When true, agent runs the always-on 30s fleet sampler (Historical Dashboard enrollment).</summary>
     public bool FleetSamplingEnabled { get; init; }
 

@@ -6,7 +6,7 @@
     var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
     if (isPartial)
         Layout = null;
-    const int colCount = 7; // Name&Location, Version, Cat, SubCat, Classification, Installs, Actions
+    const int colCount = 8; // Name&Location, Version, Cat, SubCat, Classification, Advertise RDP, Installs, Actions
     var sort = Model.Sort?.ToLowerInvariant() ?? "name";
     var dir = Model.Dir?.ToLowerInvariant() == "asc" ? "asc" : "desc";
     // First click on a column → descending; same column toggles desc ↔ asc.
@@ -224,6 +224,8 @@ else
     </label>
     <button type="button" class="hd-btn hd-btn-gold hd-btn-sm" id="discovery-batch-approve" title="Approve pending suggestions on selected rows">Approve</button>
     <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="discovery-batch-set" title="Set Classification (+ labels) on selected rows">Set</button>
+    <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="discovery-batch-advertise-on" title="Allow Advertise RDP on selected rows (public pool)">Advertise on</button>
+    <button type="button" class="hd-btn hd-btn-black hd-btn-sm" id="discovery-batch-advertise-off" title="Turn off Advertise RDP on selected rows">Advertise off</button>
     <button type="button" class="hd-btn hd-btn-black hd-btn-sm" id="discovery-batch-clear">Clear</button>
 </div>
 
@@ -244,6 +246,7 @@ else
                     <col data-col="category" class="hd-discovery-col-category" />
                     <col data-col="subcategory" class="hd-discovery-col-subcategory" />
                     <col data-col="classification" class="hd-discovery-col-classification" />
+                    <col data-col="advertise" class="hd-discovery-col-advertise" />
                     <col data-col="installs" class="hd-discovery-col-installs" />
                     <col data-col="actions" class="hd-discovery-col-actions" />
                 </colgroup>
@@ -267,6 +270,15 @@ else
                                asp-route-showClassified="@Model.ShowClassified"
                                asp-route-sort="path"
                                asp-route-dir="@ToggleDir("path")">Location</a>
+                            <span class="text-secondary"> · </span>
+                            <a class="hd-discovery-sort-link @SortClass("program")"
+                               asp-page="/Discovery"
+                               asp-route-q="@Model.Q"
+                               asp-route-hideIgnored="@Model.HideIgnored"
+                               asp-route-blankPathOnly="@Model.BlankPathOnly"
+                               asp-route-showClassified="@Model.ShowClassified"
+                               asp-route-sort="program"
+                               asp-route-dir="@ToggleDir("program")">Program</a>
                             <span class="hd-col-resize" data-resize="location" title="Drag to resize"></span>
                         </th>
                         <th class="hd-discovery-version-col" data-col="version">
@@ -313,6 +325,10 @@ else
                                asp-route-dir="@ToggleDir("classification")">Classification</a>
                             <span class="hd-col-resize" data-resize="classification" title="Drag to resize"></span>
                         </th>
+                        <th class="hd-discovery-advertise-col" data-col="advertise" title="Allow Advertise RDP on the public Remote Workstations pool">
+                            RDP
+                            <span class="hd-col-resize" data-resize="advertise" title="Drag to resize"></span>
+                        </th>
                         <th class="hd-discovery-installs-col" data-col="installs" title="Number of machines where this process was seen">
                             <a class="hd-discovery-sort-link @SortClass("installs")"
                                asp-page="/Discovery"
@@ -348,6 +364,9 @@ else
                     var unignoreFormId = $"discovery-unignore-{r.Id}";
                     var findPathFormId = $"discovery-findpath-{r.Id}";
                     var defaultGroup = r.SuggestedGroup?.ToString() ?? "Specialization";
+                    var advertiseTip = string.IsNullOrWhiteSpace(r.CompanyName)
+                        ? "Allow Advertise RDP — show this app on the public Remote Workstations pool"
+                        : $"Allow Advertise RDP — {r.CompanyName}";
                     <tr class="hd-discovery-main @(r.Ignored ? "hd-row-muted" : null)"
                         data-discovery-id="@r.Id"
                         data-has-description="@(hasDescription ? "true" : "false")"
@@ -381,6 +400,12 @@ else
                                     @r.Path
                                 }
                             </div>
+                            @if (!string.IsNullOrWhiteSpace(r.ProgramDisplay))
+                            {
+                                <div class="hd-meta-line text-secondary" title="Program Files program identity (same-program Approve/Set applies to all exes under this root)">
+                                    Program: @r.ProgramDisplay
+                                </div>
+                            }
                             @if (hasSuggestion)
                             {
                                 <span class="badge-pill badge-group-specialization mt-1"
@@ -512,6 +537,21 @@ else
                                 <span class="text-secondary">—</span>
                             }
                         </td>
+                        <td class="hd-discovery-advertise-col">
+                            @if (!r.Ignored)
+                            {
+                                <input type="checkbox"
+                                       class="form-check-input hd-discovery-advertise-cb"
+                                       data-id="@r.Id"
+                                       @(r.AllowAdvertiseRdp ? "checked" : null)
+                                       aria-label="Advertise RDP for @r.Name"
+                                       title="@advertiseTip" />
+                            }
+                            else
+                            {
+                                <span class="text-secondary" title="@advertiseTip">@(r.AllowAdvertiseRdp ? "on" : "—")</span>
+                            }
+                        </td>
                         <td class="hd-discovery-installs-col" title="@(r.SeenHosts.Count == 0 ? "Not tied to a specific host yet" : string.Join(", ", r.SeenHosts))">
                             @r.SeenHosts.Count
                         </td>
@@ -638,6 +678,7 @@ else
         <strong>Approve all</strong> commits every pending suggestion in small batches (not only the current filter).
         <strong>Ctrl+click</strong> / <strong>Shift+click</strong> rows to multi-select, then use the batch bar for Category/Subcategory, Approve, or Set.
         Pick <strong>Classification</strong>, <strong>Category</strong>, and <strong>Subcategory</strong>, then click <strong>Set</strong> to apply all three.
+        <strong>Advertise RDP</strong> lists the app on the public Remote Workstations pool (Specialization Set opts in; uncheck to remove).
         Double-click a name to rename. <strong>Installs</strong> is machines that reported the process (hover for hosts).
         <strong>Find missing paths</strong> reuses agent-reported paths from samples/inventories (and can request inventory where still unknown).
         Drag column borders to resize (saved for this browser session).
@@ -916,6 +957,10 @@ else
         const sub = row.querySelector('.hd-discovery-tax-select[data-field="subcategory"]');
         if (sub) sub.value = data.subcategory || '';
       }
+      if (data.allowAdvertiseRdp) {
+        const cb = row.querySelector('.hd-discovery-advertise-cb');
+        if (cb) cb.checked = true;
+      }
     }
     if (!quiet) {
       updateDiscoveryCounts(data.pendingSuggestionCount, data.unclassifiedCount);
@@ -1099,6 +1144,7 @@ else
           groupLabel: data.groupLabel,
           category: data.category,
           subcategory: data.subcategory,
+          allowAdvertiseRdp: data.allowAdvertiseRdp,
           pendingSuggestionCount: data.pendingSuggestionCount,
           unclassifiedCount: data.unclassifiedCount
         }, document.getElementById(`discovery-set-${id}`), { quiet: true, forceRemove: !!data.removeRow });
@@ -1110,7 +1156,8 @@ else
           group: data.group,
           groupLabel: data.groupLabel,
           category: data.category,
-          subcategory: data.subcategory
+          subcategory: data.subcategory,
+          allowAdvertiseRdp: data.allowAdvertiseRdp
         }, null, { quiet: true });
       }
       updateDiscoveryCounts(data.pendingSuggestionCount, data.unclassifiedCount);
@@ -1118,6 +1165,43 @@ else
       showToast(data.message || 'Set selection.', 'success');
     } catch (err) {
       showToast(err.message || 'Batch set failed', 'error');
+    }
+  });
+
+  async function applyAdvertiseBatch(allow) {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    try {
+      const data = await postDiscovery('BatchAdvertiseRdp', body => {
+        for (const id of ids) body.append('ids', id);
+        body.set('allow', allow ? 'true' : 'false');
+      });
+      for (const id of (data.updatedIds || ids)) {
+        const cb = table?.querySelector(`tr.hd-discovery-main[data-discovery-id="${id}"] .hd-discovery-advertise-cb`);
+        if (cb) cb.checked = !!data.allowAdvertiseRdp;
+      }
+      showToast(data.message || 'Advertise RDP updated.', 'success');
+    } catch (err) {
+      showToast(err.message || 'Batch advertise failed', 'error');
+    }
+  }
+
+  document.getElementById('discovery-batch-advertise-on')?.addEventListener('click', () => applyAdvertiseBatch(true));
+  document.getElementById('discovery-batch-advertise-off')?.addEventListener('click', () => applyAdvertiseBatch(false));
+
+  table?.addEventListener('change', async (e) => {
+    const cb = e.target.closest('.hd-discovery-advertise-cb');
+    if (!cb || !table.contains(cb)) return;
+    const id = cb.dataset.id;
+    const allow = cb.checked;
+    try {
+      await postDiscovery('SetAdvertiseRdp', body => {
+        body.set('id', id);
+        body.set('allow', allow ? 'true' : 'false');
+      });
+    } catch (err) {
+      cb.checked = !allow;
+      showToast(err.message || 'Could not update Advertise RDP', 'error');
     }
   });
 
@@ -1365,6 +1449,7 @@ else
       category: 64,
       subcategory: 72,
       classification: 110,
+      advertise: 44,
       installs: 52,
       actions: 64
     };

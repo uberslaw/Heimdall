@@ -1,4 +1,7 @@
 (() => {
+  const SORT_PREFIX = 'hd-sort:';
+  const SCROLL_PREFIX = 'hd-scroll:';
+
   function columnIndex(th) {
     if (th.dataset.sortCol !== undefined && th.dataset.sortCol !== '') {
       const n = parseInt(th.dataset.sortCol, 10);
@@ -20,6 +23,77 @@
     return asc ? sa.localeCompare(sb) : sb.localeCompare(sa);
   }
 
+  function pageKey() {
+    return location.pathname + location.search;
+  }
+
+  function tableSortKey(table) {
+    const id = table.id || table.getAttribute('data-hd-sort-key');
+    if (id) return SORT_PREFIX + pageKey() + ':' + id;
+    const tables = [...document.querySelectorAll('table.hd-sortable')];
+    const idx = tables.indexOf(table);
+    return SORT_PREFIX + pageKey() + ':t' + (idx >= 0 ? idx : 0);
+  }
+
+  function saveSort(table, colIdx, dir) {
+    try {
+      sessionStorage.setItem(tableSortKey(table), JSON.stringify({ colIdx, dir }));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function loadSort(table) {
+    try {
+      const raw = sessionStorage.getItem(tableSortKey(table));
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  function sortTableByHeader(table, th, forceDir) {
+    const type = th.dataset.sort;
+    const colIdx = columnIndex(th);
+    const tbody = table.tBodies[0];
+    if (!tbody) return;
+    const headers = [...table.querySelectorAll('thead th[data-sort]')];
+    const rows = [...tbody.querySelectorAll('tr')].filter(r => r.children.length > 1);
+    let asc;
+    if (forceDir === 'asc' || forceDir === 'desc') {
+      asc = forceDir === 'asc';
+    } else {
+      // First click / empty dir → descending; then toggle asc ↔ desc.
+      asc = th.dataset.dir === 'desc';
+    }
+    headers.forEach(h => {
+      h.dataset.dir = '';
+      h.classList.remove('sorted-asc', 'sorted-desc');
+    });
+    th.dataset.dir = asc ? 'asc' : 'desc';
+    th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
+    rows.sort((a, b) => {
+      const ca = a.children[colIdx];
+      const cb = b.children[colIdx];
+      const va = ca?.dataset.sortValue ?? ca?.textContent ?? '';
+      const vb = cb?.dataset.sortValue ?? cb?.textContent ?? '';
+      return compareRows(type, va, vb, asc);
+    });
+    rows.forEach(r => tbody.appendChild(r));
+    saveSort(table, colIdx, th.dataset.dir);
+  }
+
+  function restoreSort(table) {
+    const saved = loadSort(table);
+    if (!saved || saved.colIdx == null) return false;
+    const headers = [...table.querySelectorAll('thead th[data-sort]')];
+    const th = headers.find(h => columnIndex(h) === saved.colIdx) || headers[saved.colIdx];
+    if (!th) return false;
+    sortTableByHeader(table, th, saved.dir === 'asc' ? 'asc' : 'desc');
+    return true;
+  }
+
   function initSort(root) {
     root.querySelectorAll('table.hd-sortable').forEach(table => {
       const headers = [...table.querySelectorAll('thead th[data-sort]')];
@@ -28,32 +102,52 @@
         th.dataset.sortBound = 'true';
         th.style.cursor = 'pointer';
         if (!th.getAttribute('title')) th.title = 'Sort';
-        th.addEventListener('click', () => {
-          const type = th.dataset.sort;
-          const colIdx = columnIndex(th);
-          const tbody = table.tBodies[0];
-          if (!tbody) return;
-          const rows = [...tbody.querySelectorAll('tr')].filter(r => r.children.length > 1);
-          // First click / empty dir → descending; then toggle asc ↔ desc.
-          const asc = th.dataset.dir === 'desc';
-          headers.forEach(h => {
-            h.dataset.dir = '';
-            h.classList.remove('sorted-asc', 'sorted-desc');
-          });
-          th.dataset.dir = asc ? 'asc' : 'desc';
-          th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
-          rows.sort((a, b) => {
-            const ca = a.children[colIdx];
-            const cb = b.children[colIdx];
-            const va = ca?.dataset.sortValue ?? ca?.textContent ?? '';
-            const vb = cb?.dataset.sortValue ?? cb?.textContent ?? '';
-            return compareRows(type, va, vb, asc);
-          });
-          rows.forEach(r => tbody.appendChild(r));
-        });
-        if (th.dataset.defaultDesc !== undefined) th.click();
+        th.addEventListener('click', () => sortTableByHeader(table, th));
       });
+      if (!restoreSort(table)) {
+        const def = headers.find(h => h.dataset.defaultDesc !== undefined);
+        if (def) sortTableByHeader(table, def, 'desc');
+      }
     });
+  }
+
+  function scrollStorageKey() {
+    return SCROLL_PREFIX + pageKey();
+  }
+
+  function saveScroll() {
+    try {
+      sessionStorage.setItem(scrollStorageKey(), String(Math.round(window.scrollY || 0)));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function restoreScroll() {
+    try {
+      const raw = sessionStorage.getItem(scrollStorageKey());
+      if (raw == null || raw === '') return;
+      const y = parseInt(raw, 10);
+      if (!Number.isFinite(y) || y < 0) return;
+      requestAnimationFrame(() => {
+        window.scrollTo(0, y);
+        // Tab partials paint late — nudge once more.
+        setTimeout(() => window.scrollTo(0, y), 50);
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  let scrollTimer = null;
+  function bindScrollPersist() {
+    if (window.__hdScrollPersistBound) return;
+    window.__hdScrollPersistBound = true;
+    window.addEventListener('scroll', () => {
+      if (scrollTimer) clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(saveScroll, 150);
+    }, { passive: true });
+    window.addEventListener('pagehide', saveScroll);
   }
 
   function initTextFilter(root) {
@@ -96,9 +190,19 @@
     initSort(scope);
     initTextFilter(scope);
     initToasts(scope);
+    bindScrollPersist();
+    restoreScroll();
   }
 
-  window.HeimdallTable = { initSort, initTextFilter, initToasts, init };
+  window.HeimdallTable = {
+    initSort,
+    initTextFilter,
+    initToasts,
+    init,
+    restoreSort,
+    saveScroll,
+    restoreScroll
+  };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => init(document));

@@ -76,6 +76,40 @@ elseif (-not [string]::IsNullOrWhiteSpace($env:HEIMDALL_PUBLISHED_CLIENT_VERSION
     if ($null -ne $n) { $candidates.Add($n) }
 }
 
+# Also floor against C:\Temp\Heimdall* deposits (Launch Control / DepositClientPack)
+# so a pack never ships a productVersion below something already out in Temp.
+$tempRoot = Join-Path ($env:SystemDrive.TrimEnd('\') + '\') "Temp"
+if (Test-Path -LiteralPath $tempRoot) {
+    $tempVersionFiles = @(
+        (Join-Path $tempRoot "Heimdall\VERSION.json"),
+        (Join-Path $tempRoot "Heimdall-Client\VERSION.json")
+    )
+    foreach ($vf in $tempVersionFiles) {
+        if (-not (Test-Path -LiteralPath $vf)) { continue }
+        try {
+            $obj = Get-Content -LiteralPath $vf -Raw | ConvertFrom-Json
+            $n = Get-SimpleInt ([string]$obj.productVersion)
+            if ($null -ne $n) { $candidates.Add($n) }
+        }
+        catch { /* ignore */ }
+    }
+    try {
+        Get-ChildItem -LiteralPath $tempRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "Heimdall-Client*" -or $_.Name -eq "Heimdall" } |
+            ForEach-Object {
+                $vf = Join-Path $_.FullName "VERSION.json"
+                if (-not (Test-Path -LiteralPath $vf)) { return }
+                try {
+                    $obj = Get-Content -LiteralPath $vf -Raw | ConvertFrom-Json
+                    $n = Get-SimpleInt ([string]$obj.productVersion)
+                    if ($null -ne $n) { $candidates.Add($n) }
+                }
+                catch { }
+            }
+    }
+    catch { /* ignore */ }
+}
+
 $max = 0
 foreach ($c in $candidates) {
     if ($c -gt $max) { $max = $c }

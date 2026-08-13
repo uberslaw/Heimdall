@@ -1,0 +1,114 @@
+@page
+@model RemoteWorkstationSoftwareModel
+@using Heimdall.Api.Data
+@{
+    ViewData["Title"] = "Remote workstation software";
+    ViewData["HelpFragment"] = "remote-workstations";
+}
+
+<h1 class="hd-title mb-1">Remote workstation software</h1>
+<p class="hd-sub mb-3">
+    Approve capability tags for the public <a asp-page="/RemoteWorkstations">Remote Workstations</a> filter.
+    Detection proposes labels from the process catalog; only <strong>Approved</strong> tags appear publicly.
+</p>
+
+@if (TempData["Message"] is string okMsg)
+{
+    <div class="alert alert-success">@okMsg</div>
+}
+@if (TempData["Error"] is string errMsg)
+{
+    <div class="alert alert-danger">@errMsg</div>
+}
+
+@if (!Model.Allowed)
+{
+    <p class="text-secondary">You need to be listed in AdminEmails to manage software tags.</p>
+}
+else
+{
+    <div class="d-flex flex-wrap gap-2 mb-3">
+        <form method="post" asp-page-handler="Detect">
+            @Html.AntiForgeryToken()
+            <button type="submit" class="btn btn-sm hd-btn-silver">Detect from catalog</button>
+        </form>
+        <a class="btn btn-sm btn-ghost" asp-page="/RemoteWorkstations">Back to pool</a>
+    </div>
+
+    <div class="hd-panel mb-4">
+        <h2 class="h6">Add manual tag (pending until approved)</h2>
+        <form method="post" asp-page-handler="AddManual" class="row g-2 align-items-end">
+            @Html.AntiForgeryToken()
+            <div class="col-md-5">
+                <label class="form-label small mb-0">Machine</label>
+                <select class="form-select form-select-sm" name="ManualMachineId" required>
+                    @foreach (var m in Model.PoolMachines)
+                    {
+                        <option value="@m.Id">@m.Hostname</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small mb-0">Label</label>
+                <input class="form-control form-control-sm" name="ManualLabel" placeholder="e.g. Revit" required />
+            </div>
+            <div class="col-md-3">
+                <button type="submit" class="btn btn-sm btn-primary">Propose</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="hd-panel p-0 overflow-auto">
+        <table class="table table-sm mb-0 align-middle">
+            <thead>
+            <tr>
+                <th>Hostname</th>
+                <th>Label</th>
+                <th>Source</th>
+                <th>Status</th>
+                <th>Proposed</th>
+                <th></th>
+            </tr>
+            </thead>
+            <tbody>
+            @if (Model.Rows.Count == 0)
+            {
+                <tr><td colspan="6" class="text-secondary p-3">No capability rows yet. Run Detect from catalog or add manually.</td></tr>
+            }
+            @foreach (var r in Model.Rows)
+            {
+                <tr>
+                    <td>@r.Hostname</td>
+                    <td>@r.Label</td>
+                    <td>@r.Source</td>
+                    <td>@r.Status</td>
+                    <td class="small text-secondary">@(r.ProposedBy ?? "—") · @r.CreatedUtc.ToLocalTime().ToString("g")</td>
+                    <td class="text-nowrap">
+                        @if (r.Status != MachineSoftwareCapabilityStatus.Approved)
+                        {
+                            <form method="post" asp-page-handler="Approve" class="d-inline">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="CapId" value="@r.Id" />
+                                <button type="submit" class="btn btn-link btn-sm p-0">Approve</button>
+                            </form>
+                        }
+                        @if (r.Status != MachineSoftwareCapabilityStatus.Rejected)
+                        {
+                            <form method="post" asp-page-handler="Reject" class="d-inline ms-2">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="CapId" value="@r.Id" />
+                                <button type="submit" class="btn btn-link btn-sm p-0">Reject</button>
+                            </form>
+                        }
+                        <form method="post" asp-page-handler="Delete" class="d-inline ms-2">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="CapId" value="@r.Id" />
+                            <button type="submit" class="btn btn-link btn-sm p-0 text-danger">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

@@ -38,7 +38,7 @@ scripts\Pack-WorkstationCollector.cmd
 
 Pack again when the **agent** changes (or if `dist\Heimdall-Client` is missing). Reuse the same folder on every PC until then.
 
-**Push from Setup:** **Push client pack to PC…** asks for a hostname, copies the pack to `\\HOST\C$\Temp\Heimdall-Client`, and opens that share in Explorer. On the target, run `Install.lnk` (admin). Needs your account to reach C$ on that PC.
+**Push from Setup:** **Push client pack to PC…** asks for a hostname, copies the pack to `\\HOST\C$\Temp\Heimdall-Client-v{version}` (from pack `VERSION.json`), and opens that share in Explorer. On the target, run `Install.lnk` (admin). Needs your account to reach C$ on that PC.
 
 ## What is in the pack
 
@@ -81,6 +81,14 @@ After bootstrap install, use dashboard **Fleet → Client version → Deploy Cli
 ```text
 Install-WorkstationCollector.cmd -ApiUrl http://YOUR-API-HOST:5080 -MachineGroup SOE
 ```
+
+Optional self-heal watchdog (default off):
+
+```text
+Install-WorkstationCollector.cmd -ApiUrl http://YOUR-API-HOST:5080 -MachineGroup SOE -EnableHealWatchdog
+```
+
+Or check **Self-heal watchdog (HeimdallAgentHeal)** in the Install.lnk wizard. Silent UpdateClient does not enable it; an existing task is preserved. To remove: `-UnregisterHealWatchdog`.
 
 ## Full-repo install (optional, needs SDK)
 

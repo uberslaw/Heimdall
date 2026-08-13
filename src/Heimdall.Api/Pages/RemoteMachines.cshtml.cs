@@ -29,12 +29,20 @@ public class RemoteMachinesModel(RemoteMachineService remote) : PageModel
     }
 
     /// <summary>
-    /// Serves a tiny .rdp file for the row hostname so Windows opens mstsc
-    /// (browsers cannot invoke <c>mstsc /v:</c> directly).
+    /// Serves a tiny .rdp file so Windows opens mstsc. Prefers the machine's LastIp (agent-reported)
+    /// when set; falls back to hostname. Lookup is always by catalogue hostname.
     /// </summary>
-    public IActionResult OnGetConnectRdp(string hostname)
+    public async Task<IActionResult> OnGetConnectRdpAsync(string hostname, CancellationToken ct)
     {
-        var file = RdpConnectFile.TryCreate(hostname);
+        if (string.IsNullOrWhiteSpace(hostname))
+            return BadRequest();
+
+        var row = await remote.GetRowAsync(hostname.Trim(), ct);
+        var target = row is not null && !string.IsNullOrWhiteSpace(row.LastIp)
+            ? row.LastIp!
+            : hostname.Trim();
+
+        var file = RdpConnectFile.TryCreate(target);
         return file is null ? BadRequest() : file;
     }
 

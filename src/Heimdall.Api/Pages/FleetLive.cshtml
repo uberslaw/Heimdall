@@ -300,9 +300,19 @@
   }
 
   if (viewSelect) {
-    viewSelect.addEventListener('change', () => applyView(viewSelect.value));
+    viewSelect.addEventListener('change', () => {
+      applyView(viewSelect.value);
+      try {
+        sessionStorage.setItem('hd-fleet-live-view:' + location.pathname, viewSelect.value);
+      } catch { /* ignore */ }
+    });
   }
-  applyView(viewSelect?.value || 'by-group');
+  try {
+    const savedView = sessionStorage.getItem('hd-fleet-live-view:' + location.pathname);
+    applyView(savedView || viewSelect?.value || 'by-group');
+  } catch {
+    applyView(viewSelect?.value || 'by-group');
+  }
 
   function buildUrl() {
     const params = new URLSearchParams();
@@ -397,13 +407,19 @@
 
     if (!structureSame) {
       groupsOld.innerHTML = groupsNew.innerHTML;
-      if (window.HeimdallTable) HeimdallTable.initSort(groupsOld);
+      if (window.HeimdallTable) {
+        HeimdallTable.initSort(groupsOld);
+        groupsOld.querySelectorAll('table.hd-sortable').forEach((t) => HeimdallTable.restoreSort(t));
+      }
       initHeaderTooltips(groupsOld);
       applyView(currentView);
       return true;
     }
 
     patchRows(groupsOld, groupsNew);
+    if (window.HeimdallTable) {
+      groupsOld.querySelectorAll('table.hd-sortable').forEach((t) => HeimdallTable.restoreSort(t));
+    }
     applyView(currentView);
     return true;
   }

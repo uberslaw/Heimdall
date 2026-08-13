@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Heimdall.Api.Data;
 using Heimdall.Api.Services;
+using Heimdall.Shared;
 using Heimdall.Shared.Contracts;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -147,13 +148,21 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
 
         var group = entry.SuggestedGroup.Value;
         var label = ProcessClassification.GroupLabel(group);
-        await processGroups.AssignGroupsAsync([entry.ProcessName], group, HttpContext.RequestAborted);
-        await catalog.ClearSuggestionsAsync([entry.ProcessName], HttpContext.RequestAborted);
+        var programNames = await catalog.GetProcessNamesInSameProgramAsync(
+            entry.ExecutablePath, entry.ProcessName, HttpContext.RequestAborted);
+        await processGroups.AssignGroupsAsync(programNames, group, HttpContext.RequestAborted);
+        await catalog.ClearSuggestionsAsync(programNames, HttpContext.RequestAborted);
         await appLists.SyncSystemListsFromClassificationsAsync(HttpContext.RequestAborted);
         if (group == AppGroup.Specialization)
-            await specReview.OnClassifiedAsSpecializationAsync([entry.ProcessName], HttpContext.RequestAborted);
+        {
+            await EnableAdvertiseRdpForProcessNamesAsync(programNames, HttpContext.RequestAborted);
+            await specReview.OnClassifiedAsSpecializationAsync(programNames, HttpContext.RequestAborted);
+        }
 
-        var message = $"Approved {entry.ProcessName} as {label}.";
+        var program = ProgramInstallRoot.TryExtract(entry.ExecutablePath);
+        var message = programNames.Count > 1 && program is not null
+            ? $"Approved {entry.ProcessName} and {programNames.Count - 1} other process(es) in “{program.DisplayName}” as {label}."
+            : $"Approved {entry.ProcessName} as {label}.";
         if (WantsAjax())
         {
             // Cheap counts for header; skip full catalog rebuild / HTML render.
@@ -174,6 +183,7 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
                 message,
                 group = group.ToString(),
                 groupLabel = label,
+                allowAdvertiseRdp = group == AppGroup.Specialization,
                 removeRow = !ShowClassified,
                 pendingSuggestionCount = pending,
                 unclassifiedCount
@@ -347,17 +357,23 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
             if (entries.Count == 0)
                 return new JsonResult(new { ok = false, error = "No editable rows in the selection." }) { StatusCode = 400 };
 
-            var names = entries.Select(e => e.ProcessName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            await processGroups.AssignGroupsAsync(names, targetGroup, ct);
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in entries)
+            {
+                foreach (var n in await catalog.GetProcessNamesInSameProgramAsync(e.ExecutablePath, e.ProcessName, ct))
+                    names.Add(n);
+            }
+            var nameList = names.ToList();
+            await processGroups.AssignGroupsAsync(nameList, targetGroup, ct);
             await appLists.SyncSystemListsFromClassificationsAsync(ct);
             if (targetGroup == AppGroup.Specialization)
-                await specReview.OnClassifiedAsSpecializationAsync(names, ct);
+                await specReview.OnClassifiedAsSpecializationAsync(nameList, ct);
 
             var cat = string.IsNullOrWhiteSpace(category) ? null : category.Trim();
             var sub = string.IsNullOrWhiteSpace(subcategory) ? null : subcategory.Trim();
             // Stamp all path variants for each name (same as single Set).
             var allForNames = await db.ProcessCatalogEntries
-                .Where(e => names.Contains(e.ProcessName))
+                .Where(e => nameList.Contains(e.ProcessName))
                 .ToListAsync(ct);
             foreach (var e in allForNames)
             {
@@ -365,6 +381,8 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
                 e.Subcategory = sub;
                 e.SuggestedGroup = null;
                 e.SuggestionReason = null;
+                if (targetGroup == AppGroup.Specialization)
+                    e.AllowAdvertiseRdp = true;
             }
             await db.SaveChangesAsync(ct);
             db.ChangeTracker.Clear();
@@ -382,19 +400,20 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
             return new JsonResult(new
             {
                 ok = true,
-                updated = names.Count,
+                updated = nameList.Count,
                 approvedIds = affectedIds,
                 removeIds,
                 group = targetGroup.ToString(),
                 groupLabel = label,
                 category = cat,
                 subcategory = sub,
+                allowAdvertiseRdp = targetGroup == AppGroup.Specialization,
                 pendingSuggestionCount = pending,
                 unclassifiedCount,
                 removeRow = !ShowClassified,
-                message = names.Count == 1
+                message = nameList.Count == 1
                     ? $"Set 1 process to {label}."
-                    : $"Set {names.Count} processes to {label}."
+                    : $"Set {nameList.Count} processes (including same-program siblings) to {label}."
             });
         }
         catch (Exception ex)
@@ -459,18 +478,27 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
     private async Task<(int ApprovedNames, int[] ApprovedIds)> ApplySuggestionBatchAsync(
         List<ProcessCatalogEntry> batch, CancellationToken ct)
     {
-        var nameSet = batch
-            .Select(e => e.ProcessName)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        foreach (var chunk in batch.GroupBy(e => e.SuggestedGroup!.Value))
+        var expandedByGroup = new Dictionary<AppGroup, HashSet<string>>();
+        foreach (var e in batch)
         {
-            var names = chunk
-                .Select(e => e.ProcessName)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            await processGroups.AssignGroupsAsync(names, chunk.Key, ct);
+            if (e.SuggestedGroup is null) continue;
+            if (!expandedByGroup.TryGetValue(e.SuggestedGroup.Value, out var set))
+            {
+                set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                expandedByGroup[e.SuggestedGroup.Value] = set;
+            }
+            foreach (var n in await catalog.GetProcessNamesInSameProgramAsync(e.ExecutablePath, e.ProcessName, ct))
+                set.Add(n);
+        }
+
+        var nameSet = expandedByGroup.Values.SelectMany(s => s).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var specNames = new List<string>();
+        foreach (var (group, names) in expandedByGroup)
+        {
+            var list = names.ToList();
+            await processGroups.AssignGroupsAsync(list, group, ct);
+            if (group == AppGroup.Specialization)
+                specNames.AddRange(list);
         }
 
         // Clear every path variant for these names (AssignGroups is name-scoped).
@@ -487,13 +515,12 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
 
         db.ChangeTracker.Clear();
         await appLists.SyncSystemListsFromClassificationsAsync(ct);
-        var specNames = batch
-            .Where(e => e.SuggestedGroup == AppGroup.Specialization)
-            .Select(e => e.ProcessName)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
         if (specNames.Count > 0)
-            await specReview.OnClassifiedAsSpecializationAsync(specNames, ct);
+        {
+            var specDistinct = specNames.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            await EnableAdvertiseRdpForProcessNamesAsync(specDistinct, ct);
+            await specReview.OnClassifiedAsSpecializationAsync(specDistinct, ct);
+        }
         return (nameSet.Count, toClear.Select(e => e.Id).Distinct().ToArray());
     }
 
@@ -503,6 +530,23 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
             .Distinct()
             .Take(80)
             .ToList();
+
+    private async Task EnableAdvertiseRdpForProcessNamesAsync(IEnumerable<string> processNames, CancellationToken ct)
+    {
+        var names = processNames
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (names.Count == 0) return;
+
+        var entries = await db.ProcessCatalogEntries
+            .Where(e => names.Contains(e.ProcessName) && !e.AllowAdvertiseRdp)
+            .ToListAsync(ct);
+        if (entries.Count == 0) return;
+        foreach (var e in entries)
+            e.AllowAdvertiseRdp = true;
+        await db.SaveChangesAsync(ct);
+    }
 
     private async Task<int> CountUnclassifiedAsync(CancellationToken ct)
     {
@@ -534,17 +578,19 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
             return RedirectToFilters();
         }
 
-        await processGroups.AssignGroupsAsync([entry.ProcessName], targetGroup, HttpContext.RequestAborted);
+        var programNames = await catalog.GetProcessNamesInSameProgramAsync(
+            entry.ExecutablePath, entry.ProcessName, HttpContext.RequestAborted);
+        await processGroups.AssignGroupsAsync(programNames, targetGroup, HttpContext.RequestAborted);
         await appLists.SyncSystemListsFromClassificationsAsync(HttpContext.RequestAborted);
         if (targetGroup == AppGroup.Specialization)
-            await specReview.OnClassifiedAsSpecializationAsync([entry.ProcessName], HttpContext.RequestAborted);
+            await specReview.OnClassifiedAsSpecializationAsync(programNames, HttpContext.RequestAborted);
 
         // Re-load after AssignGroups (may have saved); update category fields on all name matches.
         // Empty dropdown ("—") clears Category/Subcategory.
         var cat = string.IsNullOrWhiteSpace(category) ? null : category.Trim();
         var sub = string.IsNullOrWhiteSpace(subcategory) ? null : subcategory.Trim();
         var entries = await db.ProcessCatalogEntries
-            .Where(e => e.ProcessName == entry.ProcessName)
+            .Where(e => programNames.Contains(e.ProcessName))
             .ToListAsync(HttpContext.RequestAborted);
         foreach (var e in entries)
         {
@@ -552,11 +598,16 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
             e.Subcategory = sub;
             e.SuggestedGroup = null;
             e.SuggestionReason = null;
+            if (targetGroup == AppGroup.Specialization)
+                e.AllowAdvertiseRdp = true;
         }
         await db.SaveChangesAsync(HttpContext.RequestAborted);
 
         var label = ProcessClassification.GroupLabel(targetGroup);
-        var message = $"Set {entry.ProcessName} to {label}.";
+        var program = ProgramInstallRoot.TryExtract(entry.ExecutablePath);
+        var message = programNames.Count > 1 && program is not null
+            ? $"Set {entry.ProcessName} and {programNames.Count - 1} other process(es) in “{program.DisplayName}” to {label}."
+            : $"Set {entry.ProcessName} to {label}.";
         if (WantsAjax())
         {
             var pending = await db.ProcessCatalogEntries.AsNoTracking()
@@ -576,6 +627,7 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
                 id,
                 message,
                 group = targetGroup.ToString(),
+                allowAdvertiseRdp = targetGroup == AppGroup.Specialization,
                 groupLabel = label,
                 category = cat,
                 subcategory = sub,
@@ -588,6 +640,55 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         TempData["Message"] = message;
         TempData["SkipDiscoveryBackfill"] = "1";
         return RedirectToFilters();
+    }
+
+    public async Task<IActionResult> OnPostSetAdvertiseRdpAsync(int id, bool allow)
+    {
+        var ct = HttpContext.RequestAborted;
+        var entry = await db.ProcessCatalogEntries.FindAsync([id], ct);
+        if (entry is null)
+            return new JsonResult(new { ok = false, error = "Process not found — it may have been removed." }) { StatusCode = 404 };
+
+        entry.AllowAdvertiseRdp = allow;
+        await db.SaveChangesAsync(ct);
+        return new JsonResult(new
+        {
+            ok = true,
+            id,
+            allowAdvertiseRdp = allow,
+            message = allow
+                ? $"Advertise RDP on for {entry.ProcessName}."
+                : $"Advertise RDP off for {entry.ProcessName}."
+        });
+    }
+
+    public async Task<IActionResult> OnPostBatchAdvertiseRdpAsync(int[]? ids, bool allow)
+    {
+        var ct = HttpContext.RequestAborted;
+        var idList = NormalizeIdList(ids);
+        if (idList.Count == 0)
+            return new JsonResult(new { ok = false, error = "Select at least one row." }) { StatusCode = 400 };
+
+        var entries = await db.ProcessCatalogEntries
+            .Where(e => idList.Contains(e.Id) && !e.Ignored)
+            .ToListAsync(ct);
+        if (entries.Count == 0)
+            return new JsonResult(new { ok = false, error = "No editable rows in the selection." }) { StatusCode = 400 };
+
+        foreach (var e in entries)
+            e.AllowAdvertiseRdp = allow;
+        await db.SaveChangesAsync(ct);
+
+        return new JsonResult(new
+        {
+            ok = true,
+            updated = entries.Count,
+            updatedIds = entries.Select(e => e.Id).ToArray(),
+            allowAdvertiseRdp = allow,
+            message = allow
+                ? (entries.Count == 1 ? "Advertise RDP on for 1 row." : $"Advertise RDP on for {entries.Count} rows.")
+                : (entries.Count == 1 ? "Advertise RDP off for 1 row." : $"Advertise RDP off for {entries.Count} rows.")
+        });
     }
 
     public async Task<IActionResult> OnPostSaveNameAsync(int id, string? name)
@@ -865,6 +966,7 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
                 (e.DisplayName?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
                 || e.ProcessName.Contains(q, StringComparison.OrdinalIgnoreCase)
                 || e.ExecutablePath.Contains(q, StringComparison.OrdinalIgnoreCase)
+                || (ProgramInstallRoot.TryGetDisplayName(e.ExecutablePath)?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
                 || (e.Category?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
                 || (e.Subcategory?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
                 || (e.Description?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
@@ -877,11 +979,14 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
             var needs = !e.Ignored && ProcessCatalogService.NeedsClassification(e.ProcessName, ctx);
             var displayName = string.IsNullOrWhiteSpace(e.DisplayName) ? e.ProcessName : e.DisplayName!;
 
+            var program = ProgramInstallRoot.TryExtract(e.ExecutablePath);
             return new DiscoveryRow(
                 e.Id,
                 displayName,
                 e.ProcessName,
                 e.ExecutablePath,
+                program?.Key,
+                program?.DisplayName,
                 e.Description,
                 e.Category,
                 e.Subcategory,
@@ -892,7 +997,9 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
                 e.Ignored,
                 needs,
                 e.SuggestedGroup,
-                e.SuggestionReason);
+                e.SuggestionReason,
+                e.AllowAdvertiseRdp,
+                e.CompanyName);
         });
 
         var asc = !string.Equals(Dir, "desc", StringComparison.OrdinalIgnoreCase);
@@ -902,6 +1009,9 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
                 "path" => asc
                     ? rows.OrderBy(r => r.Path, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
                     : rows.OrderByDescending(r => r.Path, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase),
+                "program" => asc
+                    ? rows.OrderBy(r => r.ProgramDisplay ?? "\uFFFF", StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+                    : rows.OrderByDescending(r => r.ProgramDisplay ?? "", StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase),
                 "version" => asc
                     ? rows.OrderBy(r => r.VersionDisplay ?? "", StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
                     : rows.OrderByDescending(r => r.VersionDisplay ?? "", StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase),
@@ -918,8 +1028,12 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
                     ? rows.OrderBy(r => r.SeenHosts.Count).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
                     : rows.OrderByDescending(r => r.SeenHosts.Count).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase),
                 _ => asc
-                    ? rows.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Path, StringComparer.OrdinalIgnoreCase)
-                    : rows.OrderByDescending(r => r.Name, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Path, StringComparer.OrdinalIgnoreCase)
+                    ? rows.OrderBy(r => r.ProgramDisplay ?? "\uFFFF", StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(r => r.Path, StringComparer.OrdinalIgnoreCase)
+                    : rows.OrderByDescending(r => r.ProgramDisplay ?? "", StringComparer.OrdinalIgnoreCase)
+                        .ThenByDescending(r => r.Name, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(r => r.Path, StringComparer.OrdinalIgnoreCase)
             })
             .ToList();
     }
@@ -1004,6 +1118,8 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         string Name,
         string ExeName,
         string Path,
+        string? ProgramKey,
+        string? ProgramDisplay,
         string? Description,
         string? Category,
         string? Subcategory,
@@ -1014,7 +1130,9 @@ public class DiscoveryModel(HeimdallDbContext db, ProcessCatalogService catalog,
         bool Ignored,
         bool Unclassified,
         AppGroup? SuggestedGroup,
-        string? SuggestionReason);
+        string? SuggestionReason,
+        bool AllowAdvertiseRdp,
+        string? CompanyName);
 
     public sealed class DiscoveryEditInput
     {

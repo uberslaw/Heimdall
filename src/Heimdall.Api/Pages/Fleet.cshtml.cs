@@ -49,6 +49,18 @@ public class FleetModel : PageModel
         return Tabs.Any(t => t.Key == key) ? key : "machines";
     }
 
+    public static string? TabTooltip(string key) => key switch
+    {
+        "machines" => "Utilisation and last user for the selected period.",
+        "live" => "Current CPU, GPU, disk, and network (~30s). Not ping or RDP.",
+        "sessions" => "Who signed in, and active vs disconnected time.",
+        "online" => "Ping and RDP from this API host. Online/Offline is agent heartbeat (5 min), not ping.",
+        "clients" => "Agent build vs published pack. Deploy from here.",
+        "cost" => "Per-machine purchase, warranty, and 30-day hours. Org rollup is Finance.",
+        "stats" => "Ranked users and apps. Click a row to open the user, app, or machine page.",
+        _ => null
+    };
+
     public static string PartialUrl(string tabKey, HttpRequest request)
     {
         var tab = Tabs.FirstOrDefault(t => t.Key == tabKey);

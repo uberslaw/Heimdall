@@ -1,0 +1,243 @@
+@page
+@model UsageModel
+@{
+    ViewData["Title"] = "Site usage";
+    ViewData["HelpFragment"] = "site-usage";
+    var from = Model.TotalCount == 0 ? 0 : (Model.PageNumber - 1) * UsageModel.PageSize + 1;
+    var to = Model.TotalCount == 0 ? 0 : Math.Min(Model.PageNumber * UsageModel.PageSize, Model.TotalCount);
+}
+
+<h1 class="hd-title mb-1">Site usage</h1>
+<p class="hd-sub">First-party log of who opened which page, how long they stayed, and which links they clicked.</p>
+
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+@if (!Model.Allowed)
+{
+    <p class="text-secondary">You need to be listed in AdminEmails to view site usage.</p>
+}
+else
+{
+    @if (!Model.AnalyticsEnabled)
+    {
+        <div class="alert alert-warning">
+            Usage analytics is disabled (<code>Heimdall:UsageAnalytics:Enabled</code>). Historical rows may still appear below.
+        </div>
+    }
+
+    <section class="hd-panel mb-4">
+        <h2 class="h5 mb-2">Last 7 days</h2>
+        <div class="d-flex flex-wrap gap-4 small mb-3">
+            <div><strong>@Model.PageViewCount7d</strong> page views</div>
+            <div><strong>@Model.ClickCount7d</strong> clicks</div>
+            <div class="text-secondary">Retention @Model.RetentionDays days</div>
+        </div>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <h3 class="h6">Top pages</h3>
+                @if (Model.TopPages.Count == 0)
+                {
+                    <p class="text-secondary small mb-0">No page views yet.</p>
+                }
+                else
+                {
+                    <ul class="small mb-0">
+                        @foreach (var p in Model.TopPages)
+                        {
+                            <li><code>@p.Name</code> · @p.Count</li>
+                        }
+                    </ul>
+                }
+            </div>
+            <div class="col-md-6">
+                <h3 class="h6">Top users</h3>
+                @if (Model.TopUsers.Count == 0)
+                {
+                    <p class="text-secondary small mb-0">No users yet.</p>
+                }
+                else
+                {
+                    <ul class="small mb-0">
+                        @foreach (var u in Model.TopUsers)
+                        {
+                            <li>@u.Name · @u.Count</li>
+                        }
+                    </ul>
+                }
+            </div>
+        </div>
+    </section>
+
+    <section class="hd-panel mb-4">
+        <form method="get" class="row g-2 align-items-end">
+            <div class="col-auto">
+                <label class="form-label small mb-0" for="from">From</label>
+                <input class="form-control form-control-sm" type="date" id="from" name="From" value="@Model.From" />
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-0" for="to">To</label>
+                <input class="form-control form-control-sm" type="date" id="to" name="To" value="@Model.To" />
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-0" for="user">User</label>
+                <input class="form-control form-control-sm" type="text" id="user" name="UserFilter" value="@Model.UserFilter" placeholder="DOMAIN\\user" />
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-0" for="path">Path</label>
+                <input class="form-control form-control-sm" type="text" id="path" name="PathFilter" value="@Model.PathFilter" placeholder="/Fleet" />
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-0" for="etype">Type</label>
+                <select class="form-select form-select-sm" id="etype" name="EventType">
+                    @if (string.IsNullOrEmpty(Model.EventType) || Model.EventType == "all")
+                    {
+                        <option value="all" selected>All</option>
+                    }
+                    else
+                    {
+                        <option value="all">All</option>
+                    }
+                    @if (Model.EventType == "pageview")
+                    {
+                        <option value="pageview" selected>Page view</option>
+                    }
+                    else
+                    {
+                        <option value="pageview">Page view</option>
+                    }
+                    @if (Model.EventType == "duration")
+                    {
+                        <option value="duration" selected>Duration</option>
+                    }
+                    else
+                    {
+                        <option value="duration">Duration</option>
+                    }
+                    @if (Model.EventType == "click")
+                    {
+                        <option value="click" selected>Click</option>
+                    }
+                    else
+                    {
+                        <option value="click">Click</option>
+                    }
+                </select>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-hd btn-sm">Filter</button>
+                <a class="btn btn-ghost btn-sm"
+                   asp-page="/Usage"
+                   asp-page-handler="Export"
+                   asp-route-From="@Model.From"
+                   asp-route-To="@Model.To"
+                   asp-route-UserFilter="@Model.UserFilter"
+                   asp-route-PathFilter="@Model.PathFilter"
+                   asp-route-EventType="@Model.EventType">Export CSV</a>
+            </div>
+        </form>
+    </section>
+
+    <section class="hd-panel">
+        <p class="small text-secondary mb-2">
+            @if (Model.TotalCount > 0)
+            {
+                <span>Showing @from–@to of @Model.TotalCount</span>
+            }
+            else
+            {
+                <span>No events in this range.</span>
+            }
+        </p>
+        @if (Model.Events.Count > 0)
+        {
+            <div class="table-responsive">
+                <table class="hd-table hd-sortable mb-0" id="usage-table">
+                    <thead>
+                        <tr>
+                            <th data-sort="text" data-default-desc>When (UTC)</th>
+                            <th data-sort="text">Type</th>
+                            <th data-sort="text">User</th>
+                            <th data-sort="text">Page</th>
+                            <th data-sort="number">Stay (s)</th>
+                            <th data-sort="text">Link / detail</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var e in Model.Events)
+                    {
+                        <tr>
+                            <td class="small text-nowrap" data-sort-value="@e.OccurredUtc.ToString("O")">@e.OccurredUtc.ToString("u")</td>
+                            <td data-sort-value="@e.EventType"><code>@e.EventType</code></td>
+                            <td class="small" data-sort-value="@(e.UserName ?? "")">@(e.UserName ?? "—")</td>
+                            <td class="small" data-sort-value="@e.Path">
+                                <code>@e.Path</code>
+                                @if (!string.IsNullOrEmpty(e.Query))
+                                {
+                                    <div class="text-secondary">?@e.Query</div>
+                                }
+                            </td>
+                            <td class="small" data-sort-value="@(e.DurationSeconds ?? 0)">@(e.DurationSeconds?.ToString() ?? "—")</td>
+                            <td class="small" data-sort-value="@(e.LinkHref ?? e.LinkText ?? "")">
+                                @if (e.EventType == "click")
+                                {
+                                    <div>@(e.LinkText ?? "—")</div>
+                                    @if (!string.IsNullOrEmpty(e.LinkHref))
+                                    {
+                                        <code class="text-secondary">@e.LinkHref</code>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="text-secondary">—</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (Model.TotalPages > 1)
+            {
+                <nav class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3 pt-3 border-top border-secondary-subtle" aria-label="Usage pages">
+                    <span class="small text-secondary">Page @Model.PageNumber of @Model.TotalPages</span>
+                    <div class="d-flex flex-wrap gap-2">
+                        @if (Model.PageNumber > 1)
+                        {
+                            <a class="hd-btn hd-btn-silver"
+                               asp-page="/Usage"
+                               asp-route-PageNumber="@(Model.PageNumber - 1)"
+                               asp-route-From="@Model.From"
+                               asp-route-To="@Model.To"
+                               asp-route-UserFilter="@Model.UserFilter"
+                               asp-route-PathFilter="@Model.PathFilter"
+                               asp-route-EventType="@Model.EventType">← Previous</a>
+                        }
+                        @if (Model.PageNumber < Model.TotalPages)
+                        {
+                            <a class="hd-btn hd-btn-silver"
+                               asp-page="/Usage"
+                               asp-route-PageNumber="@(Model.PageNumber + 1)"
+                               asp-route-From="@Model.From"
+                               asp-route-To="@Model.To"
+                               asp-route-UserFilter="@Model.UserFilter"
+                               asp-route-PathFilter="@Model.PathFilter"
+                               asp-route-EventType="@Model.EventType">Next →</a>
+                        }
+                    </div>
+                </nav>
+            }
+        }
+    </section>
+}
+
+@section Scripts {
+<script>
+(() => {
+  if (window.HeimdallTable) HeimdallTable.initSort(document);
+})();
+</script>
+}

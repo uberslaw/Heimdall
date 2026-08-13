@@ -5,6 +5,7 @@
 @inject HeimdallDbContext Db
 @inject FloodAccessGuard FloodAccess
 @inject ApiBuildStamp ApiBuild
+@inject Microsoft.Extensions.Options.IOptions<UsageAnalyticsOptions> UsageAnalyticsOptions
 @{
     var activeTheme = await ThemeResolution.ResolveAsync(Configuration, Context.Request.Cookies, Db);
     var uiTheme = activeTheme.BasePreset;
@@ -22,11 +23,28 @@
         : null;
     var showFloodNav = FloodAccess.CanAccessFlood(Context);
     var helpFragment = HelpNav.ResolveFragment(Context.Request, ViewData[HelpNav.ViewDataKey]);
+    var usageOpts = UsageAnalyticsOptions.Value;
+    var usageEnabled = usageOpts.Enabled;
+    var usagePageViewId = Context.Items.TryGetValue(SiteUsageAnalyticsService.PageViewItemKey, out var pvidObj) && pvidObj is string pvid
+        ? pvid
+        : "";
+    var usageSessionId = Context.Items.TryGetValue(SiteUsageAnalyticsService.SessionItemKey, out var sidObj) && sidObj is string sid
+        ? sid
+        : (Context.Request.Cookies[SiteUsageAnalyticsService.SessionCookieName] ?? "");
+    var usagePath = Context.Request.Path.Value ?? "/";
+    var usageQuery = SiteUsageAnalyticsService.SanitizeQuery(Context.Request.QueryString);
+    var usageHeartbeat = Math.Clamp(usageOpts.HeartbeatSeconds, 10, 120);
 }
 <!DOCTYPE html>
 <html lang="en" class="@(isDevChrome ? "hd-dev-mode" : "")" data-theme="@uiTheme"
       @(isCosmic && !activeTheme.IsCustom ? Html.Raw($"data-gold=\"{goldVariant}\"") : null)
-      @(activeTheme.IsCustom ? Html.Raw($"data-custom-theme=\"{activeTheme.Custom!.Id}\"") : null)>
+      @(activeTheme.IsCustom ? Html.Raw($"data-custom-theme=\"{activeTheme.Custom!.Id}\"") : null)
+      data-hd-usage="@(usageEnabled ? "1" : null)"
+      data-hd-pageview-id="@(usageEnabled ? usagePageViewId : null)"
+      data-hd-session-id="@(usageEnabled ? usageSessionId : null)"
+      data-hd-usage-path="@(usageEnabled ? usagePath : null)"
+      data-hd-usage-query="@(usageEnabled ? usageQuery : null)"
+      data-hd-usage-heartbeat="@(usageEnabled ? usageHeartbeat.ToString() : null)">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -82,7 +100,8 @@
                                 var isActive = onFleet && t.Key == fleetTab;
                                 <a class="dropdown-item @(isActive ? "active" : null)"
                                    asp-page="/Fleet"
-                                   asp-route-tab="@t.Key">@t.Label</a>
+                                   asp-route-tab="@t.Key"
+                                   title="@FleetModel.TabTooltip(t.Key)">@t.Label</a>
                             }
                         </div>
                     </div>
@@ -103,6 +122,7 @@
                             Staff
                         </button>
                         <div class="dropdown-menu hd-nav-dropdown-menu">
+                            <a class="dropdown-item" asp-page="/RemoteWorkstations">Remote Workstations</a>
                             <a class="dropdown-item" asp-page="/StaffAccess">Staff Access</a>
                             @if (showFloodNav)
                             {
@@ -121,7 +141,8 @@
                                 <div class="d-flex flex-column gap-1">
                                     <a class="dropdown-item px-0" asp-page="/Config">Tracking config</a>
                                     <a class="dropdown-item px-0" asp-page="/Utilization">Utilization criteria</a>
-                                    <a class="dropdown-item px-0" asp-page="/Finance">Finance</a>
+                                    <a class="dropdown-item px-0" asp-page="/Finance"
+                                       title="Hardware models, license purchases, and cost per hour of use.">Finance</a>
                                 </div>
                             </div>
                             <div class="hd-settings-section">
@@ -173,6 +194,8 @@
                                 }
                             </div>
                             <div class="hd-settings-section">
+                                <a class="dropdown-item px-0" asp-page="/Usage">Site usage</a>
+                                <a class="dropdown-item px-0" asp-page="/Diagnostics">Diagnostics</a>
                                 <a class="dropdown-item px-0" asp-page="/Theme">Theme</a>
                             </div>
                         </div>
@@ -199,6 +222,10 @@
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script src="~/js/hd-duration.js" asp-append-version="true"></script>
     <script src="~/js/hd-table.js" asp-append-version="true"></script>
+    @if (usageEnabled)
+    {
+        <script src="~/js/hd-usage.js" asp-append-version="true"></script>
+    }
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

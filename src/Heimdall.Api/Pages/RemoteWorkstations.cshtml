@@ -1,0 +1,446 @@
+@page
+@model RemoteWorkstationsModel
+@using Heimdall.Api.Services
+@using Heimdall.Shared.Contracts
+@{
+    ViewData["Title"] = "Remote Workstations";
+    ViewData["HelpFragment"] = "remote-workstations";
+    var defaultStart = DateTime.Now.ToString("yyyy-MM-ddTHH:mm");
+    var bookingsHeading = "Bookings " + DateTime.Now.ToString("dd/MM");
+}
+
+<style>
+    .hd-rwa-layout { display: grid; grid-template-columns: 220px 1fr; gap: 1.25rem; align-items: start; }
+    @@media (max-width: 900px) { .hd-rwa-layout { grid-template-columns: 1fr; } }
+    .hd-rwa-side { position: sticky; top: 0.75rem; }
+    .hd-rwa-side .hd-panel { padding: 0.85rem 1rem; }
+    .hd-rwa-reserve-panel { display: none; }
+    .hd-rwa-reserve-panel.open { display: table-row; }
+    .hd-rwa-hostname {
+        color: #e4e8ed;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+    }
+    .hd-rwa-ip { color: #c5ccd4; }
+    table.hd-table tbody tr.hd-rwa-row-free > td {
+        /* Washed vibrant mint — high chroma, low alpha */
+        background-color: rgba(0, 230, 118, 0.14) !important;
+        color: var(--hd-text, #e7eef5);
+    }
+    table.hd-table tbody tr.hd-rwa-row-busy > td {
+        /* Washed vibrant coral */
+        background-color: rgba(255, 45, 85, 0.14) !important;
+        color: var(--hd-text, #e7eef5);
+    }
+    table.hd-table tbody tr.hd-rwa-row-free > td:first-child {
+        box-shadow: inset 4px 0 0 #00e676;
+    }
+    table.hd-table tbody tr.hd-rwa-row-busy > td:first-child {
+        box-shadow: inset 4px 0 0 #ff2d55;
+    }
+    html[data-theme="cosmic"] table.hd-table tbody tr.hd-rwa-row-free,
+    html[data-theme="cosmic"] table.hd-table tbody tr.hd-rwa-row-free:nth-child(even),
+    html[data-theme="cosmic"] table.hd-table tbody tr.hd-rwa-row-free:hover {
+        background: transparent;
+    }
+    html[data-theme="cosmic"] table.hd-table tbody tr.hd-rwa-row-busy,
+    html[data-theme="cosmic"] table.hd-table tbody tr.hd-rwa-row-busy:nth-child(even),
+    html[data-theme="cosmic"] table.hd-table tbody tr.hd-rwa-row-busy:hover {
+        background: transparent;
+    }
+    .hd-rwa-actions { display: inline-flex; align-items: stretch; gap: 0.4rem; }
+    .hd-rwa-actions .hd-btn-sm {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.05rem;
+        box-sizing: border-box;
+        padding-top: 0.28rem;
+        padding-bottom: 0.28rem;
+        line-height: 1.2;
+    }
+    .hd-rwa-connect > .hd-btn:first-child,
+    .hd-rwa-reserve { min-width: 5.5rem; }
+    .hd-rwa-connect { display: inline-flex; vertical-align: middle; }
+    .hd-rwa-connect .hd-btn { box-shadow: none; border-radius: 0; }
+    .hd-rwa-connect > .hd-btn:first-child {
+        border-top-left-radius: 999px;
+        border-bottom-left-radius: 999px;
+    }
+    .hd-rwa-connect > .dropdown-toggle-split {
+        border-top-right-radius: 999px;
+        border-bottom-right-radius: 999px;
+        border-left: 1px solid rgba(0, 0, 0, 0.22);
+        padding-left: 0.42rem;
+        padding-right: 0.55rem;
+        min-width: 1.7rem;
+    }
+    .hd-rwa-connect .dropdown-toggle::after {
+        border-top-color: var(--hd-btn-primary-text, #1a1408);
+    }
+    .hd-rwa-connect-menu {
+        min-width: 11rem;
+        background: var(--hd-panel-2, #1e2430);
+        border: 1px solid var(--hd-border, rgba(255,255,255,.15));
+        --bs-dropdown-bg: var(--hd-panel-2, #1e2430);
+        --bs-dropdown-link-color: var(--hd-text, #e8eaed);
+        --bs-dropdown-link-hover-color: var(--hd-text, #e8eaed);
+        --bs-dropdown-link-hover-bg: rgba(255, 255, 255, 0.08);
+        z-index: 1080;
+    }
+    .hd-rwa-connect-menu .dropdown-item { font-size: 0.82rem; }
+</style>
+
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+    <h1 class="hd-title mb-0">Remote Workstations</h1>
+    <a class="hd-btn hd-btn-gold hd-btn-sm"
+       asp-page-handler="ConfigureRdp"
+       title="Register heimdall-rdp for this Windows user (once per PC)">
+        Configure one-click Connect
+    </a>
+</div>
+
+@if (TempData["Message"] is string okMsg)
+{
+    <div class="alert alert-success">@okMsg</div>
+}
+@if (TempData["Warning"] is string warnMsg)
+{
+    <div class="alert alert-warning">@warnMsg</div>
+}
+@if (TempData["Error"] is string errMsg)
+{
+    <div class="alert alert-danger">@errMsg</div>
+}
+
+<div class="hd-rwa-layout">
+    <aside class="hd-rwa-side">
+        <div class="hd-panel mb-3">
+            <div class="fw-semibold mb-2">Status</div>
+            <div class="d-flex flex-column gap-1 small">
+                <a class="@(string.IsNullOrWhiteSpace(Model.Status) ? "fw-semibold" : null)"
+                   asp-page="/RemoteWorkstations" asp-route-Team="@Model.Team" asp-route-Software="@Model.Software" asp-route-Q="@Model.Q">All</a>
+                <a class="@(Model.Status == "available" ? "fw-semibold" : null)"
+                   asp-page="/RemoteWorkstations" asp-route-Status="available" asp-route-Team="@Model.Team" asp-route-Software="@Model.Software" asp-route-Q="@Model.Q">Available</a>
+                <a class="@(Model.Status is "inuse" or "active" ? "fw-semibold" : null)"
+                   asp-page="/RemoteWorkstations" asp-route-Status="inuse" asp-route-Team="@Model.Team" asp-route-Software="@Model.Software" asp-route-Q="@Model.Q">In use</a>
+                <a class="@(Model.Status == "disconnected" ? "fw-semibold" : null)"
+                   asp-page="/RemoteWorkstations" asp-route-Status="disconnected" asp-route-Team="@Model.Team" asp-route-Software="@Model.Software" asp-route-Q="@Model.Q">Disconnected</a>
+                <a class="@(Model.Status == "booked" ? "fw-semibold" : null)"
+                   asp-page="/RemoteWorkstations" asp-route-Status="booked" asp-route-Team="@Model.Team" asp-route-Software="@Model.Software" asp-route-Q="@Model.Q">Booked now</a>
+            </div>
+        </div>
+
+        <div class="hd-panel mb-3">
+            <div class="fw-semibold mb-2">Team</div>
+            <div class="d-flex flex-column gap-1 small">
+                <a class="@(string.IsNullOrWhiteSpace(Model.Team) ? "fw-semibold" : null)"
+                   asp-page="/RemoteWorkstations" asp-route-Status="@Model.Status" asp-route-Software="@Model.Software" asp-route-Q="@Model.Q">All</a>
+                @foreach (var t in Model.TeamNames)
+                {
+                    <a class="@(string.Equals(Model.Team, t, StringComparison.OrdinalIgnoreCase) ? "fw-semibold" : null)"
+                       asp-page="/RemoteWorkstations" asp-route-Status="@Model.Status" asp-route-Team="@t" asp-route-Software="@Model.Software" asp-route-Q="@Model.Q">@t</a>
+                }
+            </div>
+        </div>
+
+        <div class="hd-panel mb-3">
+            <div class="fw-semibold mb-2">Software</div>
+            <div class="d-flex flex-column gap-1 small">
+                <a class="@(string.IsNullOrWhiteSpace(Model.Software) ? "fw-semibold" : null)"
+                   asp-page="/RemoteWorkstations" asp-route-Status="@Model.Status" asp-route-Team="@Model.Team" asp-route-Q="@Model.Q">All</a>
+                @if (Model.AllSoftwareLabels.Count == 0)
+                {
+                    <span class="text-secondary">@(Model.DisplayTitlesConfigured
+                        ? "No selected titles on these hosts."
+                        : "No advertised apps seen on pool hosts yet.")</span>
+                }
+                else
+                {
+                    @foreach (var s in Model.AllSoftwareLabels)
+                    {
+                        <a class="@(string.Equals(Model.Software, s, StringComparison.OrdinalIgnoreCase) ? "fw-semibold" : null)"
+                           asp-page="/RemoteWorkstations" asp-route-Status="@Model.Status" asp-route-Team="@Model.Team" asp-route-Software="@s" asp-route-Q="@Model.Q">@s</a>
+                    }
+                }
+            </div>
+        </div>
+
+    </aside>
+
+    <div>
+        @if (Model.IsAdmin)
+        {
+            <details class="hd-panel mb-3" @(Model.DisplayTitlesConfigured ? null : "open")>
+                <summary class="fw-semibold" style="cursor:pointer">Admin — display titles</summary>
+                <p class="small text-secondary mt-2 mb-2">
+                    Tick which advertised names appear in Software chips and Notes.
+                    Discovery <em>Advertise RDP</em> still controls which apps can match.
+                    Add a short title (e.g. Revit) to show that instead of the full catalog name.
+                </p>
+                <form method="post" asp-page-handler="SaveDisplayTitles">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="Status" value="@Model.Status" />
+                    <input type="hidden" name="Team" value="@Model.Team" />
+                    <input type="hidden" name="Software" value="@Model.Software" />
+                    <input type="hidden" name="Q" value="@Model.Q" />
+                    <div class="d-flex flex-wrap gap-2 mb-2" style="max-height: 14rem; overflow: auto;">
+                        @if (Model.AdminTitleCandidates.Count == 0)
+                        {
+                            <span class="text-secondary small">No advertised apps on pool hosts yet. Advertise on Discovery first.</span>
+                        }
+                        else
+                        {
+                            @foreach (var title in Model.AdminTitleCandidates)
+                            {
+                                <label class="small d-inline-flex align-items-center gap-1 me-2 mb-1">
+                                    <input type="checkbox" name="DisplayTitles" value="@title"
+                                           @(Model.SelectedDisplayTitles.Contains(title) ? "checked" : null) />
+                                    @title
+                                </label>
+                            }
+                        }
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 align-items-end">
+                        <div>
+                            <label class="form-label small mb-0" for="rwa-title-add">Add title</label>
+                            <input id="rwa-title-add" class="form-control form-control-sm" name="DisplayTitleAdd"
+                                   placeholder="e.g. Revit" style="min-width: 10rem;" />
+                        </div>
+                        <button type="submit" class="btn btn-sm hd-btn-silver">Save titles</button>
+                        <button type="submit" class="btn btn-sm btn-ghost" asp-page-handler="ClearDisplayTitles">Show all advertised</button>
+                    </div>
+                </form>
+            </details>
+        }
+
+        <form method="get" class="hd-panel mb-3 d-flex flex-wrap gap-2 align-items-end">
+            <input type="hidden" name="Status" value="@Model.Status" />
+            <input type="hidden" name="Team" value="@Model.Team" />
+            <input type="hidden" name="Software" value="@Model.Software" />
+            <div class="flex-grow-1">
+                <label class="form-label small mb-1" for="rwa-q">Search</label>
+                <input id="rwa-q" class="form-control form-control-sm" name="Q" value="@Model.Q"
+                       placeholder="Software or publisher"
+                       title="Search advertised apps by name, process, or publisher. Tokens are AND; wildcards * and ? allowed." />
+            </div>
+            <button type="submit" class="btn btn-sm hd-btn-silver">Filter</button>
+        </form>
+
+        <div class="hd-panel p-0 overflow-auto">
+            <table class="table table-sm mb-0 align-middle hd-table">
+                <thead>
+                <tr>
+                    <th>Actions</th>
+                    <th>Name</th>
+                    <th>Notes / software</th>
+                    <th>Connections</th>
+                    <th>@bookingsHeading</th>
+                </tr>
+                </thead>
+                <tbody>
+                @if (Model.PoolRows.Count == 0)
+                {
+                    <tr><td colspan="5" class="text-secondary p-3">No machines match. Mark a team as public-facing and assign machines to it.</td></tr>
+                }
+                @foreach (var r in Model.PoolRows)
+                {
+                    var blocked = r.ConnectBlocked != MachineBookingService.ConnectBlockReason.None;
+                    var soft = Model.SoftwareByMachine.TryGetValue(r.MachineId, out var apps)
+                        ? apps
+                        : Array.Empty<AdvertisedSoftwareService.AdvertisedApp>();
+                    var softTip = soft.Count > 0 ? AdvertisedSoftwareService.FormatTooltip(soft) : null;
+                    <tr class="@RemoteWorkstationsModel.RowCss(r)">
+                        <td style="min-width: 12.5rem;">
+                            <div class="hd-rwa-actions">
+                            <div class="btn-group hd-rwa-connect">
+                                @if (blocked)
+                                {
+                                    <button type="button" class="hd-btn hd-btn-gold hd-btn-sm disabled" disabled
+                                            title="@(r.ConnectBlocked == MachineBookingService.ConnectBlockReason.ActiveSession ? "Active session" : "Reserved now")">
+                                        Connect
+                                    </button>
+                                    <button type="button" class="hd-btn hd-btn-gold hd-btn-sm dropdown-toggle dropdown-toggle-split disabled" disabled>
+                                        <span class="visually-hidden">More</span>
+                                    </button>
+                                }
+                                else
+                                {
+                                    <a class="hd-btn hd-btn-gold hd-btn-sm"
+                                       href="@RdpProtocolHandler.LaunchUri(r.ConnectTarget)"
+                                       title="Launch Remote Desktop to @(r.ConnectTarget)">Connect</a>
+                                    <button type="button"
+                                            class="hd-btn hd-btn-gold hd-btn-sm dropdown-toggle dropdown-toggle-split"
+                                            data-bs-toggle="dropdown"
+                                            data-bs-popper-config='{"strategy":"fixed"}'
+                                            aria-expanded="false"
+                                            title="More connection options">
+                                        <span class="visually-hidden">More</span>
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end hd-rwa-connect-menu">
+                                        <li>
+                                            <a class="dropdown-item"
+                                               href="@RdpProtocolHandler.LaunchUri(r.ConnectTarget, edit: true)"
+                                               title="Opens Remote Desktop Connection to @(r.ConnectTarget) so you can change display and local resources, then press Connect">
+                                                RDP Settings
+                                            </a>
+                                        </li>
+                                        <li>
+                                            <a class="dropdown-item"
+                                               asp-page-handler="ConnectRdp"
+                                               asp-route-hostname="@r.Hostname"
+                                               title="Download .rdp if one-click launch is blocked">
+                                                Download .rdp
+                                            </a>
+                                        </li>
+                                        <li><hr class="dropdown-divider" /></li>
+                                        <li>
+                                            <a class="dropdown-item"
+                                               asp-page-handler="ConfigureRdp"
+                                               title="One-time helper: register heimdall-rdp on this PC (no Heimdall install)">
+                                                Configure one-click Connect
+                                            </a>
+                                        </li>
+                                    </ul>
+                                }
+                            </div>
+                            <button type="button" class="hd-btn hd-btn-silver hd-btn-sm hd-rwa-reserve" data-rwa-reserve="@r.MachineId" title="Reserve">Reserve</button>
+                            </div>
+                        </td>
+                        <td>
+                            @{
+                                var hasFriendly = !string.IsNullOrWhiteSpace(r.FriendlyName)
+                                    && !string.Equals(r.FriendlyName, r.Hostname, StringComparison.OrdinalIgnoreCase);
+                            }
+                            @if (hasFriendly)
+                            {
+                                <div class="hd-rwa-hostname">@r.FriendlyName</div>
+                                <div class="hd-rwa-ip small">@r.Hostname</div>
+                            }
+                            else
+                            {
+                                <div class="hd-rwa-hostname">@r.Hostname</div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(r.LastIp))
+                            {
+                                <div class="hd-rwa-ip small">@r.LastIp</div>
+                            }
+                            @if (!r.IsOnline)
+                            {
+                                <div class="text-warning small">Offline / stale heartbeat</div>
+                            }
+                        </td>
+                        <td class="small" title="@softTip">
+                            @if (soft.Count > 0)
+                            {
+                                <div class="hd-rwa-ip">@AdvertisedSoftwareService.FormatCell(soft)</div>
+                            }
+                        </td>
+                        <td class="small">
+                            @if (r.HasActiveSession)
+                            {
+                                <div><strong>@UsernameDisplay.Format(r.SessionUser)</strong></div>
+                                <div class="text-secondary">@RemoteWorkstationsModel.FormatActiveSince(r)</div>
+                            }
+                            else if (r.SessionState == SessionState.Disconnected)
+                            {
+                                <div><strong>@UsernameDisplay.Format(r.SessionUser)</strong></div>
+                                <div class="text-secondary">@RemoteWorkstationsModel.FormatDisconnected(r)</div>
+                            }
+                            else
+                            {
+                                <span>Free</span>
+                            }
+                        </td>
+                        <td class="small">
+                            @if (r.TodayBookings.Count == 0)
+                            {
+                                <span class="hd-rwa-ip">None</span>
+                            }
+                            else
+                            {
+                                @foreach (var b in r.TodayBookings)
+                                {
+                                    <div class="@(b.CoversNow ? "fw-semibold" : null)">
+                                        @RemoteWorkstationsModel.FormatBookingWindow(b)
+                                        @if (b.IsMine || Model.IsAdmin)
+                                        {
+                                            <form method="post" asp-page-handler="CancelBooking" class="d-inline">
+                                                @Html.AntiForgeryToken()
+                                                <input type="hidden" name="CancelBookingId" value="@b.Id" />
+                                                <input type="hidden" name="CancelEmail" value="@(Model.PrefillEmail ?? "")" />
+                                                <input type="hidden" name="Status" value="@Model.Status" />
+                                                <input type="hidden" name="Team" value="@Model.Team" />
+                                                <input type="hidden" name="Software" value="@Model.Software" />
+                                                <input type="hidden" name="Q" value="@Model.Q" />
+                                                <button type="submit" class="btn btn-link btn-sm p-0 align-baseline">Cancel</button>
+                                            </form>
+                                        }
+                                    </div>
+                                }
+                            }
+                        </td>
+                    </tr>
+                    <tr class="hd-rwa-reserve-panel" id="rwa-reserve-@r.MachineId">
+                        <td colspan="5" class="p-3">
+                            <form method="post" asp-page-handler="Book" class="row g-2 align-items-end">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="BookMachineId" value="@r.MachineId" />
+                                <input type="hidden" name="Status" value="@Model.Status" />
+                                <input type="hidden" name="Team" value="@Model.Team" />
+                                <input type="hidden" name="Software" value="@Model.Software" />
+                                <input type="hidden" name="Q" value="@Model.Q" />
+                                <div class="col-md-2">
+                                    <label class="form-label small mb-0">Name</label>
+                                    <input class="form-control form-control-sm" name="BookName" value="@Model.PrefillName" required />
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small mb-0">Email</label>
+                                    <input class="form-control form-control-sm" name="BookEmail" type="email" value="@Model.PrefillEmail" required />
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small mb-0">Start</label>
+                                    <input class="form-control form-control-sm" name="BookStartLocal" type="datetime-local" value="@defaultStart" required />
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small mb-0">Duration</label>
+                                    <select class="form-select form-select-sm" name="BookDuration">
+                                        <option value="1h">1 hour</option>
+                                        <option value="2h" selected>2 hours</option>
+                                        <option value="4h">4 hours</option>
+                                        <option value="8h">8 hours</option>
+                                        <option value="eod">Until end of day</option>
+                                        <option value="24h">24 hours</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small mb-0">Notes</label>
+                                    <input class="form-control form-control-sm" name="BookNotes" />
+                                </div>
+                                <div class="col-12">
+                                    <button type="submit" class="btn btn-sm btn-primary">Book @r.Hostname</button>
+                                    <span class="text-secondary small ms-2">Max 24 hours. Overlaps are rejected.</span>
+                                </div>
+                            </form>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+(() => {
+  document.querySelectorAll('[data-rwa-reserve]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-rwa-reserve');
+      const panel = document.getElementById('rwa-reserve-' + id);
+      if (!panel) return;
+      panel.classList.toggle('open');
+    });
+  });
+})();
+</script>

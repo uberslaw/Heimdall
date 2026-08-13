@@ -64,7 +64,7 @@
     <table class="hd-table hd-apps-table hd-sortable" id="apps-table">
         <thead>
             <tr>
-                <th data-sort="text" class="hd-apps-col-name">Process</th>
+                <th data-sort="text" class="hd-apps-col-name">Program / process</th>
                 <th data-sort="num" class="hd-apps-col-num" title="Distinct users in the period">Users</th>
                 <th data-sort="num" class="hd-apps-col-num" title="Distinct machines in the period">Machines</th>
                 <th data-sort="num" class="hd-apps-col-num" title="Time-weighted average concurrent instances">Avg open</th>
@@ -80,15 +80,25 @@
         }
         @foreach (var a in Model.Apps)
         {
-            var title = string.Equals(a.DisplayName, a.ProcessName, StringComparison.OrdinalIgnoreCase)
-                ? a.ProcessName
-                : $"{a.DisplayName} ({a.ProcessName})";
+            var memberLine = a.MemberProcessNames.Count <= 1
+                ? null
+                : string.Join(", ", a.MemberProcessNames.Take(8))
+                  + (a.MemberProcessNames.Count > 8 ? ",…" : "");
+            var title = a.IsProgramGroup
+                ? (memberLine is null ? a.DisplayName : $"{a.DisplayName} — {memberLine}")
+                : (string.Equals(a.DisplayName, a.ProcessName, StringComparison.OrdinalIgnoreCase)
+                    ? a.ProcessName
+                    : $"{a.DisplayName} ({a.ProcessName})");
             <tr style="cursor:pointer" onclick="window.location='@Url.Page("/Application", new { process = a.ProcessName, range = Model.Range })'">
                 <td class="hd-apps-col-name" data-sort-value="@a.DisplayName" title="@title">
                     <a class="hd-apps-name text-truncate d-inline-block"
                        asp-page="/Application" asp-route-process="@a.ProcessName" asp-route-range="@Model.Range"
                        onclick="event.stopPropagation()" title="@title">@a.DisplayName</a>
-                    @if (!string.Equals(a.DisplayName, a.ProcessName, StringComparison.OrdinalIgnoreCase))
+                    @if (a.IsProgramGroup && memberLine is not null)
+                    {
+                        <div class="hd-meta-line text-truncate" title="@memberLine">@memberLine</div>
+                    }
+                    else if (!a.IsProgramGroup && !string.Equals(a.DisplayName, a.ProcessName, StringComparison.OrdinalIgnoreCase))
                     {
                         <div class="hd-meta-line text-truncate" title="@a.ProcessName">@a.ProcessName</div>
                     }
@@ -106,6 +116,7 @@
     <p class="text-secondary small mt-3 mb-0">
         <strong>Total time</strong> is wall-clock with at least one instance open (overlaps not double-counted).
         <strong>Avg open</strong> is the time-weighted average concurrent instance count.
-        <strong>Runs</strong> counts distinct process lifetimes. Click a row for per-machine detail.
+        <strong>Runs</strong> counts distinct process lifetimes.
+        Rows under Program Files are grouped by install program (e.g. Autodesk / Revit); click opens the busiest process in that group.
     </p>
 </div>

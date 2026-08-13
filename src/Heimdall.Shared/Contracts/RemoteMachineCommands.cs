@@ -18,6 +18,25 @@ public static class RemoteMachineCommands
     /// AgentConfigDto.PendingClientUpdate.
     /// </summary>
     public const string UpdateClient = "UpdateClient";
+
+    /// <summary>
+    /// Restart the HeimdallAgent Windows service (detached sc stop/start — not TermService/RDS).
+    /// </summary>
+    public const string RestartAgent = "RestartAgent";
+
+    /// <summary>
+    /// Delete staging deposits only: %ProgramData%\Heimdall\update\ and C:\Temp\Heimdall-Client*
+    /// (legacy bare folder plus versioned Heimdall-Client-v* / timestamped deposits).
+    /// Never touches Program Files Agent, queue, secrets, logs, or tuflow-runs.
+    /// </summary>
+    public const string CleanupClientStaging = "CleanupClientStaging";
+
+    /// <summary>
+    /// Download the current API client pack zip and extract to
+    /// C:\Temp\Heimdall-Client-v{version}-{yyyyMMdd-HHmmss} for manual Install.lnk —
+    /// does not replace the running agent. Version comes from PendingClientDeposit / pack VERSION.json.
+    /// </summary>
+    public const string DepositClientPack = "DepositClientPack";
 }
 
 /// <summary>Result of a single agent command execution attempt (success or failure).</summary>

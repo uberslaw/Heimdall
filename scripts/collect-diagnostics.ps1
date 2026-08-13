@@ -1,13 +1,17 @@
-﻿<#
+<#
 .SYNOPSIS
   Collect Heimdall install/runtime diagnostics for support or Cursor AI analysis.
 .NOTES
-  Prefer scripts\Collect-Diagnostics.cmd. Output under %LOCALAPPDATA%\Heimdall\diagnostics-*.
+  Prefer scripts\Collect-Diagnostics.cmd.
+  Default output: C:\Temp\Heimdall.API\Logs\diagnostics-* (+ sibling .zip).
+  Run on the API host when HeimdallApi will not start — still gathers ProgramData logs,
+  services, Event Log, and redacted appsettings even if /api/health fails.
+  Always-on logs (no collect needed): %ProgramData%\Heimdall\logs\api\ and logs\ops\.
   API keys in appsettings are redacted (last 4 chars only).
 #>
 param(
     [string]$ApiUrl = "http://localhost:5080",
-    [string]$OutRoot = "$env:LOCALAPPDATA\Heimdall"
+    [string]$OutRoot = "C:\Temp\Heimdall.API\Logs"
 )
 
 $ErrorActionPreference = "Continue"
@@ -125,24 +129,44 @@ try {
     }
     $healthOut | Set-Content -Path (Join-Path $script:BundleDir "health.txt") -Encoding UTF8
 
-    # --- Install logs ---
-    Write-Step "Copying install logs"
+    # --- Install / API / ops logs ---
+    Write-Step "Copying ProgramData Heimdall logs"
     $logSrc = Join-Path $env:ProgramData "Heimdall\logs"
-    $logDest = Join-Path $script:BundleDir "install-logs"
+    $logDest = Join-Path $script:BundleDir "logs"
     New-Item -ItemType Directory -Force -Path $logDest | Out-Null
     if (Test-Path $logSrc) {
-        Get-ChildItem $logSrc -File -ErrorAction SilentlyContinue |
+        # Root *.log plus api\ and ops\ subfolders (newest first, cap 40)
+        $candidates = @()
+        $candidates += Get-ChildItem $logSrc -File -ErrorAction SilentlyContinue
+        foreach ($sub in @("api", "ops")) {
+            $subDir = Join-Path $logSrc $sub
+            if (Test-Path $subDir) {
+                $candidates += Get-ChildItem $subDir -File -ErrorAction SilentlyContinue
+            }
+        }
+        $candidates |
             Sort-Object LastWriteTime -Descending |
-            Select-Object -First 30 |
+            Select-Object -First 40 |
             ForEach-Object {
-                Copy-Item $_.FullName -Destination $logDest -Force
-                Write-Note "Copied $($_.Name)"
+                $rel = $_.FullName.Substring($logSrc.Length).TrimStart('\', '/')
+                $destFile = Join-Path $logDest $rel
+                $destParent = Split-Path $destFile -Parent
+                New-Item -ItemType Directory -Force -Path $destParent | Out-Null
+                Copy-Item $_.FullName -Destination $destFile -Force
+                Write-Note "Copied $rel"
             }
     }
     else {
         "(no folder: $logSrc)" | Set-Content -Path (Join-Path $logDest "README.txt") -Encoding UTF8
-        Write-Note "No install log folder at $logSrc"
+        Write-Note "No log folder at $logSrc"
     }
+
+    # Pointers for always-on locations
+    @(
+        "ApiLogs: $(Join-Path $env:ProgramData 'Heimdall\logs\api')",
+        "OpsLogs: $(Join-Path $env:ProgramData 'Heimdall\logs\ops')",
+        "DumpRoot: $OutRoot"
+    ) | Set-Content -Path (Join-Path $script:BundleDir "log-locations.txt") -Encoding UTF8
 
     # --- Redacted appsettings ---
     Write-Step "Redacting appsettings (API key -> last 4 only)"

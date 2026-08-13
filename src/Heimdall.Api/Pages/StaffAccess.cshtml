@@ -127,11 +127,11 @@
                             }
                         </td>
                         <td>
-                            @if (!string.IsNullOrWhiteSpace(r.ActiveUser))
+                            @if (!string.IsNullOrWhiteSpace(r.SessionUser))
                             {
                                 <span class="badge-pill @StaffAccessModel.ActiveUserBadgeClass(r.HasActiveSession, r.CurrentBooking, r.BookingIsMine)">
-                                    @UsernameDisplay.Format(r.ActiveUser)
-                                    @if (r.ActiveUserState is SessionState st)
+                                    @UsernameDisplay.Format(r.SessionUser)
+                                    @if (r.SessionState is SessionState st)
                                     {
                                         <span class="text-secondary"> · @st</span>
                                     }

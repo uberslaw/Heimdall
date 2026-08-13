@@ -83,6 +83,10 @@ public static class HelpNav
         if (path.Equals("/StaffAccess", StringComparison.OrdinalIgnoreCase))
             return "staff-access";
 
+        if (path.Equals("/RemoteWorkstations", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/RemoteWorkstationSoftware", StringComparison.OrdinalIgnoreCase))
+            return "remote-workstations";
+
         if (path.Equals("/RemoteAccessGroups", StringComparison.OrdinalIgnoreCase))
             return "remote-access-groups";
 
@@ -110,6 +114,12 @@ public static class HelpNav
 
         if (path.Equals("/Theme", StringComparison.OrdinalIgnoreCase))
             return "admin-preferences";
+
+        if (path.Equals("/Usage", StringComparison.OrdinalIgnoreCase))
+            return "site-usage";
+
+        if (path.Equals("/Diagnostics", StringComparison.OrdinalIgnoreCase))
+            return "diagnostics";
 
         return null;
     }

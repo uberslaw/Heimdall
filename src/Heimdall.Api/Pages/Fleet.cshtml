@@ -52,6 +52,7 @@
             <li class="nav-item" role="presentation">
                 <a class="nav-link @(isActive ? "active" : null)"
                    href="/Fleet?tab=@t.Key"
+                   title="@FleetModel.TabTooltip(t.Key)"
                    data-hd-ops-tab="@t.Key"
                    data-hd-ops-src="@FleetModel.PartialUrl(t.Key, ViewContext.HttpContext.Request)"
                    data-hd-fleet-title="@tabTitle"
@@ -65,32 +66,11 @@
                        "stats" => "stats",
                        _ => "fleet"
                    })"
-                   data-hd-fleet-purpose="@((t.Key) switch {
-                       "machines" => "Estate utilisation and last user for the selected period. Live is current metrics; Online is ping and RDP.",
-                       "live" => "Latest ~30s CPU, GPU, disk, and network. Not ping or RDP.",
-                       "sessions" => "Who signed in, and active vs disconnected time.",
-                       "online" => "Ping, RDP, and RDS from this API host.",
-                       "clients" => "Agent build vs published pack. Deploy from here.",
-                       "cost" => "Per-machine purchase, warranty, and 30-day hours. Org rollup is Finance.",
-                       "stats" => "Ranked users and apps. Click a row to open the user, app, or machine page.",
-                       _ => ""
-                   })"
                    role="tab"
                    aria-selected="@(isActive ? "true" : "false")">@t.Label</a>
             </li>
         }
         </ul>
-        <p class="hd-sub mb-0 mt-2" data-hd-fleet-purpose-line>@(active switch
-        {
-            "machines" => "Estate utilisation and last user for the selected period. Live is current metrics; Online is ping and RDP.",
-            "live" => "Latest ~30s CPU, GPU, disk, and network. Not ping or RDP.",
-            "sessions" => "Who signed in, and active vs disconnected time.",
-            "online" => "Ping, RDP, and RDS from this API host.",
-            "clients" => "Agent build vs published pack. Deploy from here.",
-            "cost" => "Per-machine purchase, warranty, and 30-day hours. Org rollup is Finance.",
-            "stats" => "Ranked users and apps. Click a row to open the user, app, or machine page.",
-            _ => ""
-        })</p>
     </div>
 </div>
 
@@ -107,13 +87,10 @@
     (() => {
       const titleEl = document.querySelector('[data-hd-fleet-title]');
       const helpLink = document.querySelector('[data-hd-global-help]');
-      const purposeEl = document.querySelector('[data-hd-fleet-purpose-line]');
       document.querySelectorAll('[data-hd-ops-tab]').forEach((a) => {
         a.addEventListener('click', () => {
           const t = a.getAttribute('data-hd-fleet-title');
           if (titleEl && t) titleEl.textContent = t;
-          const purpose = a.getAttribute('data-hd-fleet-purpose');
-          if (purposeEl && purpose) purposeEl.textContent = purpose;
           const frag = a.getAttribute('data-hd-fleet-help');
           if (helpLink && frag) {
             const href = helpLink.getAttribute('href') || '/Help';

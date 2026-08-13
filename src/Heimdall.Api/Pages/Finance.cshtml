@@ -8,7 +8,6 @@
 
 <div class="mb-2">
     <h1 class="hd-title mb-1">Finance</h1>
-    <p class="hd-sub mb-0">Hardware models · software license purchases · cost per hour of use</p>
 </div>
 
 @if (TempData["Message"] is string msg)
@@ -22,13 +21,16 @@
 
 <ul class="nav nav-tabs hd-ops-tabs mb-3" role="tablist">
     <li class="nav-item" role="presentation">
-        <a class="nav-link @(tab == "hardware" ? "active" : null)" asp-page="/Finance" asp-route-tab="hardware" asp-route-teamId="@Model.TeamId">Hardware</a>
+        <a class="nav-link @(tab == "hardware" ? "active" : null)" asp-page="/Finance" asp-route-tab="hardware" asp-route-teamId="@Model.TeamId"
+           title="Hardware models and purchase specs.">Hardware</a>
     </li>
     <li class="nav-item" role="presentation">
-        <a class="nav-link @(tab == "software" ? "active" : null)" asp-page="/Finance" asp-route-tab="software">Software</a>
+        <a class="nav-link @(tab == "software" ? "active" : null)" asp-page="/Finance" asp-route-tab="software"
+           title="Software license purchases by year.">Software</a>
     </li>
     <li class="nav-item" role="presentation">
-        <a class="nav-link @(tab == "metrics" ? "active" : null)" asp-page="/Finance" asp-route-tab="metrics" asp-route-period="@Model.Period" asp-route-year="@Model.Year">Metrics</a>
+        <a class="nav-link @(tab == "metrics" ? "active" : null)" asp-page="/Finance" asp-route-tab="metrics" asp-route-period="@Model.Period" asp-route-year="@Model.Year"
+           title="Cost per hour of use for hardware and licenses.">Metrics</a>
     </li>
 </ul>
 

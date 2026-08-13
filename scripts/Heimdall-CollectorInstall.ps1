@@ -155,6 +155,7 @@ function Invoke-HeimdallElevatedCollectorInstall {
         [Parameter(Mandatory)][string]$MachineGroup,
         [Parameter(Mandatory)][string]$PayloadPath,
         [switch]$AlreadyElevated,
+        [switch]$EnableHealWatchdog,
         [scriptblock]$PumpUi = $null,
         [scriptblock]$Log = $null
     )
@@ -166,13 +167,23 @@ function Invoke-HeimdallElevatedCollectorInstall {
     $tempCmd = Join-Path $env:TEMP ("heimdall-install-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + ([guid]::NewGuid().ToString("N")).Substring(0, 6) + ".cmd")
     $captureLog = Join-Path $env:TEMP ("heimdall-install-capture-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + ([guid]::NewGuid().ToString("N")).Substring(0, 6) + ".log")
 
+    $healArg = ""
+    if ($EnableHealWatchdog) {
+        $healArg = " -EnableHealWatchdog"
+    }
+
     $batchLines = @(
         '@echo off'
         'setlocal EnableExtensions EnableDelayedExpansion'
         ('cd /d "{0}"' -f $packDir)
         'set HEIMDALL_SKIP_LAUNCH=1'
         'set HEIMDALL_NOPAUSE=1'
-        ('call "{0}" -ApiUrl "{1}" -ApiKey "{2}" -MachineGroup "{3}" -Payload "{4}" > "{5}" 2>&1' -f $installer, $ApiUrl, $ApiKey, $MachineGroup, $payload, $captureLog)
+    )
+    if ($EnableHealWatchdog) {
+        $batchLines += 'set HEIMDALL_ENABLE_HEAL=1'
+    }
+    $batchLines += @(
+        ('call "{0}" -ApiUrl "{1}" -ApiKey "{2}" -MachineGroup "{3}" -Payload "{4}"{5} > "{6}" 2>&1' -f $installer, $ApiUrl, $ApiKey, $MachineGroup, $payload, $healArg, $captureLog)
         'set EC=!ERRORLEVEL!'
         'exit /b !EC!'
     )
@@ -316,6 +327,407 @@ function Resolve-HeimdallProductVersionExpected {
         catch { }
     }
     return $Fallback
+}
+
+function Test-HeimdallBinaryContainsAscii {
+    <#
+    Best-effort capability fingerprint: search a binary for a marker string
+    as ASCII and as UTF-16LE (common for .NET metadata / user strings).
+    Caps read size for speed.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Needle,
+        [int]$MaxBytes = 12000000
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    if ([string]::IsNullOrEmpty($Needle)) { return $false }
+    try {
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $len = [Math]::Min([int64]$fs.Length, [int64]$MaxBytes)
+            if ($len -le 0) { return $false }
+            $buf = New-Object byte[] $len
+            $read = 0
+            while ($read -lt $len) {
+                $n = $fs.Read($buf, $read, [int]($len - $read))
+                if ($n -le 0) { break }
+                $read += $n
+            }
+            $ascii = [System.Text.Encoding]::ASCII.GetString($buf, 0, $read)
+            if ($ascii.IndexOf($Needle, [StringComparison]::Ordinal) -ge 0) { return $true }
+            $utf16 = [System.Text.Encoding]::Unicode.GetString($buf, 0, $read)
+            return $utf16.IndexOf($Needle, [StringComparison]::Ordinal) -ge 0
+        }
+        finally {
+            $fs.Dispose()
+        }
+    }
+    catch {
+        return $false
+    }
+}
+
+function Get-HeimdallClientVersionMilestoneNotes {
+    <#
+    Known simple-integer client milestones (from VersionCompare + field history).
+    Used by the install wizard to explain what to expect / probe for v5+.
+    #>
+    param([int]$SimpleVersion)
+    switch ($SimpleVersion) {
+        { $_ -le 1 } {
+            return @(
+                "v1 / legacy SemVer (e.g. 0.1.0): early POC agent; treated as simple version 1.",
+                "Expect: Heimdall.Agent.exe under Program Files\Heimdall\Agent.",
+                "Do NOT expect: UpdateClient silent deploy, disk usage scan poll."
+            )
+        }
+        2 {
+            return @(
+                "v2: early integer ProductVersion packs (before silent UpdateClient).",
+                "Expect: integer ProductVersion on Heimdall.Agent.exe.",
+                "Do NOT expect: UpdateClient (needs v3+)."
+            )
+        }
+        3 {
+            return @(
+                "v3: first UpdateClient-capable build (Fleet silent Deploy).",
+                "Expect: DLL marker UpdateClient / ClientUpdateHelper; bootstrap via Install.lnk no longer required after this.",
+                "Do NOT expect: on-demand disk usage scan (needs v6+)."
+            )
+        }
+        4 {
+            return @(
+                "v4: post-UpdateClient integer pack (no separate VersionCompare gate).",
+                "Expect: same as v3 capability set (UpdateClient yes; disk scan no).",
+                "Corroborate: ProductVersion=4 on exe; UpdateClient marker present; DiskUsageScanner absent."
+            )
+        }
+        5 {
+            return @(
+                "v5: last common field build before disk-scan pickup (e.g. hosts stuck Queued on scans).",
+                "Expect: UpdateClient yes; TuflowLauncher folder often present on modelling packs.",
+                "Do NOT expect: DiskUsageScanner / GET disk-usage pending poll (added in v6).",
+                "Corroborate: ProductVersion=5; UpdateClient marker YES; DiskUsageScanner marker NO."
+            )
+        }
+        6 {
+            return @(
+                "v6: first disk usage scan agent (MinDiskUsageScanVersion).",
+                "Expect: DiskUsageScanner + disk-usage API client methods in DLL; UpdateClient still present.",
+                "Corroborate: ProductVersion=6+; DiskUsageScanner marker YES."
+            )
+        }
+        default {
+            if ($SimpleVersion -ge 6) {
+                return @(
+                    ("v{0}: integer pack at or after disk-scan baseline (v6+)." -f $SimpleVersion),
+                    "Expect: UpdateClient + DiskUsageScanner capability markers in Heimdall.Agent.dll.",
+                    "Also common: TuflowLauncher\TuflowLauncher.exe beside the agent; fleet snapshot posting."
+                )
+            }
+            return @(("v{0}: no dedicated milestone notes; trust ProductVersion on the exe." -f $SimpleVersion))
+        }
+    }
+}
+
+function Get-HeimdallClientVersionProbe {
+    <#
+    Probe installed agent vs this pack's productVersion. Lists every path checked.
+    Primary version = Win32 ProductVersion on Heimdall.Agent.exe (matches heartbeat AgentVersion).
+    Capability markers in Heimdall.Agent.dll corroborate v3 (UpdateClient) and v6 (DiskUsageScanner).
+    #>
+    param(
+        [string]$AgentInstallDir = (Join-Path ${env:ProgramFiles} "Heimdall\Agent"),
+        [string]$PackScriptDir = $null
+    )
+
+    $checks = @()
+    $addCheck = {
+        param([string]$Path, [string]$What, [string]$Result, [string]$Detail = "")
+        $script:__hdCheckBuf += ,([pscustomobject]@{
+                Path   = $Path
+                What   = $What
+                Result = $Result
+                Detail = $Detail
+            })
+    }
+    $script:__hdCheckBuf = @()
+
+    $exe = Join-Path $AgentInstallDir "Heimdall.Agent.exe"
+    $dll = Join-Path $AgentInstallDir "Heimdall.Agent.dll"
+    $settings = Join-Path $AgentInstallDir "appsettings.json"
+    $tuflow = Join-Path $AgentInstallDir "TuflowLauncher\TuflowLauncher.exe"
+    $dataRoot = Join-Path $env:ProgramData "Heimdall"
+    $logRoot = Join-Path $dataRoot "logs"
+
+    $installed = $false
+    $productVersion = $null
+    $fileVersion = $null
+    $buildDateTime = $null
+    $simple = $null
+    $hasUpdateClient = $null
+    $hasDiskUsageScan = $null
+    $hasTuflowLauncher = $false
+    $serviceStatus = $null
+
+    if (Test-Path -LiteralPath $exe) {
+        try {
+            $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
+            $fi = Get-Item -LiteralPath $exe
+            $installed = $true
+            $productVersion = if ($vi.ProductVersion) { $vi.ProductVersion.Trim() } else { $null }
+            $fileVersion = if ($vi.FileVersion) { $vi.FileVersion.Trim() } else { $null }
+            $buildDateTime = $fi.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
+            if (Get-Command Get-HeimdallSimpleClientVersion -ErrorAction SilentlyContinue) {
+                $simple = Get-HeimdallSimpleClientVersion -Version $productVersion
+            }
+            & $addCheck $exe "ProductVersion (primary)" $(if ($productVersion) { "OK" } else { "MISSING" }) `
+            ("version=" + $(if ($productVersion) { $productVersion } else { "?" }) + "; LastWriteTime=" + $buildDateTime)
+            if ($fileVersion -and $fileVersion -ne $productVersion) {
+                & $addCheck $exe "FileVersion" "OK" $fileVersion
+            }
+        }
+        catch {
+            & $addCheck $exe "ProductVersion (primary)" "ERROR" $_.Exception.Message
+        }
+    }
+    else {
+        & $addCheck $exe "Heimdall.Agent.exe present" "MISSING" "No installed agent at default path"
+    }
+
+    if (Test-Path -LiteralPath $dll) {
+        try {
+            $dllVi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($dll)
+            $dllPv = if ($dllVi.ProductVersion) { $dllVi.ProductVersion.Trim() } else { $null }
+            & $addCheck $dll "DLL ProductVersion" "OK" $(if ($dllPv) { $dllPv } else { "(empty)" })
+            if ($productVersion -and $dllPv -and $dllPv -ne $productVersion) {
+                & $addCheck $dll "DLL vs EXE version" "WARN" ("DLL=$dllPv EXE=$productVersion")
+            }
+        }
+        catch {
+            & $addCheck $dll "DLL ProductVersion" "ERROR" $_.Exception.Message
+        }
+
+        $hasUpdateClient = [bool](Test-HeimdallBinaryContainsAscii -Path $dll -Needle "UpdateClient")
+        & $addCheck $dll "Capability marker UpdateClient (v3+)" $(if ($hasUpdateClient) { "PRESENT" } else { "ABSENT" }) "ASCII/UTF-16 search in DLL"
+
+        $hasDiskUsageScan = [bool](
+            (Test-HeimdallBinaryContainsAscii -Path $dll -Needle "DiskUsageScanner") -or
+            (Test-HeimdallBinaryContainsAscii -Path $dll -Needle "disk-usage")
+        )
+        & $addCheck $dll "Capability marker DiskUsageScanner (v6+)" $(if ($hasDiskUsageScan) { "PRESENT" } else { "ABSENT" }) "ASCII/UTF-16 search for DiskUsageScanner / disk-usage"
+    }
+    else {
+        & $addCheck $dll "Heimdall.Agent.dll present" "MISSING" "Needed for capability markers"
+    }
+
+    if (Test-Path -LiteralPath $tuflow) {
+        $hasTuflowLauncher = $true
+        $tfi = Get-Item -LiteralPath $tuflow
+        & $addCheck $tuflow "TuflowLauncher.exe" "PRESENT" ("LastWriteTime=" + $tfi.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss"))
+    }
+    else {
+        & $addCheck $tuflow "TuflowLauncher.exe" "ABSENT" "Optional; modelling packs usually include it"
+    }
+
+    if (Test-Path -LiteralPath $settings) {
+        & $addCheck $settings "appsettings.json" "PRESENT" ""
+    }
+    else {
+        & $addCheck $settings "appsettings.json" "ABSENT" ""
+    }
+
+    & $addCheck $dataRoot "ProgramData\Heimdall" $(if (Test-Path -LiteralPath $dataRoot) { "PRESENT" } else { "ABSENT" }) ""
+    & $addCheck $logRoot "ProgramData\Heimdall\logs" $(if (Test-Path -LiteralPath $logRoot) { "PRESENT" } else { "ABSENT" }) ""
+
+    try {
+        $svc = Get-Service -Name HeimdallAgent -ErrorAction SilentlyContinue
+        if ($svc) {
+            $serviceStatus = [string]$svc.Status
+            & $addCheck "Service:HeimdallAgent" "Windows service" $serviceStatus ""
+        }
+        else {
+            & $addCheck "Service:HeimdallAgent" "Windows service" "NOT_INSTALLED" ""
+        }
+    }
+    catch {
+        & $addCheck "Service:HeimdallAgent" "Windows service" "ERROR" $_.Exception.Message
+    }
+
+    $packVersion = $null
+    $packExeVersion = $null
+    $packBuilt = $null
+    $packVersionJson = $null
+    $packExe = $null
+    if (-not [string]::IsNullOrWhiteSpace($PackScriptDir)) {
+        $packVersionJson = Join-Path $PackScriptDir "VERSION.json"
+        if (Test-Path -LiteralPath $packVersionJson) {
+            try {
+                $vj = Get-Content -Raw -LiteralPath $packVersionJson | ConvertFrom-Json
+                $packVersion = [string]$vj.productVersion
+                $packedAt = [string]$vj.packedAtUtc
+                $detail = "productVersion=" + $(if ($packVersion) { $packVersion } else { "?" })
+                if ($packedAt) { $detail += "; packedAtUtc=$packedAt" }
+                & $addCheck $packVersionJson "Pack VERSION.json productVersion" "OK" $detail
+            }
+            catch {
+                & $addCheck $packVersionJson "Pack VERSION.json productVersion" "ERROR" $_.Exception.Message
+            }
+        }
+        else {
+            & $addCheck $packVersionJson "Pack VERSION.json" "MISSING" "Fall back to payload exe ProductVersion"
+        }
+
+        $packExe = Join-Path $PackScriptDir "payload\Heimdall.Agent.exe"
+        if (Test-Path -LiteralPath $packExe) {
+            try {
+                $pvi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($packExe)
+                $pfi = Get-Item -LiteralPath $packExe
+                $packExeVersion = if ($pvi.ProductVersion) { $pvi.ProductVersion.Trim() } else { $null }
+                $packBuilt = $pfi.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
+                if (-not $packVersion) { $packVersion = $packExeVersion }
+                & $addCheck $packExe "Pack payload ProductVersion (will install)" "OK" `
+                ("version=" + $(if ($packExeVersion) { $packExeVersion } else { "?" }) + "; LastWriteTime=" + $packBuilt)
+            }
+            catch {
+                & $addCheck $packExe "Pack payload ProductVersion" "ERROR" $_.Exception.Message
+            }
+        }
+        else {
+            & $addCheck $packExe "Pack payload Heimdall.Agent.exe" "MISSING" ""
+        }
+    }
+
+    $checks = @($script:__hdCheckBuf)
+    Remove-Variable -Name __hdCheckBuf -Scope Script -ErrorAction SilentlyContinue
+
+    $milestoneNotes = @()
+    if ($null -ne $simple) {
+        $milestoneNotes = @(Get-HeimdallClientVersionMilestoneNotes -SimpleVersion ([int]$simple))
+    }
+
+    $corroboration = @()
+    if ($null -ne $simple) {
+        $sv = [int]$simple
+        if ($sv -ge 3) {
+            if ($hasUpdateClient) { $corroboration += "v$sv expects UpdateClient: PRESENT (OK)" }
+            else { $corroboration += "v$sv expects UpdateClient: ABSENT (unexpected for v3+)" }
+        }
+        elseif ($sv -lt 3 -and $hasUpdateClient) {
+            $corroboration += "v$sv usually lacks UpdateClient, but marker PRESENT (unusual)"
+        }
+
+        if ($sv -ge 6) {
+            if ($hasDiskUsageScan) { $corroboration += "v$sv expects DiskUsageScanner: PRESENT (OK)" }
+            else { $corroboration += "v$sv expects DiskUsageScanner: ABSENT (unexpected for v6+)" }
+        }
+        elseif ($sv -eq 5) {
+            if (-not $hasDiskUsageScan) { $corroboration += "v5 expects DiskUsageScanner: ABSENT (OK - scans need v6+)" }
+            else { $corroboration += "v5 ProductVersion but DiskUsageScanner PRESENT (DLL newer than label?)" }
+            if ($hasUpdateClient) { $corroboration += "v5 expects UpdateClient: PRESENT (OK)" }
+        }
+        elseif ($sv -lt 6 -and $hasDiskUsageScan) {
+            $corroboration += "v$sv ProductVersion but DiskUsageScanner PRESENT (unexpected for pre-v6)"
+        }
+    }
+
+    $compare = "unknown"
+    $installedLabel = if ($installed -and $productVersion) { $productVersion } else { "(not installed)" }
+    $packLabel = if ($packVersion) { $packVersion } else { "(unknown pack)" }
+    if (-not $installed) {
+        $compare = "fresh install -> pack $packLabel"
+    }
+    elseif ($packVersion -and (Get-Command Test-HeimdallProductVersionMatch -ErrorAction SilentlyContinue)) {
+        if (Test-HeimdallProductVersionMatch -VersionA $productVersion -VersionB $packVersion) {
+            $compare = "SAME (installed $installedLabel == pack $packLabel)"
+        }
+        else {
+            $instSimple = Get-HeimdallSimpleClientVersion -Version $productVersion
+            $packSimple = Get-HeimdallSimpleClientVersion -Version $packVersion
+            if ($null -ne $instSimple -and $null -ne $packSimple -and ([int]$packSimple) -gt ([int]$instSimple)) {
+                $compare = "UPGRADE (installed $installedLabel -> pack $packLabel)"
+            }
+            elseif ($null -ne $instSimple -and $null -ne $packSimple -and ([int]$packSimple) -lt ([int]$instSimple)) {
+                $compare = "DOWNGRADE (installed $installedLabel -> pack $packLabel)"
+            }
+            else {
+                $compare = "DIFFERENT (installed $installedLabel vs pack $packLabel)"
+            }
+        }
+    }
+    else {
+        $compare = "installed $installedLabel | pack $packLabel"
+    }
+
+    $result = New-Object psobject
+    $result | Add-Member NoteProperty Installed $installed
+    $result | Add-Member NoteProperty InstallDir $AgentInstallDir
+    $result | Add-Member NoteProperty ExePath $exe
+    $result | Add-Member NoteProperty DllPath $dll
+    $result | Add-Member NoteProperty ProductVersion $productVersion
+    $result | Add-Member NoteProperty FileVersion $fileVersion
+    $result | Add-Member NoteProperty SimpleVersion $simple
+    $result | Add-Member NoteProperty BuildDateTime $buildDateTime
+    $result | Add-Member NoteProperty HasUpdateClientMarker $hasUpdateClient
+    $result | Add-Member NoteProperty HasDiskUsageScanMarker $hasDiskUsageScan
+    $result | Add-Member NoteProperty HasTuflowLauncher $hasTuflowLauncher
+    $result | Add-Member NoteProperty ServiceStatus $serviceStatus
+    $result | Add-Member NoteProperty PackVersion $packVersion
+    $result | Add-Member NoteProperty PackExeVersion $packExeVersion
+    $result | Add-Member NoteProperty PackBuildDateTime $packBuilt
+    $result | Add-Member NoteProperty PackVersionJsonPath $packVersionJson
+    $result | Add-Member NoteProperty PackExePath $packExe
+    $result | Add-Member NoteProperty CompareSummary $compare
+    $result | Add-Member NoteProperty MilestoneNotes $milestoneNotes
+    $result | Add-Member NoteProperty Corroboration $corroboration
+    $result | Add-Member NoteProperty Checks $checks
+    return $result
+}
+
+function Format-HeimdallClientVersionProbeSummary {
+    param(
+        [Parameter(Mandatory)]$Probe,
+        [switch]$IncludeAllChecks
+    )
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("Installed vs this pack") | Out-Null
+    $lines.Add("----------------------") | Out-Null
+    if ($Probe.Installed) {
+        $built = if ($Probe.BuildDateTime) { [string]$Probe.BuildDateTime } else { "?" }
+        $lines.Add("Installed now:  v$($Probe.ProductVersion)  (build/file $built)") | Out-Null
+        $lines.Add("Install folder: $($Probe.InstallDir)") | Out-Null
+        if ($null -ne $Probe.ServiceStatus -and $Probe.ServiceStatus -ne "") {
+            $lines.Add("Service:        HeimdallAgent = $($Probe.ServiceStatus)") | Out-Null
+        }
+    }
+    else {
+        $lines.Add("Installed now:  (none found)") | Out-Null
+        $lines.Add("Checked:        $($Probe.ExePath)") | Out-Null
+    }
+    $packBuilt = if ($Probe.PackBuildDateTime) { [string]$Probe.PackBuildDateTime } else { "?" }
+    $lines.Add("This pack:      v$(if ($Probe.PackVersion) { $Probe.PackVersion } else { '?' })  (payload build/file $packBuilt)") | Out-Null
+    $lines.Add("Compare:        $($Probe.CompareSummary)") | Out-Null
+    $lines.Add("") | Out-Null
+
+    if ($Probe.MilestoneNotes -and @($Probe.MilestoneNotes).Count -gt 0) {
+        $lines.Add("If this host is v$($Probe.SimpleVersion) (milestone notes):") | Out-Null
+        foreach ($n in @($Probe.MilestoneNotes)) { $lines.Add("  - $n") | Out-Null }
+        $lines.Add("") | Out-Null
+    }
+    if ($Probe.Corroboration -and @($Probe.Corroboration).Count -gt 0) {
+        $lines.Add("Capability corroboration:") | Out-Null
+        foreach ($c in @($Probe.Corroboration)) { $lines.Add("  - $c") | Out-Null }
+        $lines.Add("") | Out-Null
+    }
+
+    $lines.Add("Locations checked:") | Out-Null
+    foreach ($c in @($Probe.Checks)) {
+        $detail = if ($c.Detail) { " - $($c.Detail)" } else { "" }
+        $lines.Add("  [$($c.Result)] $($c.What)") | Out-Null
+        $lines.Add("           $($c.Path)$detail") | Out-Null
+    }
+    return ($lines -join "`r`n")
 }
 
 function Test-HeimdallProductVersionAccept {

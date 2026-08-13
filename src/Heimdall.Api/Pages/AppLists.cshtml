@@ -472,6 +472,10 @@ else if (active == "analyze")
                                         {
                                             <span class="text-secondary small">@row.DisplayName</span>
                                         }
+                                        @if (!string.IsNullOrWhiteSpace(row.ProgramDisplay))
+                                        {
+                                            <div class="hd-meta-line text-secondary">Program: @row.ProgramDisplay</div>
+                                        }
                                         @if (!string.IsNullOrWhiteSpace(row.ExecutablePath))
                                         {
                                             <div class="hd-process-path">@row.ExecutablePath</div>

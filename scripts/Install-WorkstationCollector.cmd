@@ -3,16 +3,24 @@ setlocal EnableExtensions EnableDelayedExpansion
 title Heimdall Client Agent Installer
 
 REM Portable installer for the Heimdall Agent (Heimdall-Client pack).
-REM Run elevated from a packed folder produced by Pack-WorkstationCollector.cmd.
-REM Prefer this over Install-Agent.cmd when deploying to other PCs without the full repo/SDK.
+REM Entry point kept as .cmd for pack / silent UpdateClient compatibility.
+REM Work is done by Install-WorkstationCollector.ps1 (lock, stages, 1072 waits, LKG rollback).
 REM
 REM Usage:
 REM   Install-WorkstationCollector.cmd
 REM   Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080
 REM   Install-WorkstationCollector.cmd -ApiUrl http://SERVER:5080 -ApiKey heimdall-poc-key -MachineGroup SOE
+REM   Install-WorkstationCollector.cmd ... -EnableHealWatchdog
+REM   Install-WorkstationCollector.cmd -UnregisterHealWatchdog
+REM   Install-WorkstationCollector.cmd -HealOnly
+REM
+REM Env: HEIMDALL_ENABLE_HEAL=1 enables heal add-on (same as -EnableHealWatchdog).
+REM Silent UpdateClient must NOT set HEIMDALL_ENABLE_HEAL (preserves existing task only).
 REM
 REM Expected layout next to this script:
 REM   payload\Heimdall.Agent.exe   (+ other published files)
+REM   Install-WorkstationCollector.ps1
+REM   Heimdall-AgentHeal.ps1       (Phase 3 add-on; copied to ProgramData when enabled)
 
 cd /d "%~dp0"
 
@@ -23,6 +31,12 @@ set "INSTALLDIR=%ProgramFiles%\Heimdall\Agent"
 set "PAYLOAD=%~dp0payload"
 set "LOGROOT=%ProgramData%\Heimdall\logs"
 set "EXITCODE=1"
+set "ENABLE_HEAL=0"
+set "UNREGISTER_HEAL=0"
+set "HEAL_ONLY=0"
+set "PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PS%" set "PS=powershell.exe"
+if /I "%HEIMDALL_ENABLE_HEAL%"=="1" set "ENABLE_HEAL=1"
 
 REM Prefer Install.cmd when present (guided client wizard). Set HEIMDALL_SKIP_LAUNCH=1 to force this script.
 if /I not "%HEIMDALL_SKIP_LAUNCH%"=="1" (
@@ -45,6 +59,9 @@ if /I "%~1"=="-ApiKey" goto arg_apikey
 if /I "%~1"=="-MachineGroup" goto arg_machinegroup
 if /I "%~1"=="-InstallDir" goto arg_installdir
 if /I "%~1"=="-Payload" goto arg_payload
+if /I "%~1"=="-EnableHealWatchdog" goto arg_enable_heal
+if /I "%~1"=="-UnregisterHealWatchdog" goto arg_unregister_heal
+if /I "%~1"=="-HealOnly" goto arg_heal_only
 if /I "%~1"=="-h" goto usage
 if /I "%~1"=="-Help" goto usage
 if /I "%~1"=="/?" goto usage
@@ -86,6 +103,21 @@ shift
 shift
 goto parse_args
 
+:arg_enable_heal
+set "ENABLE_HEAL=1"
+shift
+goto parse_args
+
+:arg_unregister_heal
+set "UNREGISTER_HEAL=1"
+shift
+goto parse_args
+
+:arg_heal_only
+set "HEAL_ONLY=1"
+shift
+goto parse_args
+
 :args_done
 
 echo.
@@ -105,12 +137,17 @@ if errorlevel 1 (
   echo This window will wait until the elevated installer finishes.
   echo.
   set "ELEVATE_CMD=%TEMP%\heimdall-elev-%RANDOM%.cmd"
+  set "ELEV_EXTRA="
+  if "!ENABLE_HEAL!"=="1" set "ELEV_EXTRA=!ELEV_EXTRA! -EnableHealWatchdog"
+  if "!UNREGISTER_HEAL!"=="1" set "ELEV_EXTRA=!ELEV_EXTRA! -UnregisterHealWatchdog"
+  if "!HEAL_ONLY!"=="1" set "ELEV_EXTRA=!ELEV_EXTRA! -HealOnly"
   (
     echo @echo off
     echo setlocal EnableExtensions EnableDelayedExpansion
     echo cd /d "%~dp0"
     echo set HEIMDALL_SKIP_LAUNCH=1
-    echo call "%~f0" -ApiUrl "!APIURL!" -ApiKey "!APIKEY!" -MachineGroup "!MACHINEGROUP!" -InstallDir "!INSTALLDIR!" -Payload "!PAYLOAD!"
+    if "!ENABLE_HEAL!"=="1" echo set HEIMDALL_ENABLE_HEAL=1
+    echo call "%~f0" -ApiUrl "!APIURL!" -ApiKey "!APIKEY!" -MachineGroup "!MACHINEGROUP!" -InstallDir "!INSTALLDIR!" -Payload "!PAYLOAD!"!ELEV_EXTRA!
     echo exit /b %%ERRORLEVEL%%
   ) > "!ELEVATE_CMD!"
   powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%ELEVATE_CMD%' -Verb RunAs -Wait -PassThru | ForEach-Object { exit $_.ExitCode }"
@@ -121,151 +158,20 @@ if errorlevel 1 (
   goto end
 )
 
-if not exist "%LOGROOT%" mkdir "%LOGROOT%" >nul 2>&1
-REM Locale-safe-ish stamp from DATE/TIME (no PowerShell)
-set "STAMP=%DATE:~-4%%DATE:~4,2%%DATE:~7,2%-%TIME:~0,2%%TIME:~3,2%%TIME:~6,2%"
-set "STAMP=!STAMP: =0!"
-set "STAMP=!STAMP:/=!"
-set "STAMP=!STAMP::=!"
-set "STAMP=!STAMP:.=!"
-set "LOGFILE=%LOGROOT%\install-agent-!STAMP!.log"
-
-call :log INFO "Log file: !LOGFILE!"
-call :log INFO "User: %USERNAME%  Machine: %COMPUTERNAME%"
-call :log INFO "ApiUrl=!APIURL! MachineGroup=!MACHINEGROUP! InstallDir=!INSTALLDIR!"
-call :log INFO "Payload=!PAYLOAD!"
-
-if not exist "%PAYLOAD%\Heimdall.Agent.exe" (
-  call :log ERROR "Payload not found: \"%PAYLOAD%\Heimdall.Agent.exe\""
-  echo [ERROR] Payload not found: "%PAYLOAD%\Heimdall.Agent.exe"
-  echo.
-  echo This installer expects the Heimdall-Client pack from Setup / Pack.
-  echo From a full Heimdall clone ^(with .NET 10 SDK^):
-  echo   scripts\Heimdall-Setup.lnk  -^> Create client pack
-  echo   OR scripts\Pack-WorkstationCollector.cmd
-  echo Then copy the WHOLE dist\Heimdall-Client folder ^(must include payload\^).
-  echo.
-  echo docs\portable-client\ in the repo is documentation only — not installable.
-  goto fail
+if not exist "%~dp0Install-WorkstationCollector.ps1" (
+  echo [ERROR] Install-WorkstationCollector.ps1 missing next to this .cmd
+  echo Pack must include both Install-WorkstationCollector.cmd and .ps1
+  set "EXITCODE=1"
+  goto end
 )
 
-call :log STEP "Ensure ProgramData\Heimdall"
-if not exist "%ProgramData%\Heimdall" mkdir "%ProgramData%\Heimdall" >nul 2>&1
-if errorlevel 1 (
-  call :log ERROR "Could not create %ProgramData%\Heimdall"
-  goto fail
-)
+set "PS_EXTRA="
+if "!ENABLE_HEAL!"=="1" set "PS_EXTRA=!PS_EXTRA! -EnableHealWatchdog"
+if "!UNREGISTER_HEAL!"=="1" set "PS_EXTRA=!PS_EXTRA! -UnregisterHealWatchdog"
+if "!HEAL_ONLY!"=="1" set "PS_EXTRA=!PS_EXTRA! -HealOnly"
 
-call :log STEP "Ensure install directory"
-if not exist "!INSTALLDIR!" mkdir "!INSTALLDIR!" >nul 2>&1
-if errorlevel 1 (
-  call :log ERROR "Could not create !INSTALLDIR!"
-  goto fail
-)
-
-call :log STEP "Probe API health (best-effort)"
-set "HEALTH=!APIURL!"
-if "!HEALTH:~-1!"=="/" set "HEALTH=!HEALTH:~0,-1!"
-set "HEALTH=!HEALTH!/api/health"
-curl.exe -sS -m 10 "!HEALTH!" >nul 2>&1
-if errorlevel 1 (
-  call :log WARN "API not reachable yet at !HEALTH! — install continues; fix URL/firewall if heartbeats fail."
-) else (
-  call :log OK "API reachable: !HEALTH!"
-)
-
-call :log STEP "Stop existing HeimdallAgent service if present"
-sc.exe query HeimdallAgent >nul 2>&1
-if not errorlevel 1 (
-  sc.exe stop HeimdallAgent >nul 2>&1
-  timeout /t 2 /nobreak >nul
-  sc.exe delete HeimdallAgent >nul 2>&1
-  timeout /t 2 /nobreak >nul
-  call :log INFO "Removed previous HeimdallAgent service"
-) else (
-  call :log INFO "No existing HeimdallAgent service"
-)
-
-call :log STEP "Copy payload to install directory"
-robocopy "!PAYLOAD!" "!INSTALLDIR!" /E /NFL /NDL /NJH /NJS /nc /ns /np >nul
-set "RC=!ERRORLEVEL!"
-if !RC! GEQ 8 (
-  call :log ERROR "robocopy failed with exit !RC!"
-  goto fail
-)
-if not exist "!INSTALLDIR!\Heimdall.Agent.exe" (
-  call :log ERROR "Heimdall.Agent.exe missing after copy"
-  goto fail
-)
-call :log OK "Copied payload to !INSTALLDIR!"
-
-call :log STEP "Write appsettings.json"
-set "QUEUEPATH=%ProgramData%\Heimdall\queue.db"
-set "QUEUEJSON=!QUEUEPATH:\=/!"
-set "APIURL_ESC=!APIURL!"
-set "APIKEY_ESC=!APIKEY!"
-set "MG_ESC=!MACHINEGROUP!"
-REM Escape backslashes in values for JSON (unlikely in URL/key/group)
-set "APIURL_ESC=!APIURL_ESC:\=\\!"
-set "APIKEY_ESC=!APIKEY_ESC:\=\\!"
-set "MG_ESC=!MG_ESC:\=\\!"
-
-(
-  echo {
-  echo   "Heimdall": {
-  echo     "ApiBaseUrl": "!APIURL_ESC!",
-  echo     "ApiKey": "!APIKEY_ESC!",
-  echo     "MachineGroup": "!MG_ESC!",
-  echo     "QueuePath": "!QUEUEJSON!"
-  echo   },
-  echo   "Logging": {
-  echo     "LogLevel": {
-  echo       "Default": "Information",
-  echo       "Microsoft.Hosting.Lifetime": "Information"
-  echo     }
-  echo   }
-  echo }
-) > "!INSTALLDIR!\appsettings.json"
-if errorlevel 1 (
-  call :log ERROR "Failed writing appsettings.json"
-  goto fail
-)
-call :log OK "Wrote !INSTALLDIR!\appsettings.json"
-call :log INFO "QueuePath=!QUEUEPATH!"
-
-call :log STEP "Create HeimdallAgent Windows service"
-sc.exe create HeimdallAgent binPath= "\"!INSTALLDIR!\Heimdall.Agent.exe\"" start= auto DisplayName= "Heimdall Agent"
-if errorlevel 1 (
-  call :log ERROR "sc.exe create failed"
-  goto fail
-)
-sc.exe description HeimdallAgent "Heimdall workstation usage reporter" >nul
-call :log OK "Service created"
-
-call :log STEP "Start HeimdallAgent"
-sc.exe start HeimdallAgent
-if errorlevel 1 (
-  call :log ERROR "sc.exe start failed — check Event Viewer / .NET runtime"
-  goto fail
-)
-timeout /t 2 /nobreak >nul
-sc.exe query HeimdallAgent | findstr /I "RUNNING" >nul
-if errorlevel 1 (
-  call :log ERROR "HeimdallAgent did not reach RUNNING"
-  sc.exe query HeimdallAgent
-  goto fail
-)
-
-echo.
-echo ================================================================
-echo   SUCCESS — Heimdall client agent installed
-echo ================================================================
-call :log OK "API:     !APIURL!"
-call :log OK "Service: HeimdallAgent"
-call :log OK "Host:    %COMPUTERNAME% (dashboard Machines after first heartbeat)"
-call :log OK "Group:   !MACHINEGROUP!"
-call :log OK "Log:     !LOGFILE!"
-set "EXITCODE=0"
+"%PS%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-WorkstationCollector.ps1" -ApiUrl "%APIURL%" -ApiKey "%APIKEY%" -MachineGroup "%MACHINEGROUP%" -InstallDir "%INSTALLDIR%" -Payload "%PAYLOAD%"!PS_EXTRA!
+set "EXITCODE=!ERRORLEVEL!"
 goto end
 
 :usage
@@ -273,52 +179,36 @@ echo.
 echo Usage: Install-WorkstationCollector.cmd [options]
 echo.
 echo Options:
-echo   -ApiUrl URL          Heimdall API base URL (default http://BNELT5CG5152D8R:5080^)
-echo   -ApiKey KEY          Must match API key (default heimdall-poc-key^)
-echo   -MachineGroup NAME   e.g. SOE, POC, APAC/Sydney (default POC^)
-echo   -InstallDir PATH     Default %%ProgramFiles%%\Heimdall\Agent
-echo   -Payload PATH        Folder containing Heimdall.Agent.exe (default .\payload^)
+echo   -ApiUrl URL               Heimdall API base URL (default http://BNELT5CG5152D8R:5080^)
+echo   -ApiKey KEY               Must match API key (default heimdall-poc-key^)
+echo   -MachineGroup NAME        e.g. SOE, POC, APAC/Sydney (default POC^)
+echo   -InstallDir PATH          Default %%ProgramFiles%%\Heimdall\Agent
+echo   -Payload PATH             Folder containing Heimdall.Agent.exe (default .\payload^)
+echo   -EnableHealWatchdog       Opt-in: register HeimdallAgentHeal ^(SYSTEM, every 15m^)
+echo   -UnregisterHealWatchdog   Remove HeimdallAgentHeal scheduled task
+echo   -HealOnly                 Restore agent from LKG ^(used by heal watchdog^)
 echo.
+echo Env: HEIMDALL_ENABLE_HEAL=1 same as -EnableHealWatchdog
 echo Pack on a build PC first: scripts\Heimdall-Setup.lnk -^> Create client pack
 echo See docs\portable-client\README.md for files and dependencies.
 echo.
 set "EXITCODE=1"
 goto end
 
-:fail
-echo.
-echo ================================================================
-echo   FAILURE — Heimdall client agent install did not complete
-echo ================================================================
-if defined LOGFILE (
-  echo Send this log for analysis:
-  echo   !LOGFILE!
-)
-set "EXITCODE=1"
-goto end
-
 :end
-echo.
-echo Full log path:
-if defined LOGFILE (echo   !LOGFILE!) else (echo   ^(none^))
 echo.
 if not "!EXITCODE!"=="0" (
   echo Install failed. Review the messages above and logs under:
   echo   %LOGROOT%
   echo     install-agent-*.log      ^(service install^)
   echo     install-client-*.log     ^(Install.cmd wizard^)
+  echo   Durable install state ^(if present^):
+  echo     %%ProgramData%%\Heimdall\update\install.lock
+  echo     %%ProgramData%%\Heimdall\update\install-state.json
+  echo     %%ProgramData%%\Heimdall\update\lkg\   ^(last-known-good agent^)
   echo.
-  pause
+  if /I not "%HEIMDALL_NOPAUSE%"=="1" pause
 ) else if /I not "%HEIMDALL_NOPAUSE%"=="1" (
   pause
 )
 exit /b !EXITCODE!
-
-:log
-set "_LVL=%~1"
-set "_MSG=%~2"
-echo [%DATE% %TIME%] [%_LVL%] %_MSG%
-if defined LOGFILE (
-  >>"!LOGFILE!" echo [%DATE% %TIME%] [%_LVL%] %_MSG%
-)
-exit /b 0

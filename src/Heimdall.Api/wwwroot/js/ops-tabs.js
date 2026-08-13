@@ -63,6 +63,9 @@
       setLoading(false);
       body.innerHTML = cached;
       runScripts(body);
+      if (window.HeimdallTable && typeof window.HeimdallTable.restoreScroll === "function") {
+        window.HeimdallTable.restoreScroll();
+      }
       return;
     }
 
@@ -89,6 +92,9 @@
         setLoading(false);
         body.innerHTML = html;
         runScripts(body);
+        if (window.HeimdallTable && typeof window.HeimdallTable.restoreScroll === "function") {
+          window.HeimdallTable.restoreScroll();
+        }
       })
       .catch(function (err) {
         if (err && err.name === "AbortError") return;

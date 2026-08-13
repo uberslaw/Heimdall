@@ -22,6 +22,7 @@
         <a class="btn btn-ghost btn-sm" href="#tuflow-runs">TUFLOW Runs</a>
         <a class="btn btn-ghost btn-sm" href="#historical-dashboard">Flood hub</a>
         <a class="btn btn-ghost btn-sm" href="#staff-access">Staff RDP</a>
+        <a class="btn btn-ghost btn-sm" href="#remote-workstations">Remote Workstations</a>
         <a class="btn btn-ghost btn-sm" href="#remote-access-groups">Remote Access Groups</a>
         <a class="btn btn-ghost btn-sm" href="#auth">Auth</a>
         <a class="btn btn-ghost btn-sm" href="#tracking-config">Tracking config</a>
@@ -35,6 +36,7 @@
         <a class="btn btn-ghost btn-sm" href="#machine-detail">Computer detail</a>
         <a class="btn btn-ghost btn-sm" href="#user-detail">User detail</a>
         <a class="btn btn-ghost btn-sm" href="#fleet-sims">Fleet Sims</a>
+        <a class="btn btn-ghost btn-sm" href="#site-usage">Site usage</a>
         <a class="btn btn-ghost btn-sm" href="#admin-preferences">Theme &amp; database mode</a>
     </div>
 </nav>
@@ -125,6 +127,7 @@
         <li><strong>Version</strong> — file/product/manual/path-derived value (no source subtitle).</li>
         <li><strong>Category</strong> / <strong>Subcategory</strong> — from CSV import or Edit/Save; shown when present (not always “—”).</li>
         <li><strong>Classification</strong> — in-row dropdown (Core Windows / SOE / Specialization). Click <strong>Set</strong> to apply that group (and current Category/Subcategory).</li>
+        <li><strong>Advertise RDP</strong> — checkbox (and batch Advertise on/off) lists the app on the public Remote Workstations pool. Specialization Set/Approve opts in; uncheck to clean the list (moving to SOE does not auto-clear).</li>
         <li><strong>Installs</strong> — machines that reported the process; hover for the host list.</li>
         <li><strong>Approve</strong> (gold) — commits a pending Group suggestion. <strong>Set</strong> uses the Classification dropdown instead of a modal.</li>
         <li><strong>Search</strong> — type a filter and press Search or Enter (not live-as-you-type).</li>
@@ -157,11 +160,14 @@
 
 <section id="remote-machines" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Online Status</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> RDP/RDS health — also under <a asp-page="/Fleet" asp-route-tab="online">Fleet → Online status</a>.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> Ping, RDP handshake, and RDS service from this API host — also under <a asp-page="/Fleet" asp-route-tab="online">Fleet → Online status</a>. Utilisation lives on Computers; live metrics on Live.</p>
     <ol class="small mb-0">
-        <li>Review per-machine RDP health, ping, and Terminal Services status (refreshed by the agent, plus on-demand from the API server).</li>
-        <li>Use <em>Connect</em> to download a small <code>.rdp</code> file for that hostname (opens with Windows Remote Desktop / mstsc). Browsers cannot run <code>mstsc /v:</code> directly.</li>
-        <li>Use <em>Restart RDS</em> to queue a remote restart command for the agent to pick up; progress shows inline.</li>
+        <li><strong>Online / Offline</strong> means the Heimdall agent last contacted the API within 5 minutes (<code>LastSeenUtc</code>) — not ICMP ping and not RDP. A machine can be Offline here while Ping succeeds and RDP accepts (agent stopped, wrong API URL/key, or ingest not reaching this DB).</li>
+        <li><strong>Ping</strong> uses ICMP from this API host (may be blocked by firewall). Click Ping to probe — results are not automatic.</li>
+        <li><strong>RDS service</strong> status is reported by the agent on each heartbeat.</li>
+        <li><strong>Restart RDS</strong> queues <code>RestartTermService</code> for the agent. A per-machine countdown estimates agent pickup (~config refresh interval, typically 300s). When the agent acknowledges the restart (or TermService reports Running after the expected window), the API automatically runs an RDP test and updates the row.</li>
+        <li><strong>RDP probe</strong> opens TCP 3389 from the API server and validates the RDP negotiation handshake (no WinRM required).</li>
+        <li><strong>Connect</strong> opens an <code>.rdp</code> to the agent-reported IP when known, otherwise the hostname.</li>
     </ol>
 </section>
 
@@ -255,6 +261,19 @@
     </ol>
 </section>
 
+<section id="remote-workstations" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Remote Workstations</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> public pool — same machines as Staff RDP, without a sign-in wall.</p>
+    <p class="fw-semibold small mb-1">One-click Connect — once per PC</p>
+    <ol class="small mb-2">
+        <li><strong>Configure</strong> — run the one-time helper (no Heimdall install).</li>
+        <li><strong>Connect</strong> — click Connect on a workstation.</li>
+        <li>When the browser asks to open an outside application, choose <strong>Always allow</strong>.</li>
+        <li>After that, Connect auto-launches Remote Desktop. Windows may warn on the Configure file the first time (More info → Run anyway). Arrow → <em>Download .rdp</em> if you only need a file.</li>
+    </ol>
+    <p class="small mb-0">Populate the list under <strong>Applications → Teams</strong>: tick <em>Public-facing</em> and assign machines. Arrow → <em>RDP Settings</em> opens the connection window (display / local resources), then Connect in that app. Search is software/publisher only (partials and wildcards <code>*</code>/<code>?</code>); advertise apps on <a href="#discovery">Discovery</a>, then admins pick which titles show on this page.</p>
+</section>
+
 <section id="remote-access-groups" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Remote Access Groups</h2>
     <p class="text-secondary small mb-2"><strong>Purpose:</strong> admin setup for <a asp-page="/StaffAccess" asp-fragment="staff-access">Staff Access</a> — who can see which machines, and which processes they can favourite.</p>
@@ -338,15 +357,39 @@
     </ol>
 </section>
 
+<section id="site-usage" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Site usage</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> Admin → <strong>Site usage</strong> — first-party log of who opened which page, how long they stayed, and which links they clicked (no third-party tracker).</p>
+    <ol class="small mb-0">
+        <li>Page views are recorded server-side; dwell time and link clicks come from a small script in the layout (beacon on unload).</li>
+        <li>Identity is best-effort: Windows/Negotiate name when present, else staff cookie email, else <code>anonymous:{session}</code>.</li>
+        <li>Toggle with <code>Heimdall:UsageAnalytics:Enabled</code>; prune with <code>RetentionDays</code> (default 90). Export CSV from the Usage page.</li>
+    </ol>
+</section>
+
+<section id="diagnostics" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Diagnostics</h2>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> Admin → <strong>Diagnostics</strong> — collect troubleshooting output when the API runs on a remote host (no Cursor machine required).</p>
+    <ol class="small mb-0">
+        <li><strong>Always-on API logs</strong> — <code>%ProgramData%\Heimdall\logs\api\heimdall-api-yyyyMMdd.log</code> (~14 days). First place to look if <code>HeimdallApi</code> will not start.</li>
+        <li><strong>Ops log</strong> — <code>%ProgramData%\Heimdall\logs\ops\ops-yyyyMMdd.log</code> records pack, deploy, deposit, restart, cleanup, database-mode switches.</li>
+        <li><strong>Install / pack script logs</strong> — same <code>%ProgramData%\Heimdall\logs\</code> tree (<code>install-api-*.log</code>, <code>pack-*.log</code>, Launch Control).</li>
+        <li><strong>Collect dump</strong> — Admin → Diagnostics → <strong>Collect diagnostics</strong> writes folder + zip under <code>C:\Temp\Heimdall.API\Logs\diagnostics-{stamp}\</code> (health, services, recent logs, redacted appsettings, Event Log excerpt, DB path/size only — not the DB file). API keys redacted to last 4 chars.</li>
+        <li><strong>Service down</strong> — open ProgramData logs + Application Event Log, or run <code>scripts\Collect-Diagnostics.cmd</code> on the API host (same Temp dump root).</li>
+    </ol>
+</section>
+
 <section id="client-version" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Client Version</h2>
     <p class="text-secondary small mb-2"><strong>Purpose:</strong> under <strong>Fleet → Client version</strong> — agent build vs. published version, online / in use / <strong>Active User</strong> (green = Active, red = Disconnected), pack readiness, and silent <strong>Deploy Client</strong>.</p>
     <ol class="small mb-0">
-        <li>On load the page checks source vs pack fingerprints; <strong>Deploy Client</strong> stays locked until the pack is Ready. <strong>Pack client</strong> always rebuilds and bumps version (N+1), even when already Ready (requires <code>Heimdall:RepoRoot</code> on the API host).</li>
+        <li>Published version is set automatically when a pack completes (Launch Control or Pack client). Simple integers (baseline <code>3</code> = first UpdateClient-capable). Legacy SemVer reports count as <code>1</code>. Agents below <code>3</code> cannot silent-update — use Launch Control push or Install.lnk once, then Deploy. Use <strong>Save</strong> only to override the baseline.</li>
+        <li>On load the page checks source vs pack fingerprints under <code>Heimdall:RepoRoot</code>\<code>dist\Heimdall-Client</code> (same folder Launch Control writes). <strong>Deploy Client</strong> stays locked until the pack is Ready. <strong>Pack client</strong> rebuilds and bumps N+1 only when source changed (or you confirm a forced bump). After Launch Control packs, use <strong>Refresh from disk</strong> (or wait for Setup’s auto-refresh) — do not Pack again just to unlock Deploy.</li>
         <li>Deploy queues a silent agent self-update (download + service restart only). Updates defer while any interactive session is Active — no logoff or reboot. Agents below version <code>3</code> do not support <code>UpdateClient</code> — Deploy marks them Failed with bootstrap guidance.</li>
+        <li><strong>Restart agent</strong> — queues <code>RestartAgent</code> (detached <code>sc stop/start HeimdallAgent</code>). <strong>Cleanup staging</strong> — deletes deposit folders only: <code>%ProgramData%\Heimdall\update\</code> (portal Deploy extract under <code>extracted-v{version}-{yyyyMMdd-HHmmss}</code>, plus legacy <code>extracted</code> / <code>extracted-{guid}</code>) and under <code>C:\Temp\</code> any folder named exactly <code>Heimdall-Client</code> or <code>Heimdall-Client-*</code>. Does not touch other Temp content, Program Files Agent, queue, secrets, or logs. Both are blocked while Deploy/UpdateClient is pending; use Cleanup then re-Deploy on hosts stuck with a locked extract folder.</li>
+        <li><strong>Deposit pack to Temp</strong> — queues <code>DepositClientPack</code>: the agent downloads the Ready pack from the API into <code>C:\Temp\Heimdall-Client-v{version}-{yyyyMMdd-HHmmss}</code> for manual <code>Install.lnk</code> (does not replace the running agent). Version comes from the Ready pack (<code>PendingClientDeposit</code> / <code>VERSION.json</code>). Pack must be Ready; skipped if Deploy/UpdateClient or Deposit already pending. Launch Control → <strong>Deposit pack via API</strong> uses the same queue (not SMB/robocopy).</li>
         <li><strong>Bootstrap once:</strong> first upgrade from pre-3 / legacy clients needs Heimdall Setup push or <code>Install.lnk</code> from the pack. After that, silent Deploy works for subsequent versions.</li>
-        <li>Legacy SemVer builds count as version <code>1</code>; current packs use simple integers (baseline <code>3</code> = first UpdateClient-capable). Old <code>/Clients</code> URLs redirect here.</li>
-        <li>Full agent architecture: see <a href="#client-agent">Client / agent</a> or repo doc <code>docs/CLIENT.md</code>.</li>
+        <li>Old <code>/Clients</code> URLs redirect here. Full agent architecture: see <a href="#client-agent">Client / agent</a> or repo doc <code>docs/CLIENT.md</code>.</li>
     </ol>
 </section>
 
@@ -356,14 +399,14 @@
     <ol class="small">
         <li><strong>Service</strong> — <code>HeimdallAgent</code> under <code>%ProgramFiles%\Heimdall\Agent\</code>; logs in <code>%ProgramData%\Heimdall\logs\</code>; offline ingest queue <code>queue.db</code>.</li>
         <li><strong>Ingest</strong> — every ~60s (configurable): sessions, allowlisted process runs, heartbeat, hardware. Auth: header <code>X-Heimdall-Key</code>.</li>
-        <li><strong>Config poll</strong> — every ~5 min: merged App lists + Tracking Config + pending commands (Restart RDS, inventory, TUFLOW start, disk scan, UpdateClient).</li>
+        <li><strong>Config poll</strong> — every ~5 min: merged App lists + Tracking Config + pending commands (Restart RDS, Restart agent, Cleanup staging, Deposit pack, inventory, TUFLOW start, disk scan, UpdateClient).</li>
         <li><strong>Fleet snapshots</strong> — every <strong>30s</strong> for every known machine: CPU/GPU/RAM/disk/network, TUFLOW Y/N, Active/Idle, top processes. Powers Fleet → Live, Computers util columns, and Flood analytics.</li>
         <li><strong>Staff live sampling</strong> — separate 10s loop, only while a Staff/drilldown viewer is active (not the same as fleet snapshots).</li>
         <li><strong>Portable install</strong> — pack once on a build PC (<code>dist\Heimdall-Client\</code>), run <code>Install.lnk</code> on each target (self-contained .NET — no SDK on clients).</li>
         <li><strong>TUFLOW</strong> — Flood-enrolled hosts only; agent includes <code>TuflowLauncher.exe</code>; polls queued starts every ~20s.</li>
     </ol>
     <p class="text-secondary small mb-0">
-        Troubleshooting: API key mismatch → 401; unreachable API → queue grows; no util data → wait for heartbeat + agent v3+. Run <code>scripts\Collect-Diagnostics.cmd</code> for support bundles.
+        Troubleshooting: API key mismatch → 401; unreachable API → queue grows; no util data → wait for heartbeat + agent v3+. Prefer Admin → Diagnostics → Collect, or run <code>scripts\Collect-Diagnostics.cmd</code> on the API host (dumps to <code>C:\Temp\Heimdall.API\Logs</code>). Always-on logs: <code>%ProgramData%\Heimdall\logs\api\</code>.
     </p>
 </section>
 

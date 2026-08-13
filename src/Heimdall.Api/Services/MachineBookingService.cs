@@ -10,21 +10,45 @@ public sealed class MachineBookingService(HeimdallDbContext db)
 
     public sealed record BookingResult(bool Ok, string Message, MachineBooking? Booking = null, bool ActiveSessionWarning = false);
 
+    public enum ConnectBlockReason
+    {
+        None = 0,
+        ActiveSession = 1,
+        BookedNow = 2
+    }
+
+    public sealed record PoolBookingRow(
+        int Id,
+        string BookedByEmail,
+        string? BookedByName,
+        DateTimeOffset StartUtc,
+        DateTimeOffset EndUtc,
+        string? Notes,
+        bool IsMine,
+        bool CoversNow);
+
     public sealed record PoolMachineRow(
         int MachineId,
         string Hostname,
         string DisplayName,
         string? FriendlyName,
         string? TeamName,
+        string? LastIp,
         bool IsOnline,
-        string? ActiveUser,
-        SessionState? ActiveUserState,
+        string? SessionUser,
+        SessionState? SessionState,
         bool HasActiveSession,
+        long DisconnectedSeconds,
+        DateTimeOffset? SessionStartedAtUtc,
+        DateTimeOffset? SessionLastObservedUtc,
         MachineBooking? CurrentBooking,
-        bool BookingIsMine);
+        bool BookingIsMine,
+        IReadOnlyList<PoolBookingRow> TodayBookings,
+        ConnectBlockReason ConnectBlocked,
+        string ConnectTarget);
 
     /// <summary>
-    /// Lean pool query: public-team machines (+ optional RAG hostname intersect), open sessions, active bookings.
+    /// Lean pool query: public-team machines (+ optional RAG hostname intersect), open sessions, today's bookings.
     /// No RDP probes.
     /// </summary>
     public async Task<IReadOnlyList<PoolMachineRow>> ListPoolAsync(
@@ -35,6 +59,11 @@ public sealed class MachineBookingService(HeimdallDbContext db)
     {
         var now = DateTimeOffset.UtcNow;
         var onlineCutoff = now.AddMinutes(-RemoteMachineService.OnlineWindow.TotalMinutes);
+        var localNow = DateTimeOffset.Now;
+        var todayStartLocal = new DateTimeOffset(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0, localNow.Offset);
+        var todayEndLocal = todayStartLocal.AddDays(1);
+        var todayStartUtc = todayStartLocal.ToUniversalTime();
+        var todayEndUtc = todayEndLocal.ToUniversalTime();
 
         var machinesQuery = db.Machines.AsNoTracking()
             .Where(m => m.TeamId != null && m.Team != null && m.Team.IsPublicFacing);
@@ -55,6 +84,7 @@ public sealed class MachineBookingService(HeimdallDbContext db)
                 m.Hostname,
                 m.FriendlyName,
                 m.LastSeenUtc,
+                m.LastIp,
                 TeamName = m.Team!.Name
             })
             .OrderBy(m => m.Hostname)
@@ -67,7 +97,16 @@ public sealed class MachineBookingService(HeimdallDbContext db)
 
         var openSessions = await db.Sessions.AsNoTracking()
             .Where(s => ids.Contains(s.MachineId) && s.State != SessionState.Ended)
-            .Select(s => new { s.MachineId, s.Username, s.State, s.LastObservedUtc, s.ActiveSeconds })
+            .Select(s => new
+            {
+                s.MachineId,
+                s.Username,
+                s.State,
+                s.LastObservedUtc,
+                s.ActiveSeconds,
+                s.DisconnectedSeconds,
+                s.StartedAtUtc
+            })
             .ToListAsync(ct);
 
         var sessionByMachine = openSessions
@@ -81,18 +120,18 @@ public sealed class MachineBookingService(HeimdallDbContext db)
                     .First());
 
         // SQLite cannot filter/ORDER BY DateTimeOffset reliably — load then filter/sort in memory.
-        var bookings = (await db.MachineBookings.AsNoTracking()
-                .Where(b => ids.Contains(b.MachineId))
-                .ToListAsync(ct))
-            .Where(b => b.StartUtc < now.AddDays(1) && b.EndUtc > now)
+        var allBookings = await db.MachineBookings.AsNoTracking()
+            .Where(b => ids.Contains(b.MachineId))
+            .ToListAsync(ct);
+
+        var todayBookings = allBookings
+            .Where(b => b.StartUtc < todayEndUtc && b.EndUtc > todayStartUtc)
             .OrderBy(b => b.StartUtc)
             .ToList();
 
-        var bookingByMachine = bookings
+        var todayByMachine = todayBookings
             .GroupBy(b => b.MachineId)
-            .ToDictionary(
-                g => g.Key,
-                g => g.OrderBy(b => b.StartUtc).First());
+            .ToDictionary(g => g.Key, g => g.OrderBy(b => b.StartUtc).ToList());
 
         var emailNorm = string.IsNullOrWhiteSpace(staffEmail)
             ? null
@@ -101,14 +140,50 @@ public sealed class MachineBookingService(HeimdallDbContext db)
         return machines.Select(m =>
         {
             sessionByMachine.TryGetValue(m.Id, out var sess);
-            bookingByMachine.TryGetValue(m.Id, out var booking);
+            todayByMachine.TryGetValue(m.Id, out var dayList);
+            dayList ??= [];
+
+            var coveringNow = dayList.FirstOrDefault(b => b.StartUtc <= now && b.EndUtc > now)
+                ?? allBookings.FirstOrDefault(b =>
+                    b.MachineId == m.Id && b.StartUtc <= now && b.EndUtc > now);
+
             var display = string.IsNullOrWhiteSpace(m.FriendlyName) ? m.Hostname : m.FriendlyName.Trim();
-            var mine = booking is not null
+            var mine = coveringNow is not null
                 && emailNorm is not null
                 && string.Equals(
-                    WindowsStaffIdentityService.NormalizeEmail(booking.BookedByEmail),
+                    WindowsStaffIdentityService.NormalizeEmail(coveringNow.BookedByEmail),
                     emailNorm,
                     StringComparison.OrdinalIgnoreCase);
+
+            var hasActive = sess is { State: SessionState.Active };
+            var bookedNow = coveringNow is not null;
+            var block = hasActive
+                ? ConnectBlockReason.ActiveSession
+                : bookedNow
+                    ? ConnectBlockReason.BookedNow
+                    : ConnectBlockReason.None;
+
+            var connectTarget = !string.IsNullOrWhiteSpace(m.LastIp)
+                ? m.LastIp.Trim()
+                : m.Hostname;
+
+            var poolBookings = dayList.Select(b =>
+            {
+                var isMine = emailNorm is not null
+                    && string.Equals(
+                        WindowsStaffIdentityService.NormalizeEmail(b.BookedByEmail),
+                        emailNorm,
+                        StringComparison.OrdinalIgnoreCase);
+                return new PoolBookingRow(
+                    b.Id,
+                    b.BookedByEmail,
+                    b.BookedByName,
+                    b.StartUtc,
+                    b.EndUtc,
+                    b.Notes,
+                    isMine,
+                    b.StartUtc <= now && b.EndUtc > now);
+            }).ToList();
 
             return new PoolMachineRow(
                 m.Id,
@@ -116,13 +191,48 @@ public sealed class MachineBookingService(HeimdallDbContext db)
                 display,
                 m.FriendlyName,
                 m.TeamName,
+                m.LastIp,
                 m.LastSeenUtc >= onlineCutoff,
                 sess?.Username,
                 sess?.State,
-                sess is { State: SessionState.Active },
-                booking,
-                mine);
+                hasActive,
+                sess?.DisconnectedSeconds ?? 0,
+                sess?.StartedAtUtc,
+                sess?.LastObservedUtc,
+                coveringNow,
+                mine,
+                poolBookings,
+                block,
+                connectTarget);
         }).ToList();
+    }
+
+    /// <summary>
+    /// Returns connect target (LastIp or Hostname) only when the machine is in the public-facing pool.
+    /// </summary>
+    public async Task<(bool Ok, string? Target, string? Error)> TryResolvePublicConnectTargetAsync(
+        string? hostnameOrIp,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(hostnameOrIp))
+            return (false, null, "Missing host.");
+
+        var key = hostnameOrIp.Trim();
+        var machine = await db.Machines.AsNoTracking()
+            .Include(m => m.Team)
+            .FirstOrDefaultAsync(m =>
+                m.Hostname == key
+                || (m.LastIp != null && m.LastIp == key), ct);
+
+        if (machine is null)
+            return (false, null, "Machine not in catalogue.");
+        if (machine.Team is null || !machine.Team.IsPublicFacing)
+            return (false, null, "Machine is not in the public remote workstation pool.");
+
+        var target = !string.IsNullOrWhiteSpace(machine.LastIp)
+            ? machine.LastIp.Trim()
+            : machine.Hostname;
+        return (true, target, null);
     }
 
     public async Task<BookingResult> TryCreateAsync(
@@ -131,7 +241,8 @@ public sealed class MachineBookingService(HeimdallDbContext db)
         DateTimeOffset startUtc,
         DateTimeOffset endUtc,
         string? notes,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? bookedByName = null)
     {
         var email = WindowsStaffIdentityService.NormalizeEmail(bookedByEmail);
         if (email.Length == 0 || !email.Contains('@'))
@@ -146,13 +257,17 @@ public sealed class MachineBookingService(HeimdallDbContext db)
         if (endUtc <= DateTimeOffset.UtcNow)
             return new BookingResult(false, "Booking end must be in the future.");
 
+        // Allow starts slightly in the past (clock skew) but not more than 5 minutes.
+        if (startUtc < DateTimeOffset.UtcNow.AddMinutes(-5))
+            return new BookingResult(false, "Booking start cannot be in the past.");
+
         var machine = await db.Machines.AsNoTracking()
             .Include(m => m.Team)
             .FirstOrDefaultAsync(m => m.Id == machineId, ct);
         if (machine is null)
             return new BookingResult(false, "Machine not found.");
         if (machine.Team is null || !machine.Team.IsPublicFacing)
-            return new BookingResult(false, "That machine is not in the Staff RDP pool (team is not public-facing).");
+            return new BookingResult(false, "That machine is not in the public remote workstation pool.");
 
         var machineBookings = await db.MachineBookings.AsNoTracking()
             .Where(b => b.MachineId == machineId)
@@ -180,6 +295,7 @@ public sealed class MachineBookingService(HeimdallDbContext db)
         {
             MachineId = machineId,
             BookedByEmail = email,
+            BookedByName = string.IsNullOrWhiteSpace(bookedByName) ? null : bookedByName.Trim(),
             StartUtc = startUtc,
             EndUtc = endUtc,
             CreatedUtc = DateTimeOffset.UtcNow,
@@ -189,8 +305,8 @@ public sealed class MachineBookingService(HeimdallDbContext db)
         await db.SaveChangesAsync(ct);
 
         var msg = hasActive
-            ? $"Booked {machine.Hostname} until {endUtc.ToLocalTime():g}. Warning: an Active session user is present — Connect is still allowed."
-            : $"Booked {machine.Hostname} until {endUtc.ToLocalTime():g}.";
+            ? $"Booked {machine.Hostname} {startUtc.ToLocalTime():g}–{endUtc.ToLocalTime():g}. Warning: an Active session user is present."
+            : $"Booked {machine.Hostname} {startUtc.ToLocalTime():g}–{endUtc.ToLocalTime():g}.";
 
         return new BookingResult(true, msg, booking, hasActive);
     }

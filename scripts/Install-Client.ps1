@@ -42,12 +42,15 @@ $script:Busy = $false
 $script:InstallSucceeded = $false
 
 $script:WizardData = @{
-    ApiUrl       = ""
-    ApiKey       = "heimdall-poc-key"
-    MachineGroup = "POC"
-    PrereqOk     = $false
-    TestOk       = $false
-    VerifyOk     = $false
+    ApiUrl              = ""
+    ApiKey              = "heimdall-poc-key"
+    MachineGroup        = "POC"
+    PrereqOk            = $false
+    TestOk              = $false
+    VerifyOk            = $false
+    VersionProbe        = $null
+    VersionSummary      = ""
+    EnableHealWatchdog  = $false
 }
 
 $script:StepLabels = @(
@@ -395,10 +398,58 @@ function Wait-ProcessWithUiPump {
 # Step actions
 # ---------------------------------------------------------------------------
 
+function Write-ClientVersionProbeToLog {
+    param($Probe)
+    if (-not $Probe) { return }
+    Write-InstallLog "---------- Client version compare ----------" -Level STEP
+    Write-InstallLog "Installed: $(if ($Probe.Installed) { "v$($Probe.ProductVersion)" } else { "(not installed)" })" -Level $(if ($Probe.Installed) { "OK" } else { "WARN" })
+    if ($Probe.BuildDateTime) {
+        Write-InstallLog "Installed build/file time: $($Probe.BuildDateTime)" -Level INFO
+    }
+    Write-InstallLog "This pack will install: v$(if ($Probe.PackVersion) { $Probe.PackVersion } else { '?' })" -Level OK
+    if ($Probe.PackBuildDateTime) {
+        Write-InstallLog "Pack payload build/file time: $($Probe.PackBuildDateTime)" -Level INFO
+    }
+    Write-InstallLog "Compare: $($Probe.CompareSummary)" -Level STEP
+    foreach ($c in $Probe.Checks) {
+        $detail = if ($c.Detail) { " | $($c.Detail)" } else { "" }
+        $level = switch -Regex ($c.Result) {
+            '^(OK|PRESENT|Running)$' { "OK" }
+            '^(MISSING|ABSENT|NOT_INSTALLED)$' { "WARN" }
+            '^(ERROR|WARN)' { "WARN" }
+            default { "INFO" }
+        }
+        Write-InstallLog "Check [$($c.Result)] $($c.What): $($c.Path)$detail" -Level $level
+    }
+    foreach ($n in @($Probe.MilestoneNotes)) {
+        Write-InstallLog "Milestone: $n" -Level INFO
+    }
+    foreach ($n in @($Probe.Corroboration)) {
+        Write-InstallLog "Corroborate: $n" -Level INFO
+    }
+    Write-InstallLog "-------------------------------------------" -Level STEP
+}
+
+function Invoke-ClientVersionProbe {
+    $probe = Get-HeimdallClientVersionProbe -AgentInstallDir $script:AgentInstallDir -PackScriptDir $script:ScriptDir
+    $script:WizardData.VersionProbe = $probe
+    $script:WizardData.VersionSummary = Format-HeimdallClientVersionProbeSummary -Probe $probe -IncludeAllChecks
+    Write-ClientVersionProbeToLog -Probe $probe
+    return $probe
+}
+
 function Invoke-StepPrerequisites {
     Write-InstallLog "Checking prerequisites..." -Level STEP
     Set-UiStatus "Checking prerequisites..."
     $issues = New-Object System.Collections.Generic.List[string]
+
+    # Always show installed vs pack version on the first screen / log.
+    try {
+        Invoke-ClientVersionProbe | Out-Null
+    }
+    catch {
+        Write-InstallLog "Version probe failed: $($_.Exception.Message)" -Level WARN
+    }
 
     if (Test-IsAdministrator) {
         Write-InstallLog "Administrator: yes" -Level OK
@@ -549,6 +600,7 @@ function Invoke-StepInstall {
     Write-InstallLog "Running elevated installer..." -Level INFO
     Write-InstallLog "Installer: $installer" -Level INFO
     Write-InstallLog "Payload: $payload" -Level INFO
+    Write-InstallLog "EnableHealWatchdog=$($script:WizardData.EnableHealWatchdog)" -Level INFO
     $exit = Invoke-HeimdallElevatedCollectorInstall `
         -InstallerCmdPath $installer `
         -ApiUrl (Normalize-ApiUrl $script:WizardData.ApiUrl) `
@@ -556,6 +608,7 @@ function Invoke-StepInstall {
         -MachineGroup $script:WizardData.MachineGroup `
         -PayloadPath $payload `
         -AlreadyElevated:(Test-IsAdministrator) `
+        -EnableHealWatchdog:([bool]$script:WizardData.EnableHealWatchdog) `
         -PumpUi { [System.Windows.Forms.Application]::DoEvents() } `
         -Log { param($m, $l) Write-InstallLog $m -Level $l }
     Write-InstallLog "Installer exit code: $exit" -Level $(if ($exit -eq 0) { "OK" } else { "ERROR" })
@@ -638,10 +691,45 @@ function Invoke-StepVerify {
         Write-InstallLog "API health after install: FAILED ($($health.Error))" -Level WARN
     }
 
+    $healRegistered = $false
+    try {
+        $null = Get-ScheduledTask -TaskName "HeimdallAgentHeal" -ErrorAction Stop
+        $healRegistered = $true
+    }
+    catch { }
+    if ($script:WizardData.EnableHealWatchdog) {
+        if ($healRegistered) {
+            Write-InstallLog "HeimdallAgentHeal: registered (add-on selected)" -Level OK
+        }
+        else {
+            Write-InstallLog "HeimdallAgentHeal: NOT registered (add-on was selected — check install-agent log)" -Level WARN
+        }
+    }
+    elseif ($healRegistered) {
+        Write-InstallLog "HeimdallAgentHeal: still registered (preserved; add-on was not selected this run)" -Level INFO
+    }
+    else {
+        Write-InstallLog "HeimdallAgentHeal: not registered (add-on off)" -Level INFO
+    }
+
     $verifyOk = $svcOk -and $exeOk -and $settingsOk -and $urlMatchOk
     $script:WizardData.VerifyOk = $verifyOk
 
     if ($verifyOk) {
+        $rdpLaunch = Join-Path $script:ScriptDir "Heimdall-LaunchRdp.vbs"
+        if (Test-Path -LiteralPath $rdpLaunch) {
+            try {
+                $cscript = Join-Path $env:SystemRoot "System32\cscript.exe"
+                & $cscript //nologo $rdpLaunch /register
+                if ($LASTEXITCODE -ne 0) {
+                    throw "exit $LASTEXITCODE"
+                }
+                Write-InstallLog "Registered heimdall-rdp protocol (wscript, one-click Connect)." -Level OK
+            }
+            catch {
+                Write-InstallLog "heimdall-rdp protocol registration skipped: $($_.Exception.Message)" -Level WARN
+            }
+        }
         Save-LastInstallSettings -ApiUrl $script:WizardData.ApiUrl -MachineGroup $script:WizardData.MachineGroup
         Set-StepMarker -Index 4 -State "OK"
         Set-UiStatus "Verification passed"
@@ -682,17 +770,70 @@ function Show-StepContent {
 
     switch ($StepIndex) {
         0 {
-            $title.Text = "Step 1: Prerequisites"
-            $body.Text = @"
-Checks run automatically when you open this step.
+            $title.Text = "Step 1: Prerequisites + client version"
+            $body.Height = 36
+            $body.Text = "Checks run when this step opens. Version compare is below; full paths also go to the progress log."
 
-Required:
-- Run as Administrator (Install.cmd elevates for you)
-- payload\Heimdall.Agent.exe present in this folder
-- Install-WorkstationCollector.cmd present
+            if (-not $script:WizardData.VersionSummary) {
+                try { Invoke-ClientVersionProbe | Out-Null } catch { }
+            }
 
-See the progress log below for pass/fail details.
-"@
+            $verBox = New-Object System.Windows.Forms.RichTextBox
+            $verBox.Left = 8
+            $verBox.Top = 80
+            $verBox.Width = 520
+            $verBox.Height = 168
+            $verBox.ReadOnly = $true
+            $verBox.DetectUrls = $false
+            $verBox.Font = New-Object System.Drawing.Font("Consolas", 8.5)
+            $verBox.BackColor = [System.Drawing.Color]::WhiteSmoke
+            $verBox.BorderStyle = "FixedSingle"
+            $verBox.ScrollBars = "Vertical"
+            $summary = if ($script:WizardData.VersionSummary) {
+                $script:WizardData.VersionSummary
+            } else {
+                "Version probe not available yet — see progress log."
+            }
+            # Keep the panel readable: lead with compare; checks are in the log in full.
+            $probe = $script:WizardData.VersionProbe
+            if ($probe) {
+                $short = New-Object System.Collections.Generic.List[string]
+                $short.Add("Installed vs this pack") | Out-Null
+                $short.Add("----------------------") | Out-Null
+                if ($probe.Installed) {
+                    $built = if ($probe.BuildDateTime) { [string]$probe.BuildDateTime } else { "?" }
+                    $short.Add("Installed now:  v$($probe.ProductVersion)  (build/file $built)") | Out-Null
+                }
+                else {
+                    $short.Add("Installed now:  (none)") | Out-Null
+                    $short.Add("Checked exe:    $($probe.ExePath)") | Out-Null
+                }
+                $packBuilt = if ($probe.PackBuildDateTime) { [string]$probe.PackBuildDateTime } else { "?" }
+                $short.Add("This pack:      v$(if ($probe.PackVersion) { $probe.PackVersion } else { '?' })  (payload $packBuilt)") | Out-Null
+                $short.Add("Compare:        $($probe.CompareSummary)") | Out-Null
+                $short.Add("") | Out-Null
+                if ($probe.Corroboration -and $probe.Corroboration.Count -gt 0) {
+                    $short.Add("Capability checks:") | Out-Null
+                    foreach ($c in $probe.Corroboration) { $short.Add("  - $c") | Out-Null }
+                    $short.Add("") | Out-Null
+                }
+                if ($null -ne $probe.SimpleVersion) {
+                    $short.Add("Milestone notes for detected v$($probe.SimpleVersion):") | Out-Null
+                    foreach ($n in @($probe.MilestoneNotes)) { $short.Add("  - $n") | Out-Null }
+                    $short.Add("") | Out-Null
+                }
+                $short.Add("Paths checked (see progress log for full detail):") | Out-Null
+                foreach ($c in @($probe.Checks | Select-Object -First 8)) {
+                    $short.Add("  [$($c.Result)] $($c.What)") | Out-Null
+                    $short.Add("      $($c.Path)") | Out-Null
+                }
+                if ($probe.Checks.Count -gt 8) {
+                    $short.Add("  ... +$($probe.Checks.Count - 8) more in log") | Out-Null
+                }
+                $summary = ($short -join "`r`n")
+            }
+            $verBox.Text = $summary
+            $script:UiContent.Controls.Add($verBox)
         }
         1 {
             $title.Text = "Step 2: Connection settings"
@@ -767,6 +908,7 @@ Click Next to run tests. Results appear in the log below.
         }
         3 {
             $title.Text = "Step 4: Install"
+            $body.Height = 72
             $body.Text = @"
 Installs the HeimdallAgent Windows service:
 
@@ -774,8 +916,30 @@ Installs the HeimdallAgent Windows service:
 - Writes appsettings.json (ApiBaseUrl, ApiKey, MachineGroup)
 - Creates and starts HeimdallAgent service
 
-Click Install to begin. An elevated console may flash briefly.
+Optional add-on below. Click Install to begin (UAC may prompt).
 "@
+
+            $chkHeal = New-Object System.Windows.Forms.CheckBox
+            $chkHeal.Left = 8
+            $chkHeal.Top = 120
+            $chkHeal.Width = 520
+            $chkHeal.Height = 22
+            $chkHeal.Text = "Self-heal watchdog (HeimdallAgentHeal)"
+            $chkHeal.Checked = [bool]$script:WizardData.EnableHealWatchdog
+            $script:UiContent.Controls.Add($chkHeal)
+
+            $healHelp = New-Object System.Windows.Forms.Label
+            $healHelp.Left = 28
+            $healHelp.Top = 144
+            $healHelp.Width = 500
+            $healHelp.Height = 72
+            $healHelp.ForeColor = [System.Drawing.Color]::DimGray
+            $healHelp.Text = "Optional. Runs as SYSTEM every 15 minutes; restores last-known-good if an install crashes. Only replaces the agent when CPU and GPU are both under 20% (or immediately if the service is missing). Default off — leaving this unchecked does not remove an existing heal task."
+            $script:UiContent.Controls.Add($healHelp)
+
+            $script:UiContent.Tag = @{
+                EnableHealWatchdog = $chkHeal
+            }
         }
         4 {
             $title.Text = "Step 5: Verify"
@@ -792,10 +956,18 @@ Runs automatically when you reach this step.
         5 {
             $title.Text = "Step 6: Done"
             if ($script:InstallSucceeded) {
+                $healNote = if ($script:WizardData.EnableHealWatchdog) {
+                    "Self-heal watchdog: requested at install (task HeimdallAgentHeal if registration succeeded)."
+                }
+                else {
+                    "Self-heal watchdog: not selected (existing task left alone if already present)."
+                }
                 $body.Text = @"
 Install complete.
 
 Hostname $env:COMPUTERNAME should appear on the dashboard Machines page within about 1-2 minutes after the first heartbeat.
+
+$healNote
 
 Logs:
 $($script:LogRoot)
@@ -823,7 +995,18 @@ function Read-ConnectionFieldsFromUi {
     if ($tag.ApiUrl) { $script:WizardData.ApiUrl = Normalize-ApiUrl $tag.ApiUrl.Text }
     if ($tag.ApiKey) { $script:WizardData.ApiKey = $tag.ApiKey.Text.Trim() }
     if ($tag.MachineGroup) { $script:WizardData.MachineGroup = $tag.MachineGroup.Text.Trim() }
+    if ($tag.EnableHealWatchdog) {
+        $script:WizardData.EnableHealWatchdog = [bool]$tag.EnableHealWatchdog.Checked
+    }
     return $true
+}
+
+function Read-InstallOptionsFromUi {
+    $tag = $script:UiContent.Tag
+    if (-not $tag) { return }
+    if ($tag.EnableHealWatchdog) {
+        $script:WizardData.EnableHealWatchdog = [bool]$tag.EnableHealWatchdog.Checked
+    }
 }
 
 function Update-NextButtonLabel {
@@ -894,6 +1077,8 @@ function Invoke-NextStep {
             }
         }
         3 {
+            Read-InstallOptionsFromUi
+            Write-InstallLog "Install options: EnableHealWatchdog=$($script:WizardData.EnableHealWatchdog)" -Level INFO
             Set-WizardBusy -Busy $true
             try {
                 $ok = Invoke-StepInstall
@@ -1084,6 +1269,10 @@ function Show-InstallWizard {
         }
         finally {
             Set-WizardBusy -Busy $false
+        }
+        # Refresh step panel so installed-vs-pack version box fills after the probe.
+        if ($script:CurrentStep -eq 0) {
+            Show-StepContent -StepIndex 0
         }
     })
 

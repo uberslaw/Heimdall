@@ -238,25 +238,67 @@ public sealed class ClientPackReadinessService
 
         return WithLastPack(new ClientPackReadiness(
             ClientPackStatus.Ready,
-            "Ready — select machines and Deploy. Pack client always rebuilds and bumps version (N+1).",
+            "Ready — select machines and Deploy. Pack client rebuilds only when source changed (or you force a bump).",
             repoRoot, packFolder, liveFp, packFp, productVersion, zipSha,
             canPack, true, GetApiInstallNote(), now));
     }
 
-    public (bool Started, string Message) TryStartPack()
+    /// <summary>
+    /// Drop cached agent zip and re-read pack folder / fingerprints from disk.
+    /// Call after Launch Control (or any external) pack so Deploy unlocks without a redundant N+1 rebuild.
+    /// </summary>
+    public ClientPackReadiness RefreshFromDisk()
     {
+        InvalidateZipCache();
+        _logger.LogInformation("Client pack zip cache invalidated — re-reading {PackFolder}", ResolvePackFolder());
+        var status = GetStatus();
+        OpsFileLog.Write(
+            "PackRefreshFromDisk",
+            $"status={status.Status}; deployUnlocked={status.DeployUnlocked}; version={status.PackProductVersion}");
+        return status;
+    }
+
+    /// <param name="force">
+    /// When false and the on-disk pack already matches live source, skip rebuild (no version bump).
+    /// When true, always run Pack-WorkstationCollector (N+1) even if Ready.
+    /// </param>
+    public (bool Started, string Message, string Outcome) TryStartPack(bool force = false)
+    {
+        // Outside pack lock: cheap Ready check so Launch Control packs are not wasted.
+        if (!force)
+        {
+            var current = GetStatus();
+            if (current.Status == ClientPackStatus.Ready)
+            {
+                InvalidateZipCache();
+                try
+                {
+                    EnsureZip(current.PackFolder, current.LiveSourceFingerprint ?? current.PackSourceFingerprint);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Zip refresh failed for already-ready pack");
+                }
+
+                var ver = current.PackProductVersion ?? "?";
+                return (false,
+                    $"Pack on disk already matches source (v{ver}) at {current.PackFolder}. Deploy unlocked — no rebuild. Confirm Pack again to force an N+1 bump.",
+                    "already-ready");
+            }
+        }
+
         lock (_packLock)
         {
             if (IsPackRunningUnlocked())
-                return (false, "Pack already in progress.");
+                return (false, "Pack already in progress.", "rejected");
 
             var repoRoot = ResolveRepoRoot();
             if (repoRoot is null)
-                return (false, "Heimdall:RepoRoot is not set or scripts\\Pack-WorkstationCollector.cmd was not found.");
+                return (false, "Heimdall:RepoRoot is not set or scripts\\Pack-WorkstationCollector.cmd was not found.", "rejected");
 
             var cmd = Path.Combine(repoRoot, "scripts", "Pack-WorkstationCollector.cmd");
             if (!File.Exists(cmd))
-                return (false, "Pack script not found: " + cmd);
+                return (false, "Pack script not found: " + cmd, "rejected");
 
             var psi = new ProcessStartInfo
             {
@@ -299,7 +341,7 @@ public sealed class ClientPackReadinessService
 
                 _packProcess = Process.Start(psi);
                 if (_packProcess is null)
-                    return (false, "Failed to start pack process.");
+                    return (false, "Failed to start pack process.", "rejected");
 
                 _packStartedUtc = DateTimeOffset.UtcNow;
                 _packWatchActive = true;
@@ -312,13 +354,15 @@ public sealed class ClientPackReadinessService
 
                 _ = Task.Run(() => WatchPackProcessAsync(proc, repoRoot, logPath, startedUtc));
 
-                return (true, "Pack started — full rebuild + version bump.");
+                OpsFileLog.Write("PackClient", $"started=true; force={force}; log={logPath}");
+                return (true, "Pack started — full rebuild + version bump.", "started");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed starting pack");
                 ClearPackProcessUnlocked();
-                return (false, ex.Message);
+                OpsFileLog.Write("PackClient", $"started=false; error={ex.Message}");
+                return (false, ex.Message, "rejected");
             }
         }
     }
@@ -359,6 +403,7 @@ public sealed class ClientPackReadinessService
         }
 
         _logger.LogWarning("Client pack cancelled by user");
+        OpsFileLog.Write("PackCancel", "cancelled=true");
         return (true, "Pack cancelled.");
     }
 

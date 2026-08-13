@@ -1,5 +1,6 @@
 using Heimdall.Api.Data;
 using Heimdall.Api.Services;
+using Heimdall.Shared;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
@@ -38,6 +39,7 @@ public class AppsModel(HeimdallDbContext db) : PageModel
                 .Select(r => new ProcessRun
                 {
                     ProcessName = r.ProcessName,
+                    ExecutablePath = r.ExecutablePath,
                     MachineId = r.MachineId,
                     Username = r.Username,
                     StartedAtUtc = r.StartedAtUtc,
@@ -71,21 +73,62 @@ public class AppsModel(HeimdallDbContext db) : PageModel
                 displayNames[e.ProcessName] = e.DisplayName!;
         }
 
+        // Prefer catalog paths when a run has no ExecutablePath so Program Files siblings still roll up.
+        var catalogPathByName = (await db.ProcessCatalogEntries.AsNoTracking()
+                .Where(c => c.ExecutablePath != null && c.ExecutablePath != "")
+                .Select(c => new { c.ProcessName, c.ExecutablePath, c.LastSeenUtc })
+                .ToListAsync())
+            .GroupBy(c => c.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(x => x.LastSeenUtc).First().ExecutablePath!,
+                StringComparer.OrdinalIgnoreCase);
+
         Apps = runs
-            .GroupBy(r => r.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(r =>
+            {
+                var path = !string.IsNullOrWhiteSpace(r.ExecutablePath)
+                    ? r.ExecutablePath
+                    : catalogPathByName.GetValueOrDefault(r.ProcessName);
+                var program = ProgramInstallRoot.TryExtract(path);
+                return program?.Key ?? ("proc:" + r.ProcessName.ToLowerInvariant());
+            }, StringComparer.OrdinalIgnoreCase)
             .Select(g =>
             {
                 var groupRuns = g.ToList();
                 var seconds = ProcessRunMetrics.UnionDurationSeconds(groupRuns, fromUtc, toUtc);
-                var processName = g.Key;
+                var processNames = groupRuns
+                    .Select(x => x.ProcessName)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                // Detail link: process with the most runs in this program group.
+                var primaryProcess = groupRuns
+                    .GroupBy(x => x.ProcessName, StringComparer.OrdinalIgnoreCase)
+                    .OrderByDescending(x => x.Count())
+                    .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+                    .First().Key;
+
+                var samplePath = groupRuns
+                    .Select(x => x.ExecutablePath)
+                    .FirstOrDefault(p => !string.IsNullOrWhiteSpace(p))
+                    ?? catalogPathByName.GetValueOrDefault(primaryProcess);
+                var program = ProgramInstallRoot.TryExtract(samplePath);
+                var isProgram = program is not null && processNames.Count >= 1 && g.Key.StartsWith("pf:", StringComparison.Ordinal);
+                var displayName = isProgram
+                    ? program!.DisplayName
+                    : displayNames.GetValueOrDefault(primaryProcess, primaryProcess);
+
                 var machines = groupRuns
                     .Select(x => machineHosts.GetValueOrDefault(x.MachineId))
                     .Where(h => !string.IsNullOrWhiteSpace(h))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Count();
                 return new AppRow(
-                    processName,
-                    displayNames.GetValueOrDefault(processName, processName),
+                    primaryProcess,
+                    displayName,
+                    processNames,
+                    isProgram,
                     groupRuns.Select(x => x.Username).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
                     machines,
                     ProcessRunMetrics.AvgConcurrentProcesses(groupRuns, fromUtc, toUtc),
@@ -101,6 +144,8 @@ public class AppsModel(HeimdallDbContext db) : PageModel
     public record AppRow(
         string ProcessName,
         string DisplayName,
+        IReadOnlyList<string> MemberProcessNames,
+        bool IsProgramGroup,
         int UniqueUsers,
         int UniqueMachines,
         double AvgConcurrentProcesses,

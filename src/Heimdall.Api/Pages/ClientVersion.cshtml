@@ -12,9 +12,6 @@
 {
     <h1 class="hd-title mb-1">Client Version</h1>
 }
-<p class="hd-sub">
-    Agent build vs published pack — online and in-use matter for silent deploy.
-</p>
 
 <partial name="_Toasts" />
 
@@ -46,13 +43,9 @@
             <input type="text" class="form-control form-control-sm" id="NewPublishedVersion" name="NewPublishedVersion"
                    placeholder="e.g. 3" style="width:120px" autocomplete="off" inputmode="numeric" />
         </div>
-        <button type="submit" class="hd-btn hd-btn-gold hd-btn-sm">Save</button>
+        <button type="submit" class="hd-btn hd-btn-gold hd-btn-sm"
+                title="Override the published client version baseline used for Up to date / Out of date. Packs usually set this automatically.">Save</button>
     </form>
-    <p class="text-secondary small mt-2 mb-0">
-        Set automatically when a pack completes (Launch Control or Pack client below). Simple integers
-        (baseline <code>3</code> = first UpdateClient-capable build). Legacy SemVer reports count as <code>1</code>.
-        Agents below <code>3</code> cannot silent-update — use Launch Control push or Install.lnk once, then Deploy.
-    </p>
 </div>
 
 <div class="hd-panel mb-4" id="pack-readiness-panel">
@@ -66,9 +59,14 @@
             <pre id="pack-log-tail" class="small mt-2 mb-0 p-2" style="display:none;max-height:160px;overflow:auto;background:rgba(0,0,0,.04);white-space:pre-wrap"></pre>
         </div>
         <div class="d-flex flex-wrap gap-2">
-            <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-pack-client" disabled title="Always full rebuild + version bump (N+1), even when Ready">Pack client</button>
-            <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-cancel-pack" style="display:none" title="Stop the in-flight pack">Cancel</button>
-            <button type="button" class="hd-btn hd-btn-gold hd-btn-sm" id="btn-deploy-client" disabled title="Waiting for pack readiness check">Deploy Client</button>
+            <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-pack-client" disabled
+                    title="Rebuild the client pack under dist\Heimdall-Client. Skips bump if already Ready; confirm to force N+1.">Pack client</button>
+            <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-refresh-pack" disabled
+                    title="Re-read dist\Heimdall-Client from disk (use after Launch Control packs) without rebuilding.">Refresh from disk</button>
+            <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-cancel-pack" style="display:none"
+                    title="Stop the in-flight pack job on this API host.">Cancel</button>
+            <button type="button" class="hd-btn hd-btn-gold hd-btn-sm" id="btn-deploy-client" disabled
+                    title="Waiting for pack readiness check">Deploy Client</button>
         </div>
     </div>
 </div>
@@ -92,7 +90,7 @@
     </div>
 </div>
 
-<form method="post" asp-page-handler="Deploy" id="deploy-form">
+<form method="post" asp-page="/ClientVersion" asp-page-handler="Deploy" id="deploy-form">
     @Html.AntiForgeryToken()
     <div class="hd-panel">
         <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
@@ -100,7 +98,17 @@
                 <input type="checkbox" class="form-check-input" id="select-all-hosts" /> Select all
             </label>
             <span class="text-secondary small" id="selected-count">0 selected</span>
-            <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-select-outdated">Select out of date</button>
+            <button type="button" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-select-outdated"
+                    title="Check every host that is out of date or missing a version (clears other checks first).">Select out of date</button>
+            <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-restart-agent"
+                    formaction="/ClientVersion?handler=RestartAgent"
+                    title="Restart HeimdallAgent on selected hosts (blocked if Deploy/UpdateClient is pending).">Restart agent</button>
+            <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-cleanup-staging"
+                    formaction="/ClientVersion?handler=CleanupStaging"
+                    title="Delete %ProgramData%\Heimdall\update\ and C:\Temp\Heimdall-Client* staging folders on selected hosts (not Program Files).">Cleanup staging</button>
+            <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-deposit-pack"
+                    formaction="/ClientVersion?handler=DepositClientPack"
+                    title="Queue selected agents to download the Ready pack to C:\Temp\Heimdall-Client-v{version}-{timestamp} for manual Install.lnk (not silent Deploy).">Deposit pack to Temp</button>
         </div>
         <table class="hd-table hd-sortable">
             <thead>
@@ -113,7 +121,7 @@
                     <th data-sort="text">Active User</th>
                     <th data-sort="num">Client version</th>
                     <th data-sort="num">Behind</th>
-                    <th data-sort="text">Deploy</th>
+                    <th data-sort="text">Progress</th>
                     <th data-sort="date">Last contact</th>
                 </tr>
             </thead>
@@ -209,6 +217,7 @@
     const deployHint = document.getElementById('pack-deploy-hint');
     const apiNote = document.getElementById('pack-api-note');
     const btnPack = document.getElementById('btn-pack-client');
+    const btnRefreshPack = document.getElementById('btn-refresh-pack');
     const btnCancel = document.getElementById('btn-cancel-pack');
     const btnDeploy = document.getElementById('btn-deploy-client');
     const selectAll = document.getElementById('select-all-hosts');
@@ -225,6 +234,27 @@
         selectedCount.textContent = n + ' selected';
         const canDeploy = readinessDone && deployUnlocked && n > 0;
         btnDeploy.disabled = !canDeploy;
+        const btnRestart = document.getElementById('btn-restart-agent');
+        const btnCleanup = document.getElementById('btn-cleanup-staging');
+        const btnDeposit = document.getElementById('btn-deposit-pack');
+        if (btnRestart) {
+            btnRestart.disabled = n === 0;
+            btnRestart.title = n === 0
+                ? 'Select at least one machine to restart HeimdallAgent.'
+                : 'Restart HeimdallAgent on ' + n + ' selected host(s) (blocked if Deploy/UpdateClient is pending).';
+        }
+        if (btnCleanup) {
+            btnCleanup.disabled = n === 0;
+            btnCleanup.title = n === 0
+                ? 'Select at least one machine to clean staging folders.'
+                : 'Delete update/ and C:\\Temp\\Heimdall-Client* staging on ' + n + ' selected host(s).';
+        }
+        if (btnDeposit) {
+            btnDeposit.disabled = n === 0;
+            btnDeposit.title = n === 0
+                ? 'Select at least one machine to deposit the pack to Temp.'
+                : 'Queue DepositClientPack for ' + n + ' host(s) → C:\\Temp\\Heimdall-Client-v{version}-{timestamp} (manual Install.lnk).';
+        }
         if (!btnDeploy) return;
         if (!readinessDone) {
             btnDeploy.title = 'Waiting for pack readiness check';
@@ -352,6 +382,36 @@
         deployForm.submit();
     });
 
+    document.getElementById('btn-restart-agent')?.addEventListener('click', (e) => {
+        const n = document.querySelectorAll('.host-check:checked').length;
+        if (n === 0) {
+            e.preventDefault();
+            return;
+        }
+        if (!confirm('Restart HeimdallAgent on ' + n + ' selected machine(s)?\n\nBlocked on hosts that already have Deploy/UpdateClient pending.'))
+            e.preventDefault();
+    });
+
+    document.getElementById('btn-cleanup-staging')?.addEventListener('click', (e) => {
+        const n = document.querySelectorAll('.host-check:checked').length;
+        if (n === 0) {
+            e.preventDefault();
+            return;
+        }
+        if (!confirm('Cleanup staging on ' + n + ' selected machine(s)?\n\nDeletes only:\n• %ProgramData%\\Heimdall\\update\\\n• C:\\Temp\\Heimdall-Client* (exact Heimdall-Client, Heimdall-Client-v{version}, Heimdall-Client-v{version}-{timestamp})\n\nDoes not touch other Temp folders, Program Files\\Heimdall\\Agent, queue, secrets, or logs.\nBlocked if Deploy/UpdateClient is pending.'))
+            e.preventDefault();
+    });
+
+    document.getElementById('btn-deposit-pack')?.addEventListener('click', (e) => {
+        const n = document.querySelectorAll('.host-check:checked').length;
+        if (n === 0) {
+            e.preventDefault();
+            return;
+        }
+        if (!confirm('Deposit client pack on ' + n + ' selected machine(s)?\n\nAgents download the Ready pack to C:\\Temp\\Heimdall-Client-v{version}-{yyyyMMdd-HHmmss} for manual Install.lnk.\nDoes NOT silent-install or replace HeimdallAgent.\nRequires pack Ready; blocked if Deploy/UpdateClient or Deposit already pending.'))
+            e.preventDefault();
+    });
+
     async function refreshReadiness() {
         // While packing, keep the last one-liner visible (don't flash "Checking pack…").
         const keepPackingLine = statusLine.textContent && statusLine.textContent.startsWith('Packing');
@@ -373,16 +433,19 @@
                 statusLine.textContent = packingStatusText(data);
                 statusLine.className = 'text-secondary';
                 btnPack.disabled = true;
+                if (btnRefreshPack) btnRefreshPack.disabled = true;
                 setCancelVisible(true);
                 packPollTimer = setTimeout(refreshReadiness, 2000);
             } else {
                 statusLine.textContent = (data.message || data.status)
                     + (data.packProductVersion ? ' · pack v' + data.packProductVersion : '')
+                    + (data.packFolder ? ' · ' + data.packFolder : '')
                     + (data.liveSourceFingerprint ? ' · source ' + shortFp(data.liveSourceFingerprint) : '');
                 statusLine.className = (data.status === 'Error' || data.status === 'Stale' || data.status === 'MissingPack')
                     ? 'text-danger'
                     : (data.deployUnlocked ? 'text-success' : 'text-secondary');
                 btnPack.disabled = !data.canPack;
+                if (btnRefreshPack) btnRefreshPack.disabled = !data.canPack && !data.packFolder;
                 setCancelVisible(false);
             }
             setDeployHint(data, packing);
@@ -400,20 +463,52 @@
                 deployHint.className = 'small mt-1 text-danger';
             }
             btnPack.disabled = false;
+            if (btnRefreshPack) btnRefreshPack.disabled = false;
             setCancelVisible(false);
             updateSelectedCount();
         }
     }
 
+    btnRefreshPack?.addEventListener('click', async () => {
+        btnRefreshPack.disabled = true;
+        statusLine.textContent = 'Refreshing pack from disk…';
+        try {
+            const res = await fetch('/api/admin/client-pack/refresh', { method: 'POST', credentials: 'same-origin' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                statusLine.textContent = data.message || ('Refresh failed: HTTP ' + res.status);
+                statusLine.className = 'text-danger';
+            }
+            await refreshReadiness();
+        } catch (e) {
+            statusLine.textContent = 'Refresh failed: ' + (e.message || e);
+            statusLine.className = 'text-danger';
+            btnRefreshPack.disabled = false;
+        }
+    });
+
     btnPack?.addEventListener('click', async () => {
+        let force = false;
+        if (deployUnlocked) {
+            if (!confirm('Pack on disk already matches source — Deploy is unlocked.\n\nRebuild and bump version (N+1) anyway?\n\nChoose Cancel to leave the current pack (use Refresh from disk after Launch Control).'))
+                return;
+            force = true;
+        }
         btnPack.disabled = true;
         setCancelVisible(false);
-        statusLine.textContent = 'Starting pack…';
+        statusLine.textContent = force ? 'Starting forced pack (N+1)…' : 'Starting pack…';
         lastResultEl.style.display = 'none';
         logTailEl.style.display = 'none';
         try {
-            const res = await fetch('/api/admin/client-pack/pack', { method: 'POST', credentials: 'same-origin' });
+            const url = '/api/admin/client-pack/pack' + (force ? '?force=1' : '');
+            const res = await fetch(url, { method: 'POST', credentials: 'same-origin' });
             const data = await res.json().catch(() => ({}));
+            if (data.outcome === 'already-ready' || data.skipped) {
+                statusLine.textContent = data.message || 'Pack already matches source — Deploy unlocked.';
+                statusLine.className = 'text-success';
+                await refreshReadiness();
+                return;
+            }
             if (!res.ok) {
                 statusLine.textContent = data.message || ('Pack failed: HTTP ' + res.status);
                 statusLine.className = 'text-danger';
