@@ -977,7 +977,6 @@ table.hd-table th {
 .badge-warn { background: rgba(212, 160, 23, 0.28); color: #e8c04a; }
 .badge-ended { background: rgba(143, 163, 181, 0.2); color: var(--hd-muted); }
 .badge-expired { background: rgba(200, 80, 80, 0.25); color: #e8a0a0; }
-/* Active User on Client Version: disconnected = red (reuse expired palette) */
 
 .util-bar {
   height: 8px;
@@ -1520,6 +1519,144 @@ details.hd-collapsible > summary:hover::before {
 .hd-stats-tab:hover {
   color: var(--hd-gold-light, var(--hd-link-hover));
   border-color: var(--hd-accent-dim);
+}
+
+.hd-stats-tab.active {
+  background: color-mix(in srgb, var(--hd-gold, var(--hd-accent)) 18%, transparent);
+  border-color: var(--hd-gold, var(--hd-accent));
+  color: var(--hd-gold-light, var(--hd-text));
+}
+
+/* Stats ranking cards — 2-up, equal width, no horizontal scroll */
+.hd-stats-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .hd-stats-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.hd-stats-card-group-label {
+  grid-column: 1 / -1;
+  color: var(--hd-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 0.35rem;
+}
+
+.hd-stats-card {
+  min-width: 0;
+  overflow-x: hidden;
+  background: linear-gradient(160deg, var(--hd-panel-2), var(--hd-panel));
+  border: 1px solid var(--hd-border);
+  border-radius: 10px;
+  padding: 0;
+}
+
+.hd-stats-card-wide {
+  grid-column: 1 / -1;
+}
+
+.hd-stats-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--hd-border) 80%, transparent);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hd-stats-card-head:hover .hd-stats-card-title {
+  color: var(--hd-gold-light, var(--hd-link-hover));
+}
+
+.hd-stats-card-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--hd-gold, var(--hd-accent));
+}
+
+.hd-stats-card-toggle {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--hd-muted);
+}
+
+.hd-stats-card-filters {
+  padding: 0.55rem 0.9rem 0.35rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--hd-border) 70%, transparent);
+}
+
+.hd-stats-card-scroll {
+  overflow-x: hidden;
+  overflow-y: hidden;
+  /* ~3 data rows + header */
+  max-height: 8.2rem;
+}
+
+.hd-stats-card.is-expanded .hd-stats-card-scroll {
+  overflow-y: auto;
+  /* ~10 data rows + sticky header */
+  max-height: 22rem;
+}
+
+.hd-stats-card:not(.is-expanded) .hd-stats-card-table tbody tr:nth-child(n + 4) {
+  display: none;
+}
+
+.hd-stats-card-table {
+  width: 100%;
+  margin: 0;
+  table-layout: fixed;
+}
+
+.hd-stats-card-table th,
+.hd-stats-card-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.35rem 0.45rem;
+  font-size: 0.78rem;
+}
+
+.hd-stats-card-table th:first-child,
+.hd-stats-card-table td:first-child,
+.hd-stats-card-name {
+  width: 34%;
+}
+
+.hd-stats-card-table th:not(:first-child),
+.hd-stats-card-table td:not(:first-child) {
+  width: auto;
+  text-align: right;
+}
+
+.hd-stats-card-name a {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+.hd-stats-card-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--hd-panel-2, #1a2030);
 }
 
 .hd-stats-tab.active {
@@ -3624,6 +3761,13 @@ button.hd-machines-stat-filter:focus-visible {
 .hd-live-fleet-table .hd-status-text.hd-status-active { color: #3db8a0; }
 .hd-live-fleet-table .hd-status-text.hd-status-idle { color: #d4a017; }
 .hd-live-fleet-table .hd-status-text.hd-status-off { color: #c45c5c; }
+
+/* Client Version / generic hd-table: same Active/Off palette (no pill). */
+.hd-table .hd-status-text {
+  font-weight: 600;
+}
+.hd-table .hd-status-text.hd-status-active { color: #3db8a0; }
+.hd-table .hd-status-text.hd-status-off { color: #c45c5c; }
 
 .hd-machines-table tr.hd-machine-row td {
   height: 2.35rem;

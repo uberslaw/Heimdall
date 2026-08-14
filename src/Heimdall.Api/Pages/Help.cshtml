@@ -363,10 +363,10 @@
 
 <section id="stats" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Stats</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> usage analytics by machine scope — under <a asp-page="/Fleet" asp-route-tab="stats">Fleet → Stats</a>.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> usage rankings by machine scope — under <a asp-page="/Fleet" asp-route-tab="stats">Fleet → Stats</a>.</p>
     <ol class="small mb-0">
-        <li>Pick a scope tab and date range; tables cover utilisation, app usage, and session counts for that scope.</li>
-        <li>Click column headers to sort; use the filter box to narrow rows by name.</li>
+        <li>Pick a scope and date range, then Apply. Rankings appear as cards (Users / Apps / Patterns) — each shows the top 3.</li>
+        <li>Click a card header to expand (~10 rows visible, scroll for the rest). Hover the title for what that ranking means.</li>
     </ol>
 </section>
 
@@ -394,7 +394,7 @@
 
 <section id="client-version" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Client Version</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> under <strong>Fleet → Client version</strong> — agent build vs. published version, online / in use / <strong>Active User</strong> (green = Active, red = Disconnected), pack readiness, and silent <strong>Deploy Client</strong>.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> under <strong>Fleet → Client version</strong> — agent build vs. published version (Client version + Behind), online / in use / <strong>Active User</strong> (green = Active, red = Disconnected), pack readiness, and silent <strong>Deploy Client</strong>.</p>
     <ol class="small mb-0">
         <li>Published version is set automatically when a pack completes (Launch Control or Pack client). Simple integers (baseline <code>3</code> = first UpdateClient-capable). Legacy SemVer reports count as <code>1</code>. Agents below <code>3</code> cannot silent-update — use Launch Control push or Install.lnk once, then Deploy. Use <strong>Save</strong> only to override the baseline.</li>
         <li>On load the page checks source vs pack fingerprints under <code>Heimdall:RepoRoot</code>\<code>dist\Heimdall-Client</code> (same folder Launch Control writes). <strong>Deploy Client</strong> stays locked until the pack is Ready. <strong>Pack client</strong> rebuilds and bumps N+1 only when source changed (or you confirm a forced bump). After Launch Control packs, use <strong>Refresh from disk</strong> (or wait for Setup’s auto-refresh) — do not Pack again just to unlock Deploy.</li>

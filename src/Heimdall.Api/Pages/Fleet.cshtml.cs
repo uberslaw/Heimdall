@@ -59,7 +59,7 @@ public class FleetModel : PageModel
         "storage" => "Drive free space and weekly deep scans (top folders, large files, hotspots).",
         "clients" => "Agent build vs published pack. Deploy from here.",
         "cost" => "Per-machine purchase, warranty, and 30-day hours. Org rollup is Finance.",
-        "stats" => "Ranked users and apps. Click a row to open the user, app, or machine page.",
+        "stats" => "Usage ranking cards (top 3; expand for more).",
         _ => null
     };
 

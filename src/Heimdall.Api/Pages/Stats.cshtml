@@ -8,23 +8,52 @@
     if (isPartial)
         Layout = null;
     var snap = Model.Snapshot;
-    var view = Model.View?.ToLowerInvariant() ?? "logon-count";
+    var expandView = (Model.View ?? "").Trim().ToLowerInvariant();
     var statsRange = IndexModel.RangeFromStatsDays(Model.Days);
 
-    var views = new (string Id, string Label, string Group)[]
+    var userCards = new (string Id, string Title, string Tip)[]
     {
-        ("logon-count", "Logon count", "Users"),
-        ("active-time", "Active logon length", "Users"),
-        ("total-time", "Total logon length", "Users"),
-        ("by-duration", "By duration", "Users"),
-        ("avg-session", "Avg per session", "Users"),
-        ("avg-per-day", "Avg use / day", "Users"),
-        ("rdp-disc", "RDP disconnected", "Users"),
-        ("apps-time", "Apps by time open", "Apps"),
-        ("apps-cpu", "Apps by CPU", "Apps"),
-        ("apps-gpu", "Apps by GPU", "Apps"),
-        ("apps-disk", "Apps by disk", "Apps"),
-        ("patterns", "Usage patterns", "Patterns"),
+        ("logon-count", "Logon count", "Users ranked by number of logons in the selected scope and range."),
+        ("active-time", "Active logon length", "Users ranked by ActiveSeconds (excludes disconnected time)."),
+        ("total-time", "Total logon length", "Users ranked by active + disconnected time."),
+        ("by-duration", "By duration", "Users ranked by active time; total includes disconnected."),
+        ("avg-session", "Avg per session", "Users ranked by average active time per logon."),
+        ("avg-per-day", "Avg use / day", "Total active ÷ distinct calendar days with at least one session (empty days ignored)."),
+        ("rdp-disc", "RDP disconnected", "Users ranked by RDP disconnected time."),
+    };
+
+    var appCards = new (string Id, string Title, string Tip)[]
+    {
+        ("apps-time", "Apps by time open", "Applications ranked by total time open."),
+        ("apps-cpu", "Apps by CPU", "Applications ranked by peak CPU %."),
+        ("apps-gpu", "Apps by GPU", "Applications ranked by peak GPU %."),
+        ("apps-disk", "Apps by disk", "Applications ranked by disk read + write volume."),
+    };
+
+    static string ShortName(string? name, int max = 18)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "—";
+        var n = name.Trim();
+        return n.Length <= max ? n : n[..(max - 1)] + "…";
+    }
+
+    IOrderedEnumerable<UserStatRow> OrderUsers(string id) => id switch
+    {
+        "logon-count" => snap!.UserStats.OrderByDescending(u => u.LogonCount),
+        "total-time" => snap!.UserStats.OrderByDescending(u => u.TotalSeconds),
+        "by-duration" => snap!.UserStats.OrderByDescending(u => u.ActiveSeconds),
+        "avg-session" => snap!.UserStats.OrderByDescending(u => u.AvgSessionActiveSeconds),
+        "avg-per-day" => snap!.UserStats.OrderByDescending(u => u.AvgActivePerDaySeconds),
+        "rdp-disc" => snap!.UserStats.OrderByDescending(u => u.RdpDisconnectedSeconds),
+        _ => snap!.UserStats.OrderByDescending(u => u.ActiveSeconds),
+    };
+
+    IOrderedEnumerable<AppStatRow> OrderApps(string id) => id switch
+    {
+        "apps-cpu" => snap!.AppStats.OrderByDescending(a => a.PeakCpuPercent ?? -1),
+        "apps-gpu" => snap!.AppStats.OrderByDescending(a => a.PeakGpuPercent ?? -1),
+        "apps-disk" => snap!.AppStats.OrderByDescending(a => a.DiskReadBytes ?? -1),
+        _ => snap!.AppStats.OrderByDescending(a => a.TotalOpenSeconds),
     };
 }
 
@@ -73,7 +102,6 @@
             <button type="submit" class="hd-btn hd-btn-gold">Apply</button>
         </div>
     </div>
-    <input type="hidden" name="View" value="@view" />
     @if (!string.IsNullOrEmpty(Model.PatternApp))
     {
         <input type="hidden" name="PatternApp" value="@Model.PatternApp" />
@@ -122,323 +150,298 @@ else
         </div>
     }
 
-    <div class="hd-stats-tabs mb-3" role="tablist">
-        @foreach (var group in views.GroupBy(v => v.Group))
+    <div class="hd-stats-cards" data-stats-cards data-expand-view="@expandView">
+        <div class="hd-stats-card-group-label">Users</div>
+        @foreach (var card in userCards)
         {
-            <span class="hd-stats-tab-group">@group.Key</span>
-            @foreach (var v in group)
-            {
-                <a class="hd-stats-tab @(view == v.Id ? "active" : null)"
-                   asp-page="/Stats"
-                   asp-route-ScopeKind="@Model.ScopeKind"
-                   asp-route-ScopeValue="@Model.ScopeValue"
-                   asp-route-Days="@Model.Days"
-                   asp-route-From="@Model.From"
-                   asp-route-To="@Model.To"
-                   asp-route-View="@v.Id"
-                   asp-route-PatternApp="@Model.PatternApp"
-                   asp-route-MinRuntimeMin="@Model.MinRuntimeMin"
-                   asp-route-MaxRuntimeMin="@Model.MaxRuntimeMin">@v.Label</a>
-            }
+            var rows = OrderUsers(card.Id).ToList();
+            var open = string.Equals(expandView, card.Id, StringComparison.OrdinalIgnoreCase);
+            <article class="hd-stats-card @(open ? "is-expanded" : null)" data-stats-card="@card.Id">
+                <button type="button" class="hd-stats-card-head" data-stats-expand aria-expanded="@(open ? "true" : "false")" title="@card.Tip">
+                    <span class="hd-stats-card-title">@card.Title</span>
+                    <span class="hd-stats-card-toggle">@(open ? "Show less" : "Show more")</span>
+                </button>
+                <div class="hd-stats-card-scroll">
+                    <table class="hd-table hd-sortable hd-stats-card-table" data-hd-sort-key="stats-@card.Id">
+                        <thead>
+                            <tr>
+                                <th data-sort="text">User</th>
+                                @switch (card.Id)
+                                {
+                                    case "logon-count":
+                                        <th data-sort="num" data-default-desc>Logons</th>
+                                        <th data-sort="num">Active</th>
+                                        <th data-sort="num">Disc.</th>
+                                        break;
+                                    case "active-time":
+                                        <th data-sort="num" data-default-desc>Active</th>
+                                        <th data-sort="num">Logons</th>
+                                        <th data-sort="num">Disc.</th>
+                                        break;
+                                    case "total-time":
+                                        <th data-sort="num" data-default-desc>Total</th>
+                                        <th data-sort="num">Active</th>
+                                        <th data-sort="num">Disc.</th>
+                                        break;
+                                    case "by-duration":
+                                        <th data-sort="num" data-default-desc>Active</th>
+                                        <th data-sort="num">Total</th>
+                                        <th data-sort="num">Logons</th>
+                                        break;
+                                    case "avg-session":
+                                        <th data-sort="num" data-default-desc>Avg/sess</th>
+                                        <th data-sort="num">Logons</th>
+                                        <th data-sort="num">Active</th>
+                                        break;
+                                    case "avg-per-day":
+                                        <th data-sort="num" data-default-desc>Avg/day</th>
+                                        <th data-sort="num">Days</th>
+                                        <th data-sort="num">Active</th>
+                                        break;
+                                    default:
+                                        <th data-sort="num" data-default-desc>RDP disc.</th>
+                                        <th data-sort="num">All disc.</th>
+                                        <th data-sort="num">Logons</th>
+                                        break;
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @if (rows.Count == 0)
+                        {
+                            <tr><td colspan="4" class="text-secondary">No sessions.</td></tr>
+                        }
+                        @foreach (var u in rows)
+                        {
+                            var statsUser = UsernameDisplay.Format(u.Username);
+                            var shortUser = ShortName(statsUser);
+                            <tr>
+                                <td class="hd-stats-card-name" title="@statsUser">
+                                    @if (!string.IsNullOrWhiteSpace(statsUser))
+                                    {
+                                        <a asp-page="/User" asp-route-username="@statsUser" asp-route-range="@statsRange" title="@statsUser">@shortUser</a>
+                                    }
+                                    else
+                                    {
+                                        <span>—</span>
+                                    }
+                                </td>
+                                @switch (card.Id)
+                                {
+                                    case "logon-count":
+                                        <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
+                                        <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
+                                        <td data-sort-value="@u.DisconnectedSeconds">@DurationDisplay.Render(u.DisconnectedSeconds)</td>
+                                        break;
+                                    case "active-time":
+                                        <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
+                                        <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
+                                        <td data-sort-value="@u.DisconnectedSeconds">@DurationDisplay.Render(u.DisconnectedSeconds)</td>
+                                        break;
+                                    case "total-time":
+                                        <td data-sort-value="@u.TotalSeconds">@DurationDisplay.Render(u.TotalSeconds)</td>
+                                        <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
+                                        <td data-sort-value="@u.DisconnectedSeconds">@DurationDisplay.Render(u.DisconnectedSeconds)</td>
+                                        break;
+                                    case "by-duration":
+                                        <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
+                                        <td data-sort-value="@u.TotalSeconds">@DurationDisplay.Render(u.TotalSeconds)</td>
+                                        <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
+                                        break;
+                                    case "avg-session":
+                                        <td data-sort-value="@u.AvgSessionActiveSeconds">@DurationDisplay.Render(u.AvgSessionActiveSeconds)</td>
+                                        <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
+                                        <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
+                                        break;
+                                    case "avg-per-day":
+                                        <td data-sort-value="@u.AvgActivePerDaySeconds">@DurationDisplay.Render(u.AvgActivePerDaySeconds)</td>
+                                        <td data-sort-value="@u.DistinctDays">@u.DistinctDays</td>
+                                        <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
+                                        break;
+                                    default:
+                                        <td data-sort-value="@u.RdpDisconnectedSeconds">@DurationDisplay.Render(u.RdpDisconnectedSeconds)</td>
+                                        <td data-sort-value="@u.DisconnectedSeconds">@DurationDisplay.Render(u.DisconnectedSeconds)</td>
+                                        <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
+                                        break;
+                                }
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            </article>
         }
-    </div>
 
-    <div class="hd-panel">
-        <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
-            <input type="search" class="form-control hd-table-filter" placeholder="Filter table…" data-filter-for="stats-table" style="max-width:280px" />
-            <span class="text-secondary small">Click column headers to sort</span>
-        </div>
+        <div class="hd-stats-card-group-label">Apps</div>
+        @foreach (var card in appCards)
+        {
+            var rows = OrderApps(card.Id).ToList();
+            var open = string.Equals(expandView, card.Id, StringComparison.OrdinalIgnoreCase);
+            <article class="hd-stats-card @(open ? "is-expanded" : null)" data-stats-card="@card.Id">
+                <button type="button" class="hd-stats-card-head" data-stats-expand aria-expanded="@(open ? "true" : "false")" title="@card.Tip">
+                    <span class="hd-stats-card-title">@card.Title</span>
+                    <span class="hd-stats-card-toggle">@(open ? "Show less" : "Show more")</span>
+                </button>
+                <div class="hd-stats-card-scroll">
+                    <table class="hd-table hd-sortable hd-stats-card-table" data-hd-sort-key="stats-@card.Id">
+                        <thead>
+                            <tr>
+                                <th data-sort="text">App</th>
+                                @switch (card.Id)
+                                {
+                                    case "apps-cpu":
+                                        <th data-sort="num" data-default-desc>Peak CPU</th>
+                                        <th data-sort="num">Time</th>
+                                        <th data-sort="num">Users</th>
+                                        break;
+                                    case "apps-gpu":
+                                        <th data-sort="num" data-default-desc>Peak GPU</th>
+                                        <th data-sort="num">Time</th>
+                                        <th data-sort="num">Users</th>
+                                        break;
+                                    case "apps-disk":
+                                        <th data-sort="num" data-default-desc>Disk R</th>
+                                        <th data-sort="num">Disk W</th>
+                                        <th data-sort="num">Time</th>
+                                        break;
+                                    default:
+                                        <th data-sort="num" data-default-desc>Time</th>
+                                        <th data-sort="num">Users</th>
+                                        <th data-sort="num">Runs</th>
+                                        break;
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @if (rows.Count == 0)
+                        {
+                            <tr><td colspan="4" class="text-secondary">No process runs.</td></tr>
+                        }
+                        @foreach (var a in rows)
+                        {
+                            var shortApp = ShortName(a.ProcessName, 16);
+                            <tr>
+                                <td class="hd-stats-card-name" title="@a.ProcessName">
+                                    <a asp-page="/Application" asp-route-process="@a.ProcessName" asp-route-range="@statsRange" title="@a.ProcessName">@shortApp</a>
+                                </td>
+                                @switch (card.Id)
+                                {
+                                    case "apps-cpu":
+                                        <td data-sort-value="@(a.PeakCpuPercent ?? -1)">@StatsModel.FormatPct(a.PeakCpuPercent)</td>
+                                        <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
+                                        <td data-sort-value="@a.UniqueUsers">@a.UniqueUsers</td>
+                                        break;
+                                    case "apps-gpu":
+                                        <td data-sort-value="@(a.PeakGpuPercent ?? -1)">@StatsModel.FormatPct(a.PeakGpuPercent)</td>
+                                        <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
+                                        <td data-sort-value="@a.UniqueUsers">@a.UniqueUsers</td>
+                                        break;
+                                    case "apps-disk":
+                                        <td data-sort-value="@(a.DiskReadBytes ?? -1)">@StatsModel.FormatBytes(a.DiskReadBytes)</td>
+                                        <td data-sort-value="@(a.DiskWriteBytes ?? -1)">@StatsModel.FormatBytes(a.DiskWriteBytes)</td>
+                                        <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
+                                        break;
+                                    default:
+                                        <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
+                                        <td data-sort-value="@a.UniqueUsers">@a.UniqueUsers</td>
+                                        <td data-sort-value="@a.RunCount">@a.RunCount</td>
+                                        break;
+                                }
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+        }
 
-        @if (view is "logon-count" or "active-time" or "total-time" or "by-duration" or "avg-session" or "avg-per-day" or "rdp-disc")
-        {
-            <table class="hd-table hd-sortable" id="stats-table">
-                <thead>
-                    <tr>
-                        <th data-sort="text">User</th>
-                        @if (view == "logon-count")
-                        {
-                            <th data-sort="num" data-default-desc>Logons</th>
-                        }
-                        else if (view == "active-time")
-                        {
-                            <th data-sort="num" data-default-desc>Active time</th>
-                            <th data-sort="num">Logons</th>
-                        }
-                        else if (view == "total-time")
-                        {
-                            <th data-sort="num" data-default-desc>Active + disconnected</th>
-                            <th data-sort="num">Active</th>
-                            <th data-sort="num">Disconnected</th>
-                        }
-                        else if (view == "by-duration")
-                        {
-                            <th data-sort="num" data-default-desc>Active</th>
-                            <th data-sort="num">Total (incl. disc.)</th>
-                            <th data-sort="num">Logons</th>
-                        }
-                        else if (view == "avg-session")
-                        {
-                            <th data-sort="num" data-default-desc>Avg active / session</th>
-                            <th data-sort="num">Logons</th>
-                            <th data-sort="num">Total active</th>
-                        }
-                        else if (view == "avg-per-day")
-                        {
-                            <th data-sort="num" data-default-desc>Avg active / day present</th>
-                            <th data-sort="num">Days present</th>
-                            <th data-sort="num">Total active</th>
-                        }
-                        else
-                        {
-                            <th data-sort="num" data-default-desc>RDP disconnected</th>
-                            <th data-sort="num">All disconnected</th>
-                            <th data-sort="num">Logons</th>
-                        }
-                    </tr>
-                </thead>
-                <tbody>
-                @if (snap.UserStats.Count == 0)
-                {
-                    <tr><td colspan="4">No sessions in this scope and date range.</td></tr>
-                }
-                @foreach (var u in snap.UserStats
-                    .OrderByDescending(x => view switch
-                    {
-                        "logon-count" => x.LogonCount,
-                        "total-time" or "by-duration" => x.TotalSeconds,
-                        "avg-session" => x.AvgSessionActiveSeconds,
-                        "avg-per-day" => x.AvgActivePerDaySeconds,
-                        "rdp-disc" => x.RdpDisconnectedSeconds,
-                        _ => x.ActiveSeconds
-                    }))
-                {
-                    <tr>
-                        <td>
-                            @{
-                                var statsUser = UsernameDisplay.Format(u.Username);
-                            }
-                            @if (!string.IsNullOrWhiteSpace(statsUser))
-                            {
-                                <a asp-page="/User" asp-route-username="@statsUser" asp-route-range="@statsRange"><strong>@statsUser</strong></a>
-                            }
-                            else
-                            {
-                                <strong>@UsernameDisplay.Format(u.Username)</strong>
-                            }
-                        </td>
-                        @if (view == "logon-count")
-                        {
-                            <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
-                        }
-                        else if (view == "active-time")
-                        {
-                            <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
-                            <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
-                        }
-                        else if (view == "total-time")
-                        {
-                            <td data-sort-value="@u.TotalSeconds">@DurationDisplay.Render(u.TotalSeconds)</td>
-                            <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
-                            <td data-sort-value="@u.DisconnectedSeconds">@DurationDisplay.Render(u.DisconnectedSeconds)</td>
-                        }
-                        else if (view == "by-duration")
-                        {
-                            <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
-                            <td data-sort-value="@u.TotalSeconds">@DurationDisplay.Render(u.TotalSeconds)</td>
-                            <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
-                        }
-                        else if (view == "avg-session")
-                        {
-                            <td data-sort-value="@u.AvgSessionActiveSeconds">@DurationDisplay.Render(u.AvgSessionActiveSeconds)</td>
-                            <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
-                            <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
-                        }
-                        else if (view == "avg-per-day")
-                        {
-                            <td data-sort-value="@u.AvgActivePerDaySeconds">@DurationDisplay.Render(u.AvgActivePerDaySeconds)</td>
-                            <td data-sort-value="@u.DistinctDays">@u.DistinctDays</td>
-                            <td data-sort-value="@u.ActiveSeconds">@DurationDisplay.Render(u.ActiveSeconds)</td>
-                        }
-                        else
-                        {
-                            <td data-sort-value="@u.RdpDisconnectedSeconds">@DurationDisplay.Render(u.RdpDisconnectedSeconds)</td>
-                            <td data-sort-value="@u.DisconnectedSeconds">@DurationDisplay.Render(u.DisconnectedSeconds)</td>
-                            <td data-sort-value="@u.LogonCount">@u.LogonCount</td>
-                        }
-                    </tr>
-                }
-                </tbody>
-            </table>
-            @if (view == "avg-per-day")
-            {
-                <p class="text-secondary small mt-3 mb-0">
-                    <strong>Avg use / day</strong> = total active seconds ÷ distinct calendar days the user had at least one session
-                    (not ÷ every day in the filter range). Sparse users are not diluted by empty days.
-                </p>
-            }
-            @if (view is "active-time" or "total-time" or "by-duration")
-            {
-                <p class="text-secondary small mt-3 mb-0">
-                    Active = <code>ActiveSeconds</code> (excludes disconnected). Total = active + disconnected.
-                </p>
-            }
+        <div class="hd-stats-card-group-label">Patterns</div>
+        @{
+            var patternOpen = string.Equals(expandView, "patterns", StringComparison.OrdinalIgnoreCase);
+            var patternRows = snap.UsagePatterns.OrderByDescending(p => p.ActiveMinutes).ToList();
         }
-        else if (view is "apps-time" or "apps-cpu" or "apps-gpu" or "apps-disk")
-        {
-            <table class="hd-table hd-sortable" id="stats-table">
-                <thead>
-                    <tr>
-                        <th data-sort="text">Application</th>
-                        <th data-sort="num">Users</th>
-                        <th data-sort="num">Avg # processes open</th>
-                        <th data-sort="num">Runs</th>
-                        @if (view == "apps-time")
-                        {
-                            <th data-sort="num" data-default-desc>Time open</th>
-                        }
-                        else if (view == "apps-cpu")
-                        {
-                            <th data-sort="num" data-default-desc>Peak CPU %</th>
-                            <th data-sort="num">Time open</th>
-                        }
-                        else if (view == "apps-gpu")
-                        {
-                            <th data-sort="num" data-default-desc>Peak GPU %</th>
-                            <th data-sort="num">Time open</th>
-                        }
-                        else
-                        {
-                            <th data-sort="num" data-default-desc>Disk read</th>
-                            <th data-sort="num">Disk write</th>
-                            <th data-sort="num">Time open</th>
-                        }
-                    </tr>
-                </thead>
-                <tbody>
-                @if (snap.AppStats.Count == 0)
-                {
-                    <tr><td colspan="7">No process runs in this scope and date range.</td></tr>
-                }
-                @foreach (var a in snap.AppStats
-                    .OrderByDescending(x => view switch
-                    {
-                        "apps-cpu" => x.PeakCpuPercent ?? -1,
-                        "apps-gpu" => x.PeakGpuPercent ?? -1,
-                        "apps-disk" => (x.DiskReadBytes ?? 0) + (x.DiskWriteBytes ?? 0),
-                        _ => x.TotalOpenSeconds
-                    }))
-                {
-                    <tr>
-                        <td>
-                            <a asp-page="/Application" asp-route-process="@a.ProcessName" asp-route-range="@statsRange"><strong>@a.ProcessName</strong></a>
-                        </td>
-                        <td data-sort-value="@a.UniqueUsers">@a.UniqueUsers</td>
-                        <td data-sort-value="@a.AvgConcurrentProcesses.ToString("0.###")">@ConcurrentDisplay.Render(a.AvgConcurrentProcesses)</td>
-                        <td data-sort-value="@a.RunCount">@a.RunCount</td>
-                        @if (view == "apps-time")
-                        {
-                            <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
-                        }
-                        else if (view == "apps-cpu")
-                        {
-                            <td data-sort-value="@(a.PeakCpuPercent ?? -1)">@StatsModel.FormatPct(a.PeakCpuPercent)</td>
-                            <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
-                        }
-                        else if (view == "apps-gpu")
-                        {
-                            <td data-sort-value="@(a.PeakGpuPercent ?? -1)">@StatsModel.FormatPct(a.PeakGpuPercent)</td>
-                            <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
-                        }
-                        else
-                        {
-                            <td data-sort-value="@(a.DiskReadBytes ?? -1)">@StatsModel.FormatBytes(a.DiskReadBytes)</td>
-                            <td data-sort-value="@(a.DiskWriteBytes ?? -1)">@StatsModel.FormatBytes(a.DiskWriteBytes)</td>
-                            <td data-sort-value="@a.TotalOpenSeconds">@DurationDisplay.Render(a.TotalOpenSeconds)</td>
-                        }
-                    </tr>
-                }
-                </tbody>
-            </table>
-            @if (view == "apps-gpu" && !snap.HasAnyGpuData)
-            {
-                <p class="text-secondary small mt-3 mb-0">Peak GPU % columns are wired (<code>ProcessRun.PeakGpuPercent</code>) but agents have not reported samples yet.</p>
-            }
-            @if (view == "apps-disk" && !snap.HasAnyDiskData)
-            {
-                <p class="text-secondary small mt-3 mb-0">Disk read/write columns are wired (<code>DiskReadBytes</code> / <code>DiskWriteBytes</code>) but agents have not reported samples yet.</p>
-            }
-        }
-        else if (view == "patterns")
-        {
-            <form method="get" class="row g-2 mb-3 align-items-end">
+        <article class="hd-stats-card hd-stats-card-wide @(patternOpen ? "is-expanded" : null)" data-stats-card="patterns">
+            <button type="button" class="hd-stats-card-head" data-stats-expand aria-expanded="@(patternOpen ? "true" : "false")"
+                    title="User × day-of-week by active minutes. Use filters below to limit by app or runtime.">
+                <span class="hd-stats-card-title">Usage patterns</span>
+                <span class="hd-stats-card-toggle">@(patternOpen ? "Show less" : "Show more")</span>
+            </button>
+            <form method="get" class="hd-stats-card-filters" asp-page="/Stats">
                 <input type="hidden" name="ScopeKind" value="@Model.ScopeKind" />
                 <input type="hidden" name="ScopeValue" value="@Model.ScopeValue" />
                 <input type="hidden" name="Days" value="@Model.Days" />
                 <input type="hidden" name="From" value="@Model.From" />
                 <input type="hidden" name="To" value="@Model.To" />
                 <input type="hidden" name="View" value="patterns" />
-                <div class="col-md-4">
-                    <label class="form-label">App filter</label>
-                    <select class="form-select" name="PatternApp">
-                        <option value="">All (session active time)</option>
-                        @foreach (var app in snap.AppFilterOptions)
-                        {
-                            if (string.Equals(app, Model.PatternApp, StringComparison.OrdinalIgnoreCase))
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-5">
+                        <label class="form-label small mb-0">App filter</label>
+                        <select class="form-select form-select-sm" name="PatternApp">
+                            <option value="">All (session active time)</option>
+                            @foreach (var app in snap.AppFilterOptions)
                             {
-                                <option value="@app" selected>@app</option>
+                                if (string.Equals(app, Model.PatternApp, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    <option value="@app" selected>@app</option>
+                                }
+                                else
+                                {
+                                    <option value="@app">@app</option>
+                                }
                             }
-                            else
-                            {
-                                <option value="@app">@app</option>
-                            }
-                        }
-                    </select>
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label">Min runtime (min)</label>
-                    <input class="form-control" type="number" step="0.1" min="0" name="MinRuntimeMin" value="@Model.MinRuntimeMin" />
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label">Max runtime (min)</label>
-                    <input class="form-control" type="number" step="0.1" min="0" name="MaxRuntimeMin" value="@Model.MaxRuntimeMin" />
-                </div>
-                <div class="col-md-2">
-                    <button type="submit" class="btn btn-ghost">Filter patterns</button>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small mb-0">Min (min)</label>
+                        <input class="form-control form-control-sm" type="number" step="0.1" min="0" name="MinRuntimeMin" value="@Model.MinRuntimeMin" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small mb-0">Max (min)</label>
+                        <input class="form-control form-control-sm" type="number" step="0.1" min="0" name="MaxRuntimeMin" value="@Model.MaxRuntimeMin" />
+                    </div>
+                    <div class="col-md-2">
+                        <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Filter</button>
+                    </div>
                 </div>
             </form>
-
-            <table class="hd-table hd-sortable" id="stats-table">
-                <thead>
-                    <tr>
-                        <th data-sort="text">User</th>
-                        <th data-sort="text">Day of week</th>
-                        <th data-sort="num" data-default-desc>Active minutes</th>
-                        <th data-sort="num">Sessions / runs</th>
-                        <th data-sort="text">Source</th>
-                    </tr>
-                </thead>
-                <tbody>
-                @if (snap.UsagePatterns.Count == 0)
-                {
-                    <tr><td colspan="5">No usage pattern rows for the current filters.</td></tr>
-                }
-                @foreach (var p in snap.UsagePatterns)
-                {
-                    <tr>
-                        <td><strong>@UsernameDisplay.Format(p.Username)</strong></td>
-                        <td>@p.DayOfWeek</td>
-                        <td data-sort-value="@p.ActiveMinutes">@p.ActiveMinutes.ToString("0.#")</td>
-                        <td data-sort-value="@p.SessionCount">@p.SessionCount</td>
-                        <td>@p.Source</td>
-                    </tr>
-                }
-                </tbody>
-            </table>
-            <p class="text-secondary small mt-3 mb-0">
-                Default: User × day-of-week from session <code>ActiveSeconds</code>.
-                With an app or runtime filter, minutes come from matching process-run durations instead.
-            </p>
-        }
+            <div class="hd-stats-card-scroll">
+                <table class="hd-table hd-sortable hd-stats-card-table" data-hd-sort-key="stats-patterns">
+                    <thead>
+                        <tr>
+                            <th data-sort="text">User</th>
+                            <th data-sort="text">Day</th>
+                            <th data-sort="num" data-default-desc>Active min</th>
+                            <th data-sort="num">Sess.</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @if (patternRows.Count == 0)
+                    {
+                        <tr><td colspan="4" class="text-secondary">No pattern rows.</td></tr>
+                    }
+                    @foreach (var p in patternRows)
+                    {
+                        var patternUser = UsernameDisplay.Format(p.Username);
+                        <tr>
+                            <td class="hd-stats-card-name" title="@patternUser">@ShortName(patternUser)</td>
+                            <td>@(p.DayOfWeek switch
+                            {
+                                DayOfWeek.Monday => "Mon",
+                                DayOfWeek.Tuesday => "Tue",
+                                DayOfWeek.Wednesday => "Wed",
+                                DayOfWeek.Thursday => "Thu",
+                                DayOfWeek.Friday => "Fri",
+                                DayOfWeek.Saturday => "Sat",
+                                _ => "Sun"
+                            })</td>
+                            <td data-sort-value="@p.ActiveMinutes">@p.ActiveMinutes.ToString("0.#")</td>
+                            <td data-sort-value="@p.SessionCount">@p.SessionCount</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </article>
     </div>
 }
 
@@ -458,6 +461,7 @@ else
   const current = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.ScopeValue ?? ""));
 
   function refill() {
+    if (!kindEl || !valueEl || !wrap) return;
     const kind = kindEl.value;
     const list = options[kind] || [];
     wrap.style.display = kind === 'All' ? 'none' : '';
@@ -470,21 +474,42 @@ else
       valueEl.appendChild(opt);
     });
   }
-  kindEl.addEventListener('change', refill);
-  refill();
+  if (kindEl) {
+    kindEl.addEventListener('change', refill);
+    refill();
+  }
 
-  // Client-side filter
-  document.querySelectorAll('[data-filter-for]').forEach(input => {
-    input.addEventListener('input', () => {
-      const table = document.getElementById(input.getAttribute('data-filter-for'));
-      if (!table) return;
-      const q = input.value.trim().toLowerCase();
-      table.querySelectorAll('tbody tr').forEach(tr => {
-        tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  const root = document.querySelector('[data-stats-cards]');
+  if (root) {
+    root.querySelectorAll('[data-stats-expand]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const card = btn.closest('[data-stats-card]');
+        if (!card) return;
+        const willOpen = !card.classList.contains('is-expanded');
+        root.querySelectorAll('[data-stats-card].is-expanded').forEach((el) => {
+          if (el === card) return;
+          el.classList.remove('is-expanded');
+          const b = el.querySelector('[data-stats-expand]');
+          const t = el.querySelector('.hd-stats-card-toggle');
+          if (b) b.setAttribute('aria-expanded', 'false');
+          if (t) t.textContent = 'Show more';
+        });
+        card.classList.toggle('is-expanded', willOpen);
+        btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        const toggle = card.querySelector('.hd-stats-card-toggle');
+        if (toggle) toggle.textContent = willOpen ? 'Show less' : 'Show more';
       });
     });
-  });
 
-  if (window.HeimdallTable) HeimdallTable.init(document);
+    const expandId = root.getAttribute('data-expand-view');
+    if (expandId) {
+      const target = root.querySelector('[data-stats-card="' + expandId + '"]');
+      if (target) {
+        if (!target.classList.contains('is-expanded'))
+          target.querySelector('[data-stats-expand]')?.click();
+        target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+  }
 })();
 </script>

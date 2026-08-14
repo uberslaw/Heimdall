@@ -212,32 +212,8 @@ public class ClientVersionModel(
     }
 
     /// <summary>
-    /// Out-of-date grading: amber when exactly one simple version behind, red when two or more.
-    /// Missing / unknown stays red; current and unparsed-as-behind stay non-alarm.
+    /// Status is kept for summary counts and Select-out-of-date (data-status on rows); the Status column was removed — Behind + version show currency.
     /// </summary>
-    public static string StatusBadgeClass(ClientVersionStatus status, int? versionsBehind = null) => status switch
-    {
-        ClientVersionStatus.UpToDate => "badge-active",
-        ClientVersionStatus.OutOfDate => versionsBehind is 1 ? "badge-warn" : "badge-expired",
-        ClientVersionStatus.Missing => "badge-expired",
-        _ => "badge-warn"
-    };
-
-    public static string StatusLabel(ClientVersionStatus status) => status switch
-    {
-        ClientVersionStatus.UpToDate => "Up to date",
-        ClientVersionStatus.OutOfDate => "Out of date",
-        ClientVersionStatus.Missing => "Missing / unknown",
-        _ => "No baseline set"
-    };
-
-    public static string? BehindBadgeClass(int? versionsBehind) => versionsBehind switch
-    {
-        1 => "badge-warn",
-        > 1 => "badge-expired",
-        _ => null
-    };
-
     public static string? BehindRowClass(int? versionsBehind) => versionsBehind switch
     {
         1 => "hd-row-highlight",
@@ -300,11 +276,12 @@ public class ClientVersionModel(
             string.IsNullOrWhiteSpace(FriendlyName) ? Hostname : FriendlyName!;
     }
 
-    public static string ActiveUserBadgeClass(SessionState? state) => state switch
+    /// <summary>Colored text (no pill) matching Computers Active/Off palette.</summary>
+    public static string ActiveUserTextClass(SessionState? state) => state switch
     {
-        SessionState.Active => "badge-active",
-        SessionState.Disconnected => "badge-expired",
-        _ => "badge-ended"
+        SessionState.Active => "hd-status-text hd-status-active",
+        SessionState.Disconnected => "hd-status-text hd-status-off",
+        _ => ""
     };
 
     public static string ActiveUserLabel(SessionState? state) => state switch

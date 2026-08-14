@@ -113,22 +113,21 @@
         <table class="hd-table hd-sortable">
             <thead>
                 <tr>
-                    <th style="width:2rem"></th>
-                    <th data-sort="text">Status</th>
-                    <th data-sort="text">Machine</th>
-                    <th data-sort="text">Online</th>
-                    <th data-sort="text">In use</th>
-                    <th data-sort="text">Active User</th>
-                    <th data-sort="num">Client version</th>
-                    <th data-sort="num">Behind</th>
-                    <th data-sort="text">Progress</th>
-                    <th data-sort="date">Last contact</th>
+                    <th style="width:2rem" title="Select hosts for Deploy Client, Restart agent, Cleanup staging, or Deposit pack. Offline hosts still queue until the agent checks in."></th>
+                    <th data-sort="text" title="Friendly name (if set), with hostname and last reported IP underneath. Opens the machine detail page.">Machine</th>
+                    <th data-sort="text" title="Online = agent heartbeat within the last 5 minutes. Offline = no recent heartbeat (Ping/RDP can still succeed). Commands queued for offline hosts wait until the agent is back.">Online</th>
+                    <th data-sort="text" title="Yes when the last heartbeat reported any open interactive session (Active or Disconnected). Separate from Online and from Active User state.">In use</th>
+                    <th data-sort="text" title="Primary open session user from the API. Green text = Active (connected); red text = Disconnected. Silent Deploy defers while any session is Active — Disconnected is OK.">Active User</th>
+                    <th data-sort="num" title="Installed HeimdallAgent simple version from the last heartbeat. Legacy SemVer builds count as 1. Compared to the published baseline for Behind.">Client version</th>
+                    <th data-sort="num" title="How many simple versions this host is behind the published baseline (published − installed). Empty when up to date or no baseline.">Behind</th>
+                    <th data-sort="text" title="Silent update / remote-op phase for this host: Queued → Downloading → DeferredWaitingForIdle (Active session) → Applying → Succeeded or Failed. Stuck = Downloading/Applying with no heartbeat or no version bump for 15+ minutes (pending Deploy cleared so you can re-queue). Hover the cell for raw progress JSON.">Progress</th>
+                    <th data-sort="date" title="When this host last posted a heartbeat to the API. Used for Online (5 minutes) and Stuck detection (15 minutes without contact during Downloading/Applying).">Last contact</th>
                 </tr>
             </thead>
             <tbody>
             @if (Model.Rows.Count == 0)
             {
-                <tr><td colspan="10">No agents reporting yet.</td></tr>
+                <tr><td colspan="9">No agents reporting yet.</td></tr>
             }
             @foreach (var r in Model.Rows)
             {
@@ -138,12 +137,6 @@
                     <td>
                         <input type="checkbox" class="form-check-input host-check" name="SelectedHostnames" value="@r.Hostname"
                                @(r.IsOnline ? null : "title=\"Offline — queue when agent is back\"") />
-                    </td>
-                    <td data-sort-value="@((int)r.Status)">
-                        <span class="badge-pill @ClientVersionModel.StatusBadgeClass(r.Status, r.VersionsBehind)"
-                              title="@(r.AgentVersion ?? "")">
-                            @ClientVersionModel.StatusLabel(r.Status)
-                        </span>
                     </td>
                     <td data-sort-value="@r.DisplayName">
                         <a asp-page="/Machine" asp-route-hostname="@r.Hostname" asp-route-range="7d" title="@r.Hostname"><strong>@r.DisplayName</strong></a>
@@ -156,19 +149,28 @@
                     <td data-sort-value="@(r.IsOnline ? 1 : 0)">
                         @if (r.IsOnline)
                         {
-                            <span class="badge-pill badge-active">Online</span>
+                            <span class="hd-status-text hd-status-active">Online</span>
                         }
                         else
                         {
-                            <span class="badge-pill badge-ended">Offline</span>
+                            <span class="hd-status-text hd-status-off">Offline</span>
                         }
                     </td>
-                    <td data-sort-value="@(r.IsInUse ? 1 : 0)">@(r.IsInUse ? "Yes" : "No")</td>
+                    <td data-sort-value="@(r.IsInUse ? 1 : 0)">
+                        @if (r.IsInUse)
+                        {
+                            <span class="hd-status-text hd-status-active">Yes</span>
+                        }
+                        else
+                        {
+                            <span class="hd-status-text hd-status-off">No</span>
+                        }
+                    </td>
                     <td data-sort-value="@UsernameDisplay.Format(r.ActiveUser)">
                         @if (!string.IsNullOrWhiteSpace(r.ActiveUser))
                         {
                             <a asp-page="/User" asp-route-username="@UsernameDisplay.Format(r.ActiveUser)" asp-route-range="1d"
-                               class="badge-pill @ClientVersionModel.ActiveUserBadgeClass(r.ActiveUserState)"
+                               class="@ClientVersionModel.ActiveUserTextClass(r.ActiveUserState)"
                                title="@ClientVersionModel.ActiveUserLabel(r.ActiveUserState)">@UsernameDisplay.Format(r.ActiveUser)</a>
                         }
                         else
@@ -193,7 +195,7 @@
                     <td data-sort-value="@(r.VersionsBehind ?? 0)">
                         @if (r.VersionsBehind is int behind and > 0)
                         {
-                            <span class="badge-pill @ClientVersionModel.BehindBadgeClass(behind)">@behind version@(behind == 1 ? "" : "s") behind</span>
+                            <span>@behind version@(behind == 1 ? "" : "s") behind</span>
                         }
                         else
                         {
