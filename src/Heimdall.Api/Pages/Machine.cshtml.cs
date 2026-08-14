@@ -49,8 +49,13 @@ public class MachineModel(
     [BindProperty]
     public string? DiskScanRoot { get; set; }
 
+    /// <summary>Numeric part of large-file threshold (paired with <see cref="DiskScanMinSizeUnit"/>). Default 1 GB.</summary>
     [BindProperty]
-    public int DiskScanMinFileMb { get; set; } = 100;
+    public double DiskScanMinSizeAmount { get; set; } = 1;
+
+    /// <summary>MB, GB, or TB (binary 1024-based).</summary>
+    [BindProperty]
+    public string DiskScanMinSizeUnit { get; set; } = DiskSizeUnits.Gb;
 
     [BindProperty(SupportsGet = true)]
     public bool EditFriendly { get; set; }
@@ -311,16 +316,27 @@ public class MachineModel(
             return RedirectToPage("/Index");
         }
 
-        var root = (DiskScanRoot ?? "C:\\").Trim();
-        if (root.Length == 2 && root[1] == ':')
-            root += "\\";
-        if (!System.Text.RegularExpressions.Regex.IsMatch(root, @"^[A-Za-z]:\\"))
+        var rootRaw = (DiskScanRoot ?? DiskUsageScanRoots.AllFixedDrives).Trim();
+        string root;
+        if (DiskUsageScanRoots.IsAllFixedDrives(rootRaw))
         {
-            TempData["Error"] = "Root must be a local drive path like C:\\";
-            return RedirectToMachine(host);
+            root = DiskUsageScanRoots.AllFixedDrives;
+        }
+        else
+        {
+            root = rootRaw;
+            if (root.Length == 2 && root[1] == ':')
+                root += "\\";
+            if (!System.Text.RegularExpressions.Regex.IsMatch(root, @"^[A-Za-z]:\\"))
+            {
+                TempData["Error"] = "Root must be a local drive path like C:\\, or All fixed drives.";
+                return RedirectToMachine(host);
+            }
         }
 
-        var minMb = DiskScanMinFileMb <= 0 ? 100 : Math.Clamp(DiskScanMinFileMb, 10, 10240);
+        var unit = DiskSizeUnits.Normalize(DiskScanMinSizeUnit);
+        var minMb = DiskSizeUnits.ToMinFileMb(DiskScanMinSizeAmount, unit);
+        (DiskScanMinSizeAmount, DiskScanMinSizeUnit) = DiskSizeUnits.FromMinFileMb(minMb);
         var machine = await db.Machines.FirstOrDefaultAsync(m => m.Hostname == host, ct);
         if (machine is null)
         {
@@ -360,7 +376,7 @@ public class MachineModel(
         });
         await db.SaveChangesAsync(ct);
         TempData["Message"] =
-            $"Disk usage scan queued for {host} ({root}, files ≥ {minMb} MB) at {FormatLocalTimestamp(requestedUtc)}. Not waiting for low CPU — needs an agent that supports disk scans (v{VersionCompare.MinDiskUsageScanVersion}+). Scan itself can take up to ~3 min once started.";
+            $"Disk usage scan queued for {host} ({DiskUsageScanRoots.FormatForDisplay(root)}, files ≥ {DiskSizeUnits.FormatThreshold(minMb)}) at {FormatLocalTimestamp(requestedUtc)}. Not waiting for low CPU — needs an agent that supports disk scans (v{VersionCompare.MinDiskUsageScanVersion}+). Scan itself can take up to ~3 min once started.";
         return RedirectToMachine(host);
     }
 
@@ -586,7 +602,9 @@ public class MachineModel(
                         : null;
                     if (pending is not null)
                     {
-                        DiskScanMinFileMb = pending.MinFileMb;
+                        var (amt, unit) = DiskSizeUnits.FromMinFileMb(pending.MinFileMb > 0 ? pending.MinFileMb : 1024);
+                        DiskScanMinSizeAmount = amt;
+                        DiskScanMinSizeUnit = unit;
                         PendingDiskScanMaxSeconds = pending.MaxSeconds > 0 ? pending.MaxSeconds : 180;
                     }
                 }
@@ -619,7 +637,7 @@ public class MachineModel(
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"Disk usage scan — {hostname}");
         sb.AppendLine($"Last scan: {when}");
-        sb.AppendLine($"Root: {scan.RootPath}");
+        sb.AppendLine($"Root: {DiskUsageScanRoots.FormatForDisplay(scan.RootPath)}");
         sb.AppendLine(
             $"Elapsed: {scan.ElapsedSeconds.ToString("0.#")}s · Files seen: {scan.FilesSeen.ToString("N0")} · Bytes seen: {FormatBytes(scan.BytesScanned)}");
         if (scan.Truncated)

@@ -61,8 +61,8 @@
     <ol class="small mb-0">
         <li>Open <a asp-page="/Fleet" asp-route-tab="storage">Fleet → Storage</a>. Cards show drive used/free with green (&lt;70%), amber (70–85%), red (&gt;85%) bars from heartbeat volume data.</li>
         <li>Click a card to expand top non-system folders, large files, and hotspots from the last deep scan.</li>
-        <li>The API queues a weekly fleet scan (<code>Heimdall:StorageScan</code> — day/time UTC, min agent version). <strong>Run scan now</strong> queues all eligible hosts; expand a card for a single host. Offline agents keep the pending request until they check in.</li>
-        <li>Fleet scans use agent disk usage (≥ v6): top 5 non-system folders, top 5 files ≥ 1&nbsp;GB, plus hotspot sizes. Per-host custom scans remain on the machine detail Storage panel.</li>
+        <li>The API queues a weekly fleet scan (<code>Heimdall:StorageScan</code> — day/time UTC, min agent version; <code>RootPath</code> <code>*</code> = all fixed drives). <strong>Run scan now</strong> queues all eligible hosts; expand a card for a single host. Offline agents keep the pending request until they check in.</li>
+        <li>Fleet scans use agent disk usage (≥ v6): all fixed drives, top 5 non-system folders, top 5 files ≥ 1&nbsp;GB, plus hotspot sizes. Per-host custom scans remain on the machine detail Storage panel (drive picker + min file size with MB/GB/TB).</li>
     </ol>
 </section>
 

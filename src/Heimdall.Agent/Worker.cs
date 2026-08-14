@@ -181,7 +181,7 @@ public sealed class Worker(
             var host = hostname;
             logger.LogInformation(
                 "Disk usage scan queued: {Root} (min file {MinMb} MB, top {Top}, max {MaxSec}s)",
-                scanReq.RootPath, scanReq.MinFileMb, scanReq.TopFolderCount, scanReq.MaxSeconds);
+                DiskUsageScanRoots.FormatForDisplay(scanReq.RootPath), scanReq.MinFileMb, scanReq.TopFolderCount, scanReq.MaxSeconds);
 
             void OnProgress(DiskUsageScanProgressDto progress)
             {

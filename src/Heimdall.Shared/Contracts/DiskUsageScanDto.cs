@@ -1,19 +1,102 @@
 namespace Heimdall.Shared.Contracts;
 
+/// <summary>
+/// Well-known <see cref="DiskUsageScanRequestDto.RootPath"/> values.
+/// <see cref="AllFixedDrives"/> (or empty / <c>all</c>) means every ready fixed volume.
+/// </summary>
+public static class DiskUsageScanRoots
+{
+    public const string AllFixedDrives = "*";
+
+    public static bool IsAllFixedDrives(string? rootPath)
+    {
+        var p = (rootPath ?? "").Trim();
+        return p.Length == 0
+               || p == "*"
+               || string.Equals(p, "all", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(p, "all:", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(p, "all:\\", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string FormatForDisplay(string? rootPath) =>
+        IsAllFixedDrives(rootPath) ? "all fixed drives" : (rootPath ?? "").Trim();
+}
+
+/// <summary>UI helpers for large-file threshold amount + MB/GB/TB (binary: 1024-based).</summary>
+public static class DiskSizeUnits
+{
+    public const string Mb = "MB";
+    public const string Gb = "GB";
+    public const string Tb = "TB";
+
+    public static readonly string[] All = [Mb, Gb, Tb];
+
+    /// <summary>Normalize unit token; unknown → MB.</summary>
+    public static string Normalize(string? unit)
+    {
+        var u = (unit ?? "").Trim().ToUpperInvariant();
+        return u switch
+        {
+            "TB" or "T" => Tb,
+            "GB" or "G" => Gb,
+            _ => Mb
+        };
+    }
+
+    /// <summary>Convert amount+unit to whole mebibytes for <see cref="DiskUsageScanRequestDto.MinFileMb"/>.</summary>
+    public static int ToMinFileMb(double amount, string? unit)
+    {
+        if (double.IsNaN(amount) || double.IsInfinity(amount) || amount <= 0)
+            amount = 1;
+
+        var bytes = Normalize(unit) switch
+        {
+            Tb => amount * 1024d * 1024d * 1024d * 1024d,
+            Gb => amount * 1024d * 1024d * 1024d,
+            _ => amount * 1024d * 1024d
+        };
+
+        var mb = (long)Math.Round(bytes / (1024d * 1024d), MidpointRounding.AwayFromZero);
+        return (int)Math.Clamp(mb, 1, 100L * 1024 * 1024); // 1 MB … 100 TB
+    }
+
+    /// <summary>Pick a tidy amount+unit for display from stored MinFileMb.</summary>
+    public static (double Amount, string Unit) FromMinFileMb(int minFileMb)
+    {
+        var mb = Math.Max(1, minFileMb);
+        if (mb >= 1024 * 1024 && mb % (1024 * 1024) == 0)
+            return (mb / (1024d * 1024d), Tb);
+        if (mb >= 1024 && mb % 1024 == 0)
+            return (mb / 1024d, Gb);
+        return (mb, Mb);
+    }
+
+    public static string FormatThreshold(int minFileMb)
+    {
+        var (amount, unit) = FromMinFileMb(minFileMb);
+        var text = Math.Abs(amount - Math.Round(amount)) < 0.001
+            ? ((long)Math.Round(amount)).ToString()
+            : amount.ToString("0.##");
+        return $"{text} {unit}";
+    }
+}
+
 /// <summary>API → agent: on-demand disk usage scan (top folders + large files).</summary>
 public sealed class DiskUsageScanRequestDto
 {
     /// <summary>Opaque id so the API can match the result and clear the pending request.</summary>
     public required string ScanId { get; init; }
 
-    /// <summary>Root to scan, e.g. <c>C:\</c>.</summary>
+    /// <summary>
+    /// Root to scan, e.g. <c>C:\</c>, or <see cref="DiskUsageScanRoots.AllFixedDrives"/> / empty for every fixed drive.
+    /// </summary>
     public required string RootPath { get; init; }
 
     /// <summary>When the operator clicked Scan (UTC). Survives navigation; used for UI timers.</summary>
     public DateTimeOffset RequestedUtc { get; init; }
 
-    /// <summary>List files at or above this size (MB). Default 100.</summary>
-    public int MinFileMb { get; init; } = 100;
+    /// <summary>List files at or above this size (MiB, 1024-based). Default 1024 (1 GiB).</summary>
+    public int MinFileMb { get; init; } = 1024;
 
     /// <summary>How many largest first-level folders to return. Default 25.</summary>
     public int TopFolderCount { get; init; } = 25;

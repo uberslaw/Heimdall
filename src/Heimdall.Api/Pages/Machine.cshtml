@@ -360,12 +360,12 @@ else if (d is not null)
                         <text>Requested @MachineModel.FormatLocalTimestamp(reqUtc)</text>
                         @if (!string.IsNullOrWhiteSpace(Model.PendingDiskScanRoot))
                         {
-                            <text> · @Model.PendingDiskScanRoot</text>
+                            <text> · @DiskUsageScanRoots.FormatForDisplay(Model.PendingDiskScanRoot)</text>
                         }
                     }
                     else if (Model.PendingDiskUsageScan)
                     {
-                        <text>Scan queued@(string.IsNullOrWhiteSpace(Model.PendingDiskScanRoot) ? "" : $" for {Model.PendingDiskScanRoot}") — waiting for agent.</text>
+                        <text>Scan queued@(string.IsNullOrWhiteSpace(Model.PendingDiskScanRoot) ? "" : $" for {DiskUsageScanRoots.FormatForDisplay(Model.PendingDiskScanRoot)}") — waiting for agent.</text>
                     }
                 </p>
                 <p class="small mb-1" id="disk-usage-elapsed-line"></p>
@@ -395,15 +395,29 @@ else if (d is not null)
             <input type="hidden" name="StatsDuration" value="@Model.StatsDuration" />
             <div class="col-auto">
                 <label class="form-label small mb-0" for="disk-scan-root">Drive</label>
-                <select class="form-select form-select-sm" id="disk-scan-root" name="DiskScanRoot" style="min-width:6rem">
+                <select class="form-select form-select-sm" id="disk-scan-root" name="DiskScanRoot" style="min-width:9rem">
                     @{
-                        var roots = Model.DiskVolumes.Select(v => v.Name.TrimEnd('\\') + @"\").ToList();
-                        if (roots.Count == 0) { roots.Add(@"C:\"); }
-                        var selectedRoot = Model.PendingDiskScanRoot ?? roots[0];
+                        var allRootsValue = DiskUsageScanRoots.AllFixedDrives;
+                        var volumeRoots = Model.DiskVolumes.Select(v => v.Name.TrimEnd('\\') + @"\").ToList();
+                        var selectedRoot = Model.PendingDiskScanRoot
+                            ?? Model.DiskScanRoot
+                            ?? allRootsValue;
+                        if (string.IsNullOrWhiteSpace(selectedRoot))
+                            selectedRoot = allRootsValue;
+                        var allSelected = DiskUsageScanRoots.IsAllFixedDrives(selectedRoot);
                     }
-                    @foreach (var r in roots)
+                    @if (allSelected)
                     {
-                        if (string.Equals(r, selectedRoot, StringComparison.OrdinalIgnoreCase))
+                        <option value="@allRootsValue" selected>All fixed drives</option>
+                    }
+                    else
+                    {
+                        <option value="@allRootsValue">All fixed drives</option>
+                    }
+                    @foreach (var r in volumeRoots)
+                    {
+                        var sel = !allSelected && string.Equals(r, selectedRoot, StringComparison.OrdinalIgnoreCase);
+                        if (sel)
                         {
                             <option value="@r" selected>@r</option>
                         }
@@ -415,9 +429,26 @@ else if (d is not null)
                 </select>
             </div>
             <div class="col-auto">
-                <label class="form-label small mb-0" for="disk-scan-min">Min file size (MB)</label>
-                <input class="form-control form-control-sm" type="number" id="disk-scan-min" name="DiskScanMinFileMb"
-                       value="@Model.DiskScanMinFileMb" min="10" max="10240" step="10" style="width:7rem" />
+                <label class="form-label small mb-0" for="disk-scan-min-amount">Min file size</label>
+                <div class="d-flex gap-1">
+                    <input class="form-control form-control-sm" type="number" id="disk-scan-min-amount"
+                           name="DiskScanMinSizeAmount"
+                           value="@Model.DiskScanMinSizeAmount.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                           min="0.01" max="100000" step="any" style="width:6rem" />
+                    <select class="form-select form-select-sm" id="disk-scan-min-unit" name="DiskScanMinSizeUnit" style="width:4.5rem">
+                        @foreach (var u in DiskSizeUnits.All)
+                        {
+                            if (string.Equals(u, Model.DiskScanMinSizeUnit, StringComparison.OrdinalIgnoreCase))
+                            {
+                                <option value="@u" selected>@u</option>
+                            }
+                            else
+                            {
+                                <option value="@u">@u</option>
+                            }
+                        }
+                    </select>
+                </div>
             </div>
             <div class="col-auto">
                 <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm"
@@ -439,7 +470,7 @@ else if (d is not null)
         {
             <div class="small text-secondary mb-2">
                 Last scan @MachineModel.FormatLocalTimestamp(Model.DiskUsageScanUtc ?? scan.CompletedUtc)
-                · @scan.RootPath
+                · @DiskUsageScanRoots.FormatForDisplay(scan.RootPath)
                 · @scan.ElapsedSeconds.ToString("0.#")s
                 · @scan.FilesSeen.ToString("N0") files
                 · @MachineModel.FormatBytes(scan.BytesScanned) seen

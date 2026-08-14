@@ -37,7 +37,7 @@ public sealed class StorageScanService(
             DayOfWeek = ParseDayOfWeek(section.GetValue<string>("DayOfWeek"), DayOfWeek.Sunday),
             TimeUtc = ParseTimeUtc(section.GetValue<string>("TimeUtc"), new TimeOnly(6, 0)),
             MinAgentVersion = section.GetValue("MinAgentVersion", VersionCompare.MinDiskUsageScanVersion),
-            RootPath = NormalizeRoot(section.GetValue<string>("RootPath") ?? @"C:\"),
+            RootPath = NormalizeRoot(section.GetValue<string>("RootPath")),
             MaxSeconds = Math.Clamp(section.GetValue("MaxSeconds", FleetMaxSeconds), 30, 600),
             PollMinutes = Math.Max(1, section.GetValue("PollMinutes", 15)),
             InitialDelaySeconds = Math.Max(0, section.GetValue("InitialDelaySeconds", 90))
@@ -206,13 +206,19 @@ public sealed class StorageScanService(
             FleetProfile = true
         };
 
-    private static string NormalizeRoot(string root)
+    /// <summary>
+    /// Empty / <c>*</c> / <c>all</c> → all fixed drives. Explicit <c>C:\</c> (etc.) kept for testing overrides.
+    /// </summary>
+    private static string NormalizeRoot(string? root)
     {
-        var r = (root ?? @"C:\").Trim();
+        if (DiskUsageScanRoots.IsAllFixedDrives(root))
+            return DiskUsageScanRoots.AllFixedDrives;
+
+        var r = (root ?? "").Trim();
         if (r.Length == 2 && r[1] == ':')
             r += @"\";
         if (!System.Text.RegularExpressions.Regex.IsMatch(r, @"^[A-Za-z]:\\"))
-            return @"C:\";
+            return DiskUsageScanRoots.AllFixedDrives;
         return r;
     }
 
@@ -237,7 +243,8 @@ public sealed class StorageScanOptions
     public DayOfWeek DayOfWeek { get; init; } = DayOfWeek.Sunday;
     public TimeOnly TimeUtc { get; init; } = new(6, 0);
     public int MinAgentVersion { get; init; } = VersionCompare.MinDiskUsageScanVersion;
-    public string RootPath { get; init; } = @"C:\";
+    /// <summary><see cref="DiskUsageScanRoots.AllFixedDrives"/> or a single drive root like <c>C:\</c>.</summary>
+    public string RootPath { get; init; } = DiskUsageScanRoots.AllFixedDrives;
     public int MaxSeconds { get; init; } = StorageScanService.FleetMaxSeconds;
     public int PollMinutes { get; init; } = 15;
     public int InitialDelaySeconds { get; init; } = 90;

@@ -4,9 +4,10 @@ using Heimdall.Shared.Contracts;
 namespace Heimdall.Agent.Collectors;
 
 /// <summary>
-/// On-demand disk usage: sizes of first-level folders under a root, plus the largest files
-/// above a threshold. Single walk, throttled, skips reparse points / access-denied paths.
-/// Fleet profile can exclude system roots from the main walk while still measuring known hotspots.
+/// On-demand disk usage: sizes of first-level folders under a root (or all fixed drives),
+/// plus the largest files above a threshold. Single walk per root, throttled, skips reparse
+/// points / access-denied paths. Fleet profile can exclude system roots from the main walk
+/// while still measuring known hotspots.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class DiskUsageScanner
@@ -46,20 +47,25 @@ public static class DiskUsageScanner
         CancellationToken ct = default)
     {
         var started = DateTimeOffset.UtcNow;
-        var root = NormalizeRoot(request.RootPath);
+        var roots = ResolveRoots(request.RootPath);
+        var displayRoot = roots.Count <= 1
+            ? (roots.Count == 1 ? roots[0] : DiskUsageScanRoots.AllFixedDrives)
+            : DiskUsageScanRoots.AllFixedDrives;
         var minBytes = Math.Max(1, request.MinFileMb) * 1024L * 1024L;
         var topN = Math.Clamp(request.TopFolderCount, 1, 100);
         var maxFiles = Math.Clamp(request.MaxLargeFiles, 1, 500);
         var maxSeconds = Math.Clamp(request.MaxSeconds, 30, 600);
-        var deadline = started.AddSeconds(maxSeconds);
+        var overallDeadline = started.AddSeconds(maxSeconds);
         var excludeSystem = request.ExcludeSystemFolders;
         var includeHotspots = request.IncludeHotspots;
 
         var folderBytes = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         var folderFiles = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var large = new List<DiskUsageFileDto>(maxFiles + 8);
+        // Hotspot totals keyed by "key|path" so the same named hotspot on D: vs C: stays distinct.
         var hotspotBytes = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         var hotspotFiles = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var hotspotMeta = new Dictionary<string, (string Key, string Path)>(StringComparer.OrdinalIgnoreCase);
         var profileBytes = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         var profileFiles = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
@@ -68,13 +74,7 @@ public static class DiskUsageScanner
         var truncated = false;
         string? error = null;
         var walkSteps = 0;
-        const string rootFilesKey = ".";
         var lastProgressUtc = DateTimeOffset.MinValue;
-
-        var rootFull = Path.GetFullPath(root).TrimEnd('\\') + @"\";
-        var ccmcachePath = Path.Combine(rootFull, "Windows", "ccmcache");
-        var projectsPath = Path.Combine(rootFull, "Projects");
-        var usersPath = Path.Combine(rootFull, "Users");
 
         void EmitProgress(string status, string? message = null, bool force = false)
         {
@@ -86,7 +86,7 @@ public static class DiskUsageScanner
             onProgress(new DiskUsageScanProgressDto
             {
                 ScanId = request.ScanId,
-                RootPath = root,
+                RootPath = displayRoot,
                 Status = status,
                 UpdatedUtc = now,
                 ElapsedSeconds = Math.Round((now - started).TotalSeconds, 1),
@@ -96,7 +96,7 @@ public static class DiskUsageScanner
             });
         }
 
-        void NoteFile(string file, long size)
+        void NoteFile(string root, string file, long size, string ccmcachePath, string projectsPath, string usersPath)
         {
             filesSeen++;
             bytesScanned += size;
@@ -108,28 +108,12 @@ public static class DiskUsageScanner
             if (includeHotspots)
             {
                 if (IsUnder(file, ccmcachePath))
-                {
-                    hotspotBytes[DiskUsageHotspotKeys.CcmCache] =
-                        hotspotBytes.GetValueOrDefault(DiskUsageHotspotKeys.CcmCache) + size;
-                    hotspotFiles[DiskUsageHotspotKeys.CcmCache] =
-                        hotspotFiles.GetValueOrDefault(DiskUsageHotspotKeys.CcmCache) + 1;
-                }
-
+                    AddHotspot(DiskUsageHotspotKeys.CcmCache, ccmcachePath, size);
                 if (IsUnder(file, projectsPath))
-                {
-                    hotspotBytes[DiskUsageHotspotKeys.Projects] =
-                        hotspotBytes.GetValueOrDefault(DiskUsageHotspotKeys.Projects) + size;
-                    hotspotFiles[DiskUsageHotspotKeys.Projects] =
-                        hotspotFiles.GetValueOrDefault(DiskUsageHotspotKeys.Projects) + 1;
-                }
-
+                    AddHotspot(DiskUsageHotspotKeys.Projects, projectsPath, size);
                 if (IsUnder(file, usersPath))
                 {
-                    hotspotBytes[DiskUsageHotspotKeys.Users] =
-                        hotspotBytes.GetValueOrDefault(DiskUsageHotspotKeys.Users) + size;
-                    hotspotFiles[DiskUsageHotspotKeys.Users] =
-                        hotspotFiles.GetValueOrDefault(DiskUsageHotspotKeys.Users) + 1;
-
+                    AddHotspot(DiskUsageHotspotKeys.Users, usersPath, size);
                     var profile = UserProfileBucket(usersPath, file);
                     if (profile is not null)
                     {
@@ -147,7 +131,15 @@ public static class DiskUsageScanner
             }
         }
 
-        bool WalkDirectory(string startDir, bool seedFirstLevelBuckets)
+        void AddHotspot(string key, string path, long size)
+        {
+            var id = key + "|" + path;
+            hotspotMeta[id] = (key, path);
+            hotspotBytes[id] = hotspotBytes.GetValueOrDefault(id) + size;
+            hotspotFiles[id] = hotspotFiles.GetValueOrDefault(id) + 1;
+        }
+
+        bool WalkDirectory(string startDir, DateTimeOffset deadline, string root, string ccmcachePath, string projectsPath, string usersPath, bool seedFirstLevelBuckets)
         {
             var stack = new Stack<string>();
             stack.Push(startDir);
@@ -186,7 +178,7 @@ public static class DiskUsageScanner
                         continue;
                     }
 
-                    NoteFile(file, size);
+                    NoteFile(root, file, size, ccmcachePath, projectsPath, usersPath);
                 }
 
                 if (truncated) return false;
@@ -208,73 +200,125 @@ public static class DiskUsageScanner
             return true;
         }
 
-        EmitProgress(DiskUsageScanStatuses.Running, "Scan started", force: true);
-
-        try
+        void ScanOneRoot(string root, DateTimeOffset deadline)
         {
+            var rootFull = Path.GetFullPath(root).TrimEnd('\\') + @"\";
+            var rootFilesKey = rootFull + "(files in root)";
+            var ccmcachePath = Path.Combine(rootFull, "Windows", "ccmcache");
+            var projectsPath = Path.Combine(rootFull, "Projects");
+            var usersPath = Path.Combine(rootFull, "Users");
+
             if (!Directory.Exists(root))
             {
-                EmitProgress(DiskUsageScanStatuses.Failed, $"Path not found: {root}", force: true);
-                return new DiskUsageScanResultDto
-                {
-                    ScanId = request.ScanId,
-                    RootPath = root,
-                    CompletedUtc = DateTimeOffset.UtcNow,
-                    ElapsedSeconds = (DateTimeOffset.UtcNow - started).TotalSeconds,
-                    Error = $"Path not found: {root}"
-                };
+                EmitProgress(DiskUsageScanStatuses.Running, $"Path not found: {root}", force: true);
+                // Only fail the whole job for a single explicit root; multi-drive skips missing volumes.
+                if (roots.Count == 1)
+                    error = $"Path not found: {root}";
+                return;
             }
 
-            folderBytes[rootFilesKey] = 0;
-            folderFiles[rootFilesKey] = 0;
+            // Register named hotspot paths even if empty / not walked yet.
+            if (includeHotspots)
+            {
+                EnsureHotspotMeta(DiskUsageHotspotKeys.CcmCache, ccmcachePath);
+                EnsureHotspotMeta(DiskUsageHotspotKeys.Projects, projectsPath);
+                if (Directory.Exists(usersPath))
+                    EnsureHotspotMeta(DiskUsageHotspotKeys.Users, usersPath);
+            }
+
+            folderBytes[rootFilesKey] = folderBytes.GetValueOrDefault(rootFilesKey);
+            folderFiles[rootFilesKey] = folderFiles.GetValueOrDefault(rootFilesKey);
 
             foreach (var dir in SafeEnumerateDirectories(root))
             {
                 if (excludeSystem && IsSystemFirstLevelName(dir))
                     continue;
-                folderBytes[dir] = 0;
-                folderFiles[dir] = 0;
+                folderBytes.TryAdd(dir, 0);
+                folderFiles.TryAdd(dir, 0);
             }
 
-            // Root files (not in a first-level folder)
             foreach (var file in SafeEnumerateFiles(root))
             {
                 long size;
                 try { size = new FileInfo(file).Length; }
                 catch { continue; }
-                NoteFile(file, size);
+                NoteFile(root, file, size, ccmcachePath, projectsPath, usersPath);
             }
 
-            // Walk non-system first-level trees (or everything when ExcludeSystemFolders is false)
             foreach (var dir in SafeEnumerateDirectories(root))
             {
                 if (excludeSystem && IsSystemFirstLevelName(dir))
                     continue;
-                if (!WalkDirectory(dir, seedFirstLevelBuckets: false))
-                    break;
+                if (!WalkDirectory(dir, deadline, root, ccmcachePath, projectsPath, usersPath, seedFirstLevelBuckets: false))
+                    return;
             }
 
-            // When system roots were skipped, still measure priority hotspots under Windows / Projects.
             if (includeHotspots && excludeSystem && !truncated)
             {
                 if (Directory.Exists(ccmcachePath))
                 {
-                    EmitProgress(DiskUsageScanStatuses.Running, "Scanning ccmcache hotspot", force: true);
-                    WalkDirectory(ccmcachePath, seedFirstLevelBuckets: false);
+                    EmitProgress(DiskUsageScanStatuses.Running, $"Scanning ccmcache on {root}", force: true);
+                    if (!WalkDirectory(ccmcachePath, deadline, root, ccmcachePath, projectsPath, usersPath, seedFirstLevelBuckets: false))
+                        return;
                 }
 
-                // Projects may already be walked as a non-system first-level folder; only force if missing.
                 if (!truncated
                     && Directory.Exists(projectsPath)
                     && !folderBytes.ContainsKey(Path.GetFullPath(projectsPath).TrimEnd('\\')))
                 {
-                    EmitProgress(DiskUsageScanStatuses.Running, "Scanning Projects hotspot", force: true);
-                    WalkDirectory(projectsPath, seedFirstLevelBuckets: false);
+                    EmitProgress(DiskUsageScanStatuses.Running, $"Scanning Projects on {root}", force: true);
+                    WalkDirectory(projectsPath, deadline, root, ccmcachePath, projectsPath, usersPath, seedFirstLevelBuckets: false);
                 }
             }
-            else if (includeHotspots && !excludeSystem && !truncated)
+        }
+
+        void EnsureHotspotMeta(string key, string path)
+        {
+            var id = key + "|" + path;
+            hotspotMeta.TryAdd(id, (key, path));
+            hotspotBytes.TryAdd(id, 0);
+            hotspotFiles.TryAdd(id, 0);
+        }
+
+        EmitProgress(DiskUsageScanStatuses.Running,
+            roots.Count > 1 ? $"Scan started ({roots.Count} fixed drives)" : "Scan started",
+            force: true);
+
+        try
+        {
+            if (roots.Count == 0)
             {
-                // Full walk already covered hotspots via NoteFile prefix checks.
+                error = "No fixed drives found to scan";
+                EmitProgress(DiskUsageScanStatuses.Failed, error, force: true);
+            }
+            else
+            {
+                for (var i = 0; i < roots.Count; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var now = DateTimeOffset.UtcNow;
+                    if (now >= overallDeadline)
+                    {
+                        truncated = true;
+                        break;
+                    }
+
+                    var remainingSec = Math.Max(0, (overallDeadline - now).TotalSeconds);
+                    var drivesLeft = roots.Count - i;
+                    // Fair share of remaining budget; keep a small floor so tiny leftovers still do something.
+                    var softSec = Math.Max(5, remainingSec / drivesLeft);
+                    var driveDeadline = now.AddSeconds(softSec);
+                    if (driveDeadline > overallDeadline)
+                        driveDeadline = overallDeadline;
+
+                    var root = roots[i];
+                    EmitProgress(DiskUsageScanStatuses.Running,
+                        roots.Count > 1 ? $"Scanning {root} ({i + 1}/{roots.Count})" : $"Scanning {root}",
+                        force: true);
+                    ScanOneRoot(root, driveDeadline);
+                    if (truncated && DateTimeOffset.UtcNow >= overallDeadline)
+                        break;
+                }
             }
         }
         catch (OperationCanceledException)
@@ -288,11 +332,18 @@ public static class DiskUsageScanner
         }
 
         var topFolders = folderBytes
-            .Where(kv => kv.Key != rootFilesKey || kv.Value > 0)
-            .Where(kv => !excludeSystem || kv.Key == rootFilesKey || !IsSystemFirstLevelName(kv.Key))
+            .Where(kv => !kv.Key.EndsWith("(files in root)", StringComparison.OrdinalIgnoreCase) || kv.Value > 0)
+            .Where(kv =>
+            {
+                if (!excludeSystem) return true;
+                if (kv.Key.EndsWith("(files in root)", StringComparison.OrdinalIgnoreCase)) return true;
+                return !IsSystemFirstLevelName(kv.Key);
+            })
             .Select(kv => new DiskUsageFolderDto
             {
-                Path = kv.Key == rootFilesKey ? root.TrimEnd('\\') + @"\ (files in root)" : kv.Key,
+                Path = kv.Key.EndsWith("(files in root)", StringComparison.OrdinalIgnoreCase)
+                    ? kv.Key
+                    : kv.Key,
                 SizeBytes = kv.Value,
                 FileCount = folderFiles.GetValueOrDefault(kv.Key)
             })
@@ -305,15 +356,7 @@ public static class DiskUsageScanner
             .Take(maxFiles)
             .ToList();
 
-        var hotspots = BuildHotspots(
-            includeHotspots,
-            ccmcachePath,
-            projectsPath,
-            usersPath,
-            hotspotBytes,
-            hotspotFiles,
-            profileBytes,
-            profileFiles);
+        var hotspots = BuildHotspots(includeHotspots, hotspotMeta, hotspotBytes, hotspotFiles, profileBytes, profileFiles);
 
         var finalStatus = error is null ? DiskUsageScanStatuses.Complete : DiskUsageScanStatuses.Failed;
         EmitProgress(finalStatus, error ?? (truncated ? "Completed (time budget reached)" : "Completed"), force: true);
@@ -321,7 +364,7 @@ public static class DiskUsageScanner
         return new DiskUsageScanResultDto
         {
             ScanId = request.ScanId,
-            RootPath = root,
+            RootPath = displayRoot,
             CompletedUtc = DateTimeOffset.UtcNow,
             ElapsedSeconds = Math.Round((DateTimeOffset.UtcNow - started).TotalSeconds, 1),
             Truncated = truncated,
@@ -334,11 +377,41 @@ public static class DiskUsageScanner
         };
     }
 
+    /// <summary>Resolve request root to one or more drive roots (trailing slash).</summary>
+    public static IReadOnlyList<string> ResolveRoots(string? rootPath)
+    {
+        if (DiskUsageScanRoots.IsAllFixedDrives(rootPath))
+            return GetFixedDriveRoots();
+
+        return [NormalizeRoot(rootPath!)];
+    }
+
+    public static IReadOnlyList<string> GetFixedDriveRoots()
+    {
+        try
+        {
+            return DriveInfo.GetDrives()
+                .Where(d => d.DriveType == DriveType.Fixed && d.IsReady)
+                .Select(d =>
+                {
+                    try { return Path.GetFullPath(d.RootDirectory.FullName); }
+                    catch { return d.Name; }
+                })
+                .Where(r => !string.IsNullOrWhiteSpace(r))
+                .Select(r => r.EndsWith('\\') ? r : r + @"\")
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(r => r, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
     private static List<DiskUsageHotspotDto> BuildHotspots(
         bool includeHotspots,
-        string ccmcachePath,
-        string projectsPath,
-        string usersPath,
+        Dictionary<string, (string Key, string Path)> hotspotMeta,
         Dictionary<string, long> hotspotBytes,
         Dictionary<string, int> hotspotFiles,
         Dictionary<string, long> profileBytes,
@@ -349,31 +422,24 @@ public static class DiskUsageScanner
 
         var list = new List<DiskUsageHotspotDto>();
 
-        void AddNamed(string key, string path)
+        foreach (var (id, meta) in hotspotMeta
+                     .OrderBy(kv => kv.Value.Key, StringComparer.OrdinalIgnoreCase)
+                     .ThenBy(kv => kv.Value.Path, StringComparer.OrdinalIgnoreCase))
         {
-            var exists = Directory.Exists(path);
+            // Skip empty Users / Projects placeholders that never existed.
+            var exists = Directory.Exists(meta.Path);
+            var size = hotspotBytes.GetValueOrDefault(id);
+            if (meta.Key is DiskUsageHotspotKeys.Users or DiskUsageHotspotKeys.Projects
+                && !exists && size <= 0)
+                continue;
+
             list.Add(new DiskUsageHotspotDto
             {
-                Key = key,
-                Path = path,
+                Key = meta.Key,
+                Path = meta.Path,
                 Exists = exists,
-                SizeBytes = hotspotBytes.GetValueOrDefault(key),
-                FileCount = hotspotFiles.GetValueOrDefault(key)
-            });
-        }
-
-        AddNamed(DiskUsageHotspotKeys.CcmCache, ccmcachePath);
-        AddNamed(DiskUsageHotspotKeys.Projects, projectsPath);
-
-        if (Directory.Exists(usersPath) || hotspotBytes.ContainsKey(DiskUsageHotspotKeys.Users))
-        {
-            list.Add(new DiskUsageHotspotDto
-            {
-                Key = DiskUsageHotspotKeys.Users,
-                Path = usersPath,
-                Exists = Directory.Exists(usersPath),
-                SizeBytes = hotspotBytes.GetValueOrDefault(DiskUsageHotspotKeys.Users),
-                FileCount = hotspotFiles.GetValueOrDefault(DiskUsageHotspotKeys.Users)
+                SizeBytes = size,
+                FileCount = hotspotFiles.GetValueOrDefault(id)
             });
         }
 
@@ -407,12 +473,12 @@ public static class DiskUsageScanner
         var full = Path.GetFullPath(filePath);
         var rootFull = Path.GetFullPath(root).TrimEnd('\\') + @"\";
         if (!full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
-            return ".";
+            return rootFull + "(files in root)";
 
         var rel = full[rootFull.Length..];
         var slash = rel.IndexOfAny(['\\', '/']);
         if (slash < 0)
-            return "."; // file in root
+            return rootFull + "(files in root)";
 
         return rootFull + rel[..slash];
     }

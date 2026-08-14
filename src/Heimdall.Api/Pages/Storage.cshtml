@@ -22,7 +22,7 @@
     <div class="d-flex flex-wrap align-items-end justify-content-between gap-3">
         <div>
             <p class="text-secondary small mb-1">
-                Drive free space from agent heartbeats. Deep scans (top non-system folders, files ≥ 1&nbsp;GB, hotspots)
+                Drive free space from agent heartbeats. Deep scans (all fixed drives by default — top non-system folders, files ≥ 1&nbsp;GB, hotspots)
                 run weekly from the API or on demand — agent v@(opts.MinAgentVersion)+.
             </p>
             <p class="text-secondary small mb-0">
@@ -182,7 +182,7 @@ else
                         @if (card.Scan is { } scan)
                         {
                             <div class="small text-secondary mb-2">
-                                Deep scan @scan.RootPath
+                                Deep scan @DiskUsageScanRoots.FormatForDisplay(scan.RootPath)
                                 · @scan.ElapsedSeconds.ToString("0.#")s
                                 · @scan.FilesSeen.ToString("N0") files
                                 @if (scan.Truncated)
