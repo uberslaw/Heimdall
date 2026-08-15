@@ -158,6 +158,69 @@ else
     </div>
 </div>
 
+@if (Model.RecentDetectedRuns.Count > 0)
+{
+    <div class="hd-panel mb-3">
+        <h3 class="h6 mb-2">Recent detected runs</h3>
+        <p class="text-secondary small mb-2">
+            CPU-threshold detection (tuflow.exe &gt; 20% for 2 samples → start; ≤ 20% or gone for 2 → stop).
+            Independent of Heimdall-queued launches above. Sample series retained for behaviour analysis.
+        </p>
+        <div class="table-responsive">
+            <table class="hd-table hd-sortable mb-0">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Machine</th>
+                        <th data-sort="text">User</th>
+                        <th data-sort="text">State</th>
+                        <th data-sort="text">Launch</th>
+                        <th data-sort="text">Stop</th>
+                        <th data-sort="num">Duration</th>
+                        <th data-sort="num">Ramp-up</th>
+                        <th data-sort="num">Ramp-down</th>
+                        <th data-sort="num">Peak CPU</th>
+                        <th data-sort="num">Peak GPU</th>
+                        <th data-sort="text">Hardware</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var d in Model.RecentDetectedRuns)
+                {
+                    <tr>
+                        <td>@(d.FriendlyName ?? d.Hostname)</td>
+                        <td>@(d.Username ?? "—")</td>
+                        <td>@d.State</td>
+                        <td data-sort-value="@(d.DetectedStartUtc?.ToUnixTimeSeconds() ?? 0)">
+                            @(d.DetectedStartUtc is { } s ? s.ToLocalTime().ToString("dd/MM/yyyy HH:mm") : "—")
+                        </td>
+                        <td data-sort-value="@(d.DetectedEndUtc?.ToUnixTimeSeconds() ?? 0)">
+                            @(d.DetectedEndUtc is { } e ? e.ToLocalTime().ToString("dd/MM/yyyy HH:mm") : "—")
+                        </td>
+                        <td data-sort-value="@(d.Duration?.TotalSeconds ?? -1)">
+                            @(d.Duration is { } dur ? TuflowRunsModel.FormatDuration(dur) : "—")
+                        </td>
+                        <td data-sort-value="@(d.RampUpSeconds ?? -1)">
+                            @(d.RampUpSeconds is { } ru ? TuflowRunsModel.FormatSeconds(ru) : "—")
+                        </td>
+                        <td data-sort-value="@(d.RampDownSeconds ?? -1)">
+                            @(d.RampDownSeconds is { } rd ? TuflowRunsModel.FormatSeconds(rd) : "—")
+                        </td>
+                        <td data-sort-value="@(d.PeakCpuPercent ?? -1)">@(d.PeakCpuPercent is { } pc ? $"{pc:0.0}%" : "—")</td>
+                        <td data-sort-value="@(d.PeakGpuPercent ?? -1)">@(d.PeakGpuPercent is { } pg ? $"{pg:0.0}%" : "—")</td>
+                        <td class="small text-secondary">
+                            @{
+                                var hw = string.Join(" · ", new[] { d.HardwareCpu, d.HardwareGpu }.Where(x => !string.IsNullOrWhiteSpace(x)));
+                            }
+                            @(string.IsNullOrWhiteSpace(hw) ? "—" : hw)
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
 <script>
 function hdTuflowToggleLaunchMode(form) {
     if (!form) return;

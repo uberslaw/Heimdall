@@ -28,9 +28,10 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Heimdall.Api.Pages;
 
-public class TuflowRunsModel(TuflowRunService runs, FloodAccessGuard flood) : PageModel
+public class TuflowRunsModel(TuflowRunService runs, TuflowBehaviourService behaviour, FloodAccessGuard flood) : PageModel
 {
     public IReadOnlyList<TuflowRunRow> Rows { get; private set; } = [];
+    public IReadOnlyList<TuflowBehaviourService.TuflowBehaviourListRow> RecentDetectedRuns { get; private set; } = [];
     public int EnrolledCount { get; private set; }
     public int RunningCount { get; private set; }
 
@@ -42,6 +43,7 @@ public class TuflowRunsModel(TuflowRunService runs, FloodAccessGuard flood) : Pa
         Rows = await runs.ListAsync(ct);
         EnrolledCount = Rows.Count;
         RunningCount = Rows.Count(r => r.TuflowRunningNow);
+        RecentDetectedRuns = await behaviour.ListRecentAsync(take: 25, ct);
         return Page();
     }
 
@@ -182,4 +184,10 @@ public class TuflowRunsModel(TuflowRunService runs, FloodAccessGuard flood) : Pa
         string.IsNullOrWhiteSpace(raw)
             ? []
             : raw.Split([' ', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    public static string FormatDuration(TimeSpan t) =>
+        t.TotalHours >= 1 ? $"{(int)t.TotalHours}h {t.Minutes:D2}m" : $"{(int)t.TotalMinutes}m {t.Seconds:D2}s";
+
+    public static string FormatSeconds(double sec) =>
+        sec >= 3600 ? $"{sec / 3600.0:0.0}h" : sec >= 60 ? $"{sec / 60.0:0.0}m" : $"{sec:0}s";
 }

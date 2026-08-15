@@ -628,8 +628,6 @@ public sealed class Worker(
         if (now < _nextFleetSample)
             return;
 
-        _nextFleetSample = now.Add(FleetSampleInterval);
-
         ResourceMetricsCollector.Sample sample;
         try
         {
@@ -638,6 +636,7 @@ public sealed class Worker(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Fleet sampling collect failed for {Host}", hostname);
+            _nextFleetSample = now.Add(FleetSampleInterval);
             return;
         }
 
@@ -645,7 +644,22 @@ public sealed class Worker(
             ? _config.FleetProcessNames
             : ["tuflow"];
         var tuflowRunning = IsFleetProcessRunning(sample, processNames);
+        // Faster GPU/process cadence while TUFLOW is present (or still ending) — not globally.
+        var interval = tuflowRunning
+            ? TimeSpan.FromSeconds(TuflowBehaviourDefaults.FastSampleSeconds)
+            : FleetSampleInterval;
+        _nextFleetSample = now.Add(interval);
+
         var processUtil = AggregateFleetProcessUtil(sample, processNames);
+        var fleetPids = sample.ProcessesByName
+            .Where(kv => MatchesFleetProcess(kv.Key, processNames))
+            .Select(kv => kv.Value.ProcessId)
+            .Where(pid => pid > 0)
+            .Distinct()
+            .ToList();
+        var gpuEngines = tuflowRunning && fleetPids.Count > 0
+            ? ResourceMetricsCollector.CollectGpuEngineSightingsForPids(fleetPids)
+            : [];
 
         static double? BytesToMBps(double? bytesPerSec) =>
             bytesPerSec is null ? null : Math.Round(bytesPerSec.Value / (1024.0 * 1024.0), 3);
@@ -671,7 +685,9 @@ public sealed class Worker(
             TopCpuProcesses = ResourceMetricsCollector.TopByCpu(sample, 5),
             TopGpuProcesses = ResourceMetricsCollector.TopByGpu(sample, 5),
             TopDiskReadProcesses = ResourceMetricsCollector.TopByDiskRead(sample, 5),
-            TopDiskWriteProcesses = ResourceMetricsCollector.TopByDiskWrite(sample, 5)
+            TopDiskWriteProcesses = ResourceMetricsCollector.TopByDiskWrite(sample, 5),
+            GpuEngineSightings = gpuEngines,
+            SampleIntervalSeconds = (int)interval.TotalSeconds
         };
 
         var ok = await api.ReportFleetSnapshotAsync(dto, ct);

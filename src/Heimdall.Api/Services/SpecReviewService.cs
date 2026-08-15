@@ -464,18 +464,24 @@ public sealed class SpecReviewService(
         await db.SaveChangesAsync(ct);
     }
 
+    /// <summary>
+    /// Team primary for Spec auto-add / Continue. System classification lists (Core Windows / SOE /
+    /// Specialization) are never returned — <see cref="AppListService.AddEntriesToListAsync"/> rejects
+    /// them, and treating Specialization as the sole linked list used to 500 every inventory ingest
+    /// for teams that only have system lists linked (e.g. Energy), poisoning LastSeenUtc via the queue.
+    /// </summary>
     private async Task<int?> GetPrimaryAppListIdAsync(int teamId, CancellationToken ct)
     {
         var primary = await db.TeamAppListLinks.AsNoTracking()
-            .Where(l => l.TeamId == teamId && !l.IsExcluded && l.IsPrimary)
+            .Where(l => l.TeamId == teamId && !l.IsExcluded && l.IsPrimary && !l.AppList.IsSystem)
             .Select(l => (int?)l.AppListId)
             .FirstOrDefaultAsync(ct);
         if (primary is not null)
             return primary;
 
-        // Fallback: single tracking list → treat as primary.
+        // Fallback: single non-system tracking list → treat as primary.
         var tracking = await db.TeamAppListLinks.AsNoTracking()
-            .Where(l => l.TeamId == teamId && !l.IsExcluded)
+            .Where(l => l.TeamId == teamId && !l.IsExcluded && !l.AppList.IsSystem)
             .Select(l => l.AppListId)
             .ToListAsync(ct);
         return tracking.Count == 1 ? tracking[0] : null;

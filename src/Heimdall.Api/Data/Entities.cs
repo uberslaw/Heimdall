@@ -793,6 +793,74 @@ public class TuflowRunRecord
     public DateTimeOffset UpdatedUtc { get; set; }
 }
 
+/// <summary>
+/// CPU-threshold-detected TUFLOW behaviour run (manual or Heimdall-launched). Independent of
+/// <see cref="TuflowRunRecord"/> which tracks launcher-managed starts. One open row per machine
+/// while Watching/Active; closed when stop is confirmed.
+/// </summary>
+public class TuflowBehaviourRun
+{
+    public long Id { get; set; }
+    public required string RunId { get; set; }
+    public int MachineId { get; set; }
+    public Machine Machine { get; set; } = null!;
+    public string? Username { get; set; }
+    /// <summary>Copied from Machine inventory at open for hardware-vs-behaviour analysis.</summary>
+    public string? HardwareCpu { get; set; }
+    public string? HardwareGpu { get; set; }
+    public double? HardwareRamGb { get; set; }
+    /// <summary>One of TuflowBehaviourStates.*</summary>
+    public required string State { get; set; }
+    /// <summary>When tuflow.exe was first observed for this watch window.</summary>
+    public DateTimeOffset ProcessFirstSeenUtc { get; set; }
+    /// <summary>First of the confirming elevated pair (CPU &gt; threshold for N intervals).</summary>
+    public DateTimeOffset? DetectedStartUtc { get; set; }
+    /// <summary>First of the confirming low/gone pair.</summary>
+    public DateTimeOffset? DetectedEndUtc { get; set; }
+    /// <summary>When process left after DetectedEndUtc (idle tail end); null if gone at stop confirm.</summary>
+    public DateTimeOffset? ProcessGoneUtc { get; set; }
+    /// <summary>Seconds from ProcessFirstSeenUtc to DetectedStartUtc.</summary>
+    public double? RampUpSeconds { get; set; }
+    /// <summary>Seconds from DetectedEndUtc to ProcessGoneUtc (process still open after speed drop).</summary>
+    public double? RampDownSeconds { get; set; }
+    public int ElevatedStreak { get; set; }
+    public int LowStreak { get; set; }
+    public int AbsentStreak { get; set; }
+    public DateTimeOffset? CandidateStartUtc { get; set; }
+    public DateTimeOffset? CandidateEndUtc { get; set; }
+    public double? PeakCpuPercent { get; set; }
+    public double? PeakGpuPercent { get; set; }
+    public double? SumCpuPercent { get; set; }
+    public double? SumGpuPercent { get; set; }
+    public int SampleCount { get; set; }
+    /// <summary>JSON object: bucket label → seconds spent (GPU% histogram).</summary>
+    public string GpuPercentHistogramJson { get; set; } = "{}";
+    /// <summary>JSON array of distinct GPU engine labels observed.</summary>
+    public string GpuEnginesObservedJson { get; set; } = "[]";
+    /// <summary>Optional link to Heimdall launcher RunId when one is active on the machine.</summary>
+    public string? LinkedTuflowRunId { get; set; }
+    public DateTimeOffset UpdatedUtc { get; set; }
+
+    public List<TuflowBehaviourSample> Samples { get; set; } = [];
+}
+
+/// <summary>Per-interval sample while a <see cref="TuflowBehaviourRun"/> is open (watching/active/idle tail).</summary>
+public class TuflowBehaviourSample
+{
+    public long Id { get; set; }
+    public long BehaviourRunId { get; set; }
+    public TuflowBehaviourRun BehaviourRun { get; set; } = null!;
+    public DateTimeOffset SampledAtUtc { get; set; }
+    public int IntervalSeconds { get; set; } = 30;
+    public bool TuflowRunning { get; set; }
+    public double? ProcessCpuPercent { get; set; }
+    public double? ProcessGpuPercent { get; set; }
+    public double? MachineCpuPercent { get; set; }
+    public double? MachineGpuPercent { get; set; }
+    /// <summary>JSON array of GpuEngineSightingDto.</summary>
+    public string GpuEnginesJson { get; set; } = "[]";
+}
+
 /// <summary>Latest live resource-metrics snapshot reported by the agent for a machine (one row per machine, upserted).</summary>
 public class MachineResourceMetric
 {

@@ -40,6 +40,8 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<FleetDashboardMachine> FleetDashboardMachines => Set<FleetDashboardMachine>();
     public DbSet<FleetMetricSnapshot> FleetMetricSnapshots => Set<FleetMetricSnapshot>();
     public DbSet<TuflowRunRecord> TuflowRunRecords => Set<TuflowRunRecord>();
+    public DbSet<TuflowBehaviourRun> TuflowBehaviourRuns => Set<TuflowBehaviourRun>();
+    public DbSet<TuflowBehaviourSample> TuflowBehaviourSamples => Set<TuflowBehaviourSample>();
     public DbSet<CustomTheme> CustomThemes => Set<CustomTheme>();
     public DbSet<SiteUsageEvent> SiteUsageEvents => Set<SiteUsageEvent>();
 
@@ -336,6 +338,26 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
             e.HasOne(x => x.Machine)
                 .WithMany()
                 .HasForeignKey(x => x.MachineId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TuflowBehaviourRun>(e =>
+        {
+            e.HasIndex(x => x.RunId).IsUnique();
+            e.HasIndex(x => new { x.MachineId, x.State });
+            e.HasIndex(x => new { x.MachineId, x.DetectedStartUtc });
+            e.HasOne(x => x.Machine)
+                .WithMany()
+                .HasForeignKey(x => x.MachineId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TuflowBehaviourSample>(e =>
+        {
+            e.HasIndex(x => new { x.BehaviourRunId, x.SampledAtUtc });
+            e.HasOne(x => x.BehaviourRun)
+                .WithMany(x => x.Samples)
+                .HasForeignKey(x => x.BehaviourRunId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

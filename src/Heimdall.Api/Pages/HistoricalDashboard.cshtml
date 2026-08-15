@@ -263,7 +263,7 @@
                             title="Username from the latest fleet sample (~30s). Empty when nobody is reported on that sample. Click to sort.">User</th>
                         <th class="hd-col-active hd-th-tip" data-sort="text" scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
-                            title="From the latest sample: Active = TUFLOW is running and the machine is busy (GPU &gt; 5%, CPU &gt; 10%, or disk read/write &gt; 5 MB/s). Idle = TUFLOW is running but below those thresholds. N/A = TUFLOW not detected. Click to sort.">Active</th>
+                            title="Detected run: HH:mm on top, dd/MM under (green = launch, red = stop). Otherwise Active/Idle/N/A from busy thresholds. Click to sort.">Active</th>
                         <th class="hd-th-tip" data-sort="num" scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
                             title="GPU utilisation from the latest ~30s sample. Can exceed 100% when Windows GPU Engine counters are summed across engines. Click to sort.">GPU %</th>
@@ -310,8 +310,10 @@
                     var stale = (DateTimeOffset.UtcNow - checkInUtc).TotalMinutes > 15;
                     var checkInLabel = HistoricalDashboardModel.FormatContact(checkInUtc);
                     var liveUser = UsernameDisplay.Format(r.Username);
-                    var statusLabel = HistoricalDashboardModel.ActiveIdleLabel(r.Status);
-                    var statusClass = HistoricalDashboardModel.FleetStatusTextClass(r.Status);
+                    var statusLabel = HistoricalDashboardModel.ActiveColumnLabel(r);
+                    var statusClass = HistoricalDashboardModel.ActiveColumnCssClass(r);
+                    var statusTitle = HistoricalDashboardModel.ActiveColumnTitle(r);
+                    var hasActiveStamp = HistoricalDashboardModel.TryGetActiveStamp(r, out var activeStamp);
                     <tr data-machine-id="@r.MachineId">
                         <td class="hd-col-host" data-sort-value="@r.DisplayName" data-live="host" title="@(stale ? $"Last agent check-in: {checkInLabel} (stale)" : r.Hostname)">
                             <a class="hd-live-host @(stale ? "hd-live-host-stale" : null)"
@@ -327,15 +329,24 @@
                                 <div class="hd-live-ip small">@r.LastIp</div>
                             }
                         </td>
-                        <td class="hd-col-user" data-sort-value="@liveUser" data-live="user">@UsernameDisplay.FormatOrDash(r.Username)</td>
+                        <td class="hd-col-user" data-sort-value="@liveUser" data-live="user"
+                            title="@(string.IsNullOrWhiteSpace(liveUser) ? null : liveUser)"
+                            aria-label="@(string.IsNullOrWhiteSpace(liveUser) ? null : liveUser)">@UsernameDisplay.FormatOrDash(r.Username)</td>
                         <td class="hd-col-active" data-sort-value="@statusLabel" data-live="status">
-                            @if (statusLabel == "N/A")
+                            @if (hasActiveStamp)
                             {
-                                <span class="text-secondary" title="TUFLOW not running">N/A</span>
+                                <span class="hd-active-stamp hd-status-text @activeStamp.CssClass" title="@statusTitle">
+                                    <span class="hd-active-stamp-time">@activeStamp.Time</span>
+                                    <span class="hd-active-stamp-date">@activeStamp.Date</span>
+                                </span>
+                            }
+                            else if (statusLabel == "N/A")
+                            {
+                                <span class="text-secondary" title="@statusTitle">N/A</span>
                             }
                             else if (statusLabel != "—")
                             {
-                                <span class="hd-status-text @statusClass" title="@statusLabel">@statusLabel</span>
+                                <span class="hd-status-text @statusClass" title="@statusTitle">@statusLabel</span>
                             }
                             else
                             {

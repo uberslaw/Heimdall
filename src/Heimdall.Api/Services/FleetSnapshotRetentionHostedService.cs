@@ -1,8 +1,11 @@
 namespace Heimdall.Api.Services;
 
+using Heimdall.Shared.Contracts;
+
 /// <summary>
 /// Periodic purge of FleetMetricSnapshots older than the configured retention window
 /// (default 90 days — matches Help / FleetDashboardService.RetentionDaysDefault).
+/// Also purges ended TuflowBehaviourRuns past Heimdall:TuflowBehaviour:SampleRetentionDays.
 /// </summary>
 public sealed class FleetSnapshotRetentionHostedService(
     IServiceScopeFactory scopeFactory,
@@ -67,6 +70,18 @@ public sealed class FleetSnapshotRetentionHostedService(
             logger.LogInformation(
                 "Fleet snapshot retention purge complete: deleted {Deleted} rows older than {Days} days.",
                 deleted, retentionDays);
+
+            var behaviour = scope.ServiceProvider.GetRequiredService<TuflowBehaviourService>();
+            var behaviourSection = configuration.GetSection("Heimdall:TuflowBehaviour");
+            var behaviourDays = Math.Max(1, behaviourSection.GetValue(
+                "SampleRetentionDays", TuflowBehaviourDefaults.SampleRetentionDays));
+            var behaviourDeleted = await behaviour.PurgeOlderThanAsync(behaviourDays, ct);
+            if (behaviourDeleted > 0)
+            {
+                logger.LogInformation(
+                    "TUFLOW behaviour retention purge: deleted {Deleted} runs older than {Days} days.",
+                    behaviourDeleted, behaviourDays);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

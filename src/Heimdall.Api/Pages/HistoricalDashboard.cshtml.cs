@@ -1,4 +1,5 @@
 using Heimdall.Api.Services;
+using Heimdall.Shared.Contracts;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 
@@ -259,6 +260,100 @@ public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGu
         FleetDashboardService.FleetStatus.NotRunning => "N/A",
         _ => "—"
     };
+
+    /// <summary>Active column sort key / plain fallback (Active/Idle/N/A or HH:mm dd/MM).</summary>
+    public static string ActiveColumnLabel(FleetDashboardService.LiveFleetRow r)
+    {
+        if (TryGetActiveStamp(r, out var stamp))
+            return $"{stamp.Time} {stamp.Date}";
+        return ActiveIdleLabel(r.Status);
+    }
+
+    /// <summary>
+    /// When a CPU-detected run is Active or recently Ended, returns stacked time (HH:mm) + date (dd/MM).
+    /// Start stamps use green (hd-status-active); stop stamps use red (hd-status-off).
+    /// </summary>
+    public static bool TryGetActiveStamp(FleetDashboardService.LiveFleetRow r, out ActiveStamp stamp)
+    {
+        // Open run (Active or Watching): green start stamp from DetectedRunStartedUtc.
+        if ((string.Equals(r.DetectedRunState, TuflowBehaviourStates.Active, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(r.DetectedRunState, TuflowBehaviourStates.Watching, StringComparison.OrdinalIgnoreCase))
+            && r.DetectedRunStartedUtc is { } start)
+        {
+            stamp = ToActiveStamp(start, isStop: false);
+            return true;
+        }
+
+        if (string.Equals(r.DetectedRunState, TuflowBehaviourStates.Ended, StringComparison.OrdinalIgnoreCase)
+            && r.DetectedRunEndedUtc is { } end)
+        {
+            stamp = ToActiveStamp(end, isStop: true);
+            return true;
+        }
+
+        stamp = default;
+        return false;
+    }
+
+    public static ActiveStamp ToActiveStamp(DateTimeOffset utc, bool isStop)
+    {
+        var local = utc.ToLocalTime();
+        return new ActiveStamp(
+            local.ToString("HH:mm"),
+            local.ToString("dd/MM"),
+            isStop ? "hd-status-off" : "hd-status-active",
+            isStop);
+    }
+
+    public readonly record struct ActiveStamp(string Time, string Date, string CssClass, bool IsStop);
+
+    public static string ActiveColumnTitle(FleetDashboardService.LiveFleetRow r)
+    {
+        if (string.Equals(r.DetectedRunState, TuflowBehaviourStates.Active, StringComparison.OrdinalIgnoreCase)
+            && r.DetectedRunStartedUtc is { } start)
+        {
+            return $"Run detected active since {start.ToLocalTime():dd/MM/yyyy HH:mm:ss} local "
+                + $"(tuflow.exe CPU > {TuflowBehaviourDefaults.CpuPercentThreshold:0}% for "
+                + $"{TuflowBehaviourDefaults.ConfirmIntervals} consecutive samples). Busy thresholds still apply to Today active hours.";
+        }
+
+        if (string.Equals(r.DetectedRunState, TuflowBehaviourStates.Watching, StringComparison.OrdinalIgnoreCase)
+            && r.DetectedRunStartedUtc is { } seen)
+        {
+            return $"TUFLOW process first seen {seen.ToLocalTime():dd/MM/yyyy HH:mm:ss} local "
+                + $"(awaiting CPU > {TuflowBehaviourDefaults.CpuPercentThreshold:0}% for "
+                + $"{TuflowBehaviourDefaults.ConfirmIntervals} samples to confirm launch). Busy thresholds still apply to Today active hours.";
+        }
+
+        if (string.Equals(r.DetectedRunState, TuflowBehaviourStates.Ended, StringComparison.OrdinalIgnoreCase)
+            && r.DetectedRunEndedUtc is { } end)
+        {
+            return $"Run stop detected at {end.ToLocalTime():dd/MM/yyyy HH:mm:ss} local "
+                + $"(CPU ≤ {TuflowBehaviourDefaults.CpuPercentThreshold:0}% or process gone for "
+                + $"{TuflowBehaviourDefaults.ConfirmIntervals} consecutive samples).";
+        }
+
+        return r.Status switch
+        {
+            FleetDashboardService.FleetStatus.Active =>
+                "TUFLOW running and busy (GPU > 5%, CPU > 10%, or disk read/write > 5 MB/s). Launch time appears once the process is tracked (or after CPU > 20% for 2 samples).",
+            FleetDashboardService.FleetStatus.Idle =>
+                "TUFLOW running but below busy thresholds. Launch time appears once the process is tracked (or after CPU > 20% for 2 samples).",
+            FleetDashboardService.FleetStatus.NotRunning => "TUFLOW not detected.",
+            _ => "No recent sample."
+        };
+    }
+
+    public static string ActiveColumnCssClass(FleetDashboardService.LiveFleetRow r)
+    {
+        if (TryGetActiveStamp(r, out var stamp))
+            return stamp.CssClass;
+        return FleetStatusTextClass(r.Status);
+    }
+
+    public static string FormatLocalShort(DateTimeOffset utc) =>
+        utc.ToLocalTime().ToString("HH:mm dd/MM");
+
 
     public static string FormatHours(double hours) =>
         hours < 0.05 && hours > -0.05 ? "0.0" : hours.ToString("0.0");

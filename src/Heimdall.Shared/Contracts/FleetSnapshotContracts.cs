@@ -34,6 +34,18 @@ public sealed class FleetSnapshotDto
     public List<TopProcessSampleDto> TopDiskReadProcesses { get; init; } = [];
     /// <summary>Top disk-write processes at this sample (Value = bytes/sec).</summary>
     public List<TopProcessSampleDto> TopDiskWriteProcesses { get; init; } = [];
+
+    /// <summary>
+    /// GPU Engine counter fragments where the PID mapped to a fleet process (TUFLOW).
+    /// Empty on older agents or when TUFLOW is not running.
+    /// </summary>
+    public List<GpuEngineSightingDto> GpuEngineSightings { get; init; } = [];
+
+    /// <summary>
+    /// Agent sample cadence used for this snapshot (10 when TUFLOW present, else ~30).
+    /// Null on older agents — ingest assumes normal fleet interval.
+    /// </summary>
+    public int? SampleIntervalSeconds { get; init; }
 }
 
 /// <summary>Active / Idle thresholds applied when TUFLOW is running (POC defaults).</summary>

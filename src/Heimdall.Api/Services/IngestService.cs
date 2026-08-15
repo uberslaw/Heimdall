@@ -6,7 +6,16 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Services;
 
-public class IngestService(HeimdallDbContext db, AppListService appLists, ProcessCatalogService catalog, SpecReviewService specReview, IConfiguration configuration, RemoteMachineService remoteMachines, TuflowRunService tuflowRuns, ClientUpdateService clientUpdates)
+public class IngestService(
+    HeimdallDbContext db,
+    AppListService appLists,
+    ProcessCatalogService catalog,
+    SpecReviewService specReview,
+    IConfiguration configuration,
+    RemoteMachineService remoteMachines,
+    TuflowRunService tuflowRuns,
+    ClientUpdateService clientUpdates,
+    ILogger<IngestService> logger)
 {
     public async Task IngestAsync(IngestBatchDto batch, CancellationToken ct)
     {
@@ -80,11 +89,23 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
                 machine.InventoryCollectedUtc = DateTimeOffset.UtcNow;
                 await db.SaveChangesAsync(ct);
                 await appLists.AnalyzeMachineAsync(machine.Hostname, eligibleInventory, requestAgentInventoryIfEmpty: false, ct);
-                await specReview.ProcessSightingsAsync(
-                    machine.Hostname,
-                    eligibleInventory.Select(p => new ProcessCatalogService.CatalogItem(
-                        p.ProcessName, p.ExecutablePath, p.DisplayName)),
-                    ct);
+                // Spec review must not fail the whole ingest: agents treat HTTP 500 as offline queue,
+                // then replay older heartbeats and rewind LastSeenUtc (Live orange halo) while fleet
+                // snapshots keep succeeding (User column still looks connected).
+                try
+                {
+                    await specReview.ProcessSightingsAsync(
+                        machine.Hostname,
+                        eligibleInventory.Select(p => new ProcessCatalogService.CatalogItem(
+                            p.ProcessName, p.ExecutablePath, p.DisplayName)),
+                        ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex,
+                        "Spec review sightings failed for {Hostname} after inventory ingest; heartbeat/sessions already saved",
+                        machine.Hostname);
+                }
                 return;
             }
         }
@@ -119,10 +140,17 @@ public class IngestService(HeimdallDbContext db, AppListService appLists, Proces
             db.Machines.Add(machine);
         }
 
-        machine.LastSeenUtc = heartbeat.TimestampUtc;
+        // Never rewind LastSeenUtc: offline-queue replays carry older TimestampUtc and used to mark
+        // healthy agents offline on Live after a later successful check-in.
+        var fresherOrEqual = isNew || heartbeat.TimestampUtc >= machine.LastSeenUtc;
+        if (fresherOrEqual)
+        {
+            machine.LastSeenUtc = heartbeat.TimestampUtc;
+            if (!string.IsNullOrWhiteSpace(heartbeat.AgentVersion))
+                machine.AgentVersion = heartbeat.AgentVersion;
+        }
         machine.IsInUse = heartbeat.IsInUse;
         machine.OsVersion = heartbeat.OsVersion ?? machine.OsVersion;
-        machine.AgentVersion = heartbeat.AgentVersion;
         if (!string.IsNullOrWhiteSpace(heartbeat.MachineGroup))
             MachineHierarchy.ApplyToMachine(machine, heartbeat.MachineGroup);
         else
@@ -1906,6 +1934,61 @@ public static class SeedData
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SiteUsageEvents_Path_OccurredUtc ON SiteUsageEvents(Path, OccurredUtc)");
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SiteUsageEvents_PageViewId ON SiteUsageEvents(PageViewId)");
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SiteUsageEvents_SessionId ON SiteUsageEvents(SessionId)");
+
+        // TUFLOW behaviour analytics (CPU start/stop detection + sample series).
+        // ExecuteSqlRaw treats single braces as format placeholders — use '{{}}' for a literal '{}'.
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS TuflowBehaviourRuns (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                RunId TEXT NOT NULL,
+                MachineId INTEGER NOT NULL,
+                Username TEXT NULL,
+                HardwareCpu TEXT NULL,
+                HardwareGpu TEXT NULL,
+                HardwareRamGb REAL NULL,
+                State TEXT NOT NULL,
+                ProcessFirstSeenUtc TEXT NOT NULL,
+                DetectedStartUtc TEXT NULL,
+                DetectedEndUtc TEXT NULL,
+                ProcessGoneUtc TEXT NULL,
+                RampUpSeconds REAL NULL,
+                RampDownSeconds REAL NULL,
+                ElevatedStreak INTEGER NOT NULL DEFAULT 0,
+                LowStreak INTEGER NOT NULL DEFAULT 0,
+                AbsentStreak INTEGER NOT NULL DEFAULT 0,
+                CandidateStartUtc TEXT NULL,
+                CandidateEndUtc TEXT NULL,
+                PeakCpuPercent REAL NULL,
+                PeakGpuPercent REAL NULL,
+                SumCpuPercent REAL NULL,
+                SumGpuPercent REAL NULL,
+                SampleCount INTEGER NOT NULL DEFAULT 0,
+                GpuPercentHistogramJson TEXT NOT NULL DEFAULT '{{}}',
+                GpuEnginesObservedJson TEXT NOT NULL DEFAULT '[]',
+                LinkedTuflowRunId TEXT NULL,
+                UpdatedUtc TEXT NOT NULL,
+                FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE UNIQUE INDEX IF NOT EXISTS IX_TuflowBehaviourRuns_RunId ON TuflowBehaviourRuns(RunId)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowBehaviourRuns_Machine_State ON TuflowBehaviourRuns(MachineId, State)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowBehaviourRuns_Machine_DetectedStart ON TuflowBehaviourRuns(MachineId, DetectedStartUtc)");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS TuflowBehaviourSamples (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                BehaviourRunId INTEGER NOT NULL,
+                SampledAtUtc TEXT NOT NULL,
+                IntervalSeconds INTEGER NOT NULL DEFAULT 30,
+                TuflowRunning INTEGER NOT NULL DEFAULT 0,
+                ProcessCpuPercent REAL NULL,
+                ProcessGpuPercent REAL NULL,
+                MachineCpuPercent REAL NULL,
+                MachineGpuPercent REAL NULL,
+                GpuEnginesJson TEXT NOT NULL DEFAULT '[]',
+                FOREIGN KEY (BehaviourRunId) REFERENCES TuflowBehaviourRuns(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowBehaviourSamples_Run_Sampled ON TuflowBehaviourSamples(BehaviourRunId, SampledAtUtc)");
 
         await EnsureCanonicalTeamsAsync(db);
     }

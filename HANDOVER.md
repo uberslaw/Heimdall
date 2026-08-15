@@ -206,6 +206,7 @@ In-app **Admin → Help** has the full page-by-page guide.
 3. Configure Remote Access Groups + Staff Access Negotiate for production staff pool.
 4. Tune Finance / Cost for Socratize hardware + license context.
 5. Backlog: Flight Recorder spike; Dell warranty API; CADFX comparison demo.
+6. Standalone disk tool: `tools/Heimdall.DiskUsage` — publish to `dist/Disk-Clean-Tool` (framework-dependent). See its README.
 
 ---
 

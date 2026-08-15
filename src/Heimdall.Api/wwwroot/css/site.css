@@ -2210,10 +2210,49 @@ html[data-theme="light-clean"] .hd-live-fleet-table {
 
 .hd-live-fleet-table .hd-col-user {
   width: 7.5rem;
+  max-width: 7.5rem;
+  vertical-align: top;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hd-live-fleet-table .hd-col-active {
-  width: 4.5rem;
+  width: 4.75rem;
+  text-align: center;
+  vertical-align: top;
+}
+
+/* Stacked launch/stop stamp: time on top (aligns with username), dd/MM date under — green start / red stop */
+.hd-active-stamp {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.hd-active-stamp-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.hd-active-stamp-date {
+  font-size: 0.78em;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.92;
+  margin-top: 0.12rem;
+}
+
+.hd-live-fleet-table .hd-active-stamp.hd-status-active,
+.hd-table .hd-active-stamp.hd-status-active {
+  color: #3db8a0;
+}
+
+.hd-live-fleet-table .hd-active-stamp.hd-status-off,
+.hd-table .hd-active-stamp.hd-status-off {
+  color: #c45c5c;
 }
 
 .hd-live-fleet-table .hd-col-checkin {
@@ -2251,7 +2290,9 @@ table.hd-table.hd-live-fleet-table td:nth-child(4n + 7) {
 }
 
 table.hd-table.hd-live-fleet-table th.hd-col-host,
-table.hd-table.hd-live-fleet-table td.hd-col-host {
+table.hd-table.hd-live-fleet-table td.hd-col-host,
+table.hd-table.hd-live-fleet-table th.hd-col-user,
+table.hd-table.hd-live-fleet-table td.hd-col-user {
   text-align: left;
 }
 
@@ -2297,6 +2338,15 @@ table.hd-table.hd-live-fleet-table td.hd-col-host {
 .hd-live-fleet-table .hd-col-user,
 .hd-live-fleet-table .hd-col-user a {
   color: var(--hd-silver, #c8ced8);
+}
+
+/* Block + ellipsis so long usernames stay inside the User column (away from Machine / Active). */
+.hd-live-fleet-table .hd-col-user a {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .hd-live-fleet-table .hd-col-user a.hd-live-user-active {

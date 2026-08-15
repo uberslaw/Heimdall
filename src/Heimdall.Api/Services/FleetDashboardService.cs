@@ -9,7 +9,10 @@ namespace Heimdall.Api.Services;
 /// and derived analytics (runtime / GPU·CPU·RAM hours / disk·network GB) over FleetMetricSnapshot rows.
 /// Sampling is always-on for every known Machine; FleetDashboardMachines gates TUFLOW / Flood sims only.
 /// </summary>
-public class FleetDashboardService(HeimdallDbContext db)
+public class FleetDashboardService(
+    HeimdallDbContext db,
+    TuflowBehaviourService tuflowBehaviour,
+    ILogger<FleetDashboardService> logger)
 {
     /// <summary>Default nominal sample interval used when bridging consecutive snapshots.</summary>
     public static readonly TimeSpan SampleInterval = TimeSpan.FromSeconds(30);
@@ -172,9 +175,15 @@ public class FleetDashboardService(HeimdallDbContext db)
             dto.ProcessDiskReadMBps ?? dto.DiskReadMBps,
             dto.ProcessDiskWriteMBps ?? dto.DiskWriteMBps);
 
+        var sampledAt = dto.SampledAtUtc == default ? DateTimeOffset.UtcNow : dto.SampledAtUtc;
+        // Fleet util is also agent contact (~30s). Bump LastSeenUtc so Live hostname halo stays in
+        // sync with User/metrics when /api/ingest is failing or delayed.
+        if (sampledAt >= machine.LastSeenUtc)
+            machine.LastSeenUtc = sampledAt;
+
         db.FleetMetricSnapshots.Add(new FleetMetricSnapshot
         {
-            SampledAtUtc = dto.SampledAtUtc == default ? DateTimeOffset.UtcNow : dto.SampledAtUtc,
+            SampledAtUtc = sampledAt,
             MachineId = machine.Id,
             Username = string.IsNullOrWhiteSpace(dto.Username) ? null : dto.Username.Trim(),
             TuflowRunning = dto.TuflowRunning,
@@ -196,6 +205,18 @@ public class FleetDashboardService(HeimdallDbContext db)
             TopDiskReadProcessesJson = SerializeTopProcesses(dto.TopDiskReadProcesses),
             TopDiskWriteProcessesJson = SerializeTopProcesses(dto.TopDiskWriteProcesses)
         });
+
+        // Behaviour analytics must not abort fleet snapshot persistence.
+        try
+        {
+            await tuflowBehaviour.ApplySnapshotAsync(machine, dto, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex,
+                "TUFLOW behaviour ApplySnapshotAsync failed for machine {MachineId}; fleet snapshot still saved",
+                machine.Id);
+        }
         await db.SaveChangesAsync(ct);
         return true;
     }
@@ -258,8 +279,10 @@ public class FleetDashboardService(HeimdallDbContext db)
         }
 
         var machineIds = machines.Select(m => m.MachineId).ToList();
-        var todayStart = DateTimeOffset.UtcNow.Date;
-        var todayStartOffset = new DateTimeOffset(todayStart, TimeSpan.Zero);
+        // "Today" columns use the API host's local calendar day (not UTC midnight).
+        var localNow = DateTimeOffset.Now;
+        var todayStartLocal = new DateTimeOffset(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0, localNow.Offset);
+        var todayStartOffset = todayStartLocal.ToUniversalTime();
         var recentFrom = todayStartOffset.AddDays(-1);
 
         var recent = await LoadSnapshotsForMachinesAsync(machineIds, recentFrom, toUtc: null, ct);
@@ -273,6 +296,7 @@ public class FleetDashboardService(HeimdallDbContext db)
         var sessionsByMachine = openSessions
             .GroupBy(s => s.MachineId)
             .ToDictionary(g => g.Key, g => g.ToList());
+        var behaviourByMachine = await tuflowBehaviour.GetDisplayByMachineAsync(machineIds, ct);
         var rows = new List<LiveFleetRow>();
 
         foreach (var m in machines)
@@ -305,6 +329,8 @@ public class FleetDashboardService(HeimdallDbContext db)
                     .FirstOrDefault();
             }
 
+            behaviourByMachine.TryGetValue(m.MachineId, out var behaviour);
+
             rows.Add(new LiveFleetRow(
                 m.MachineId,
                 m.Hostname,
@@ -328,7 +354,10 @@ public class FleetDashboardService(HeimdallDbContext db)
                 m.LastSeenUtc,
                 m.TeamId,
                 m.TeamName,
-                sessionState));
+                sessionState,
+                behaviour?.DetectedStartUtc,
+                behaviour?.DetectedEndUtc,
+                behaviour?.State));
         }
 
         return rows;
@@ -591,7 +620,13 @@ public class FleetDashboardService(HeimdallDbContext db)
         DateTimeOffset LastSeenUtc,
         int? TeamId = null,
         string? TeamName = null,
-        SessionState? SessionState = null)
+        SessionState? SessionState = null,
+        /// <summary>Detected run launch (CPU &gt; threshold for 2 samples) when State is Active.</summary>
+        DateTimeOffset? DetectedRunStartedUtc = null,
+        /// <summary>Detected stop time when a recent Ended run is shown on the Active column.</summary>
+        DateTimeOffset? DetectedRunEndedUtc = null,
+        /// <summary>TuflowBehaviourStates.Active or Ended when driving Active-column timestamps; else null.</summary>
+        string? DetectedRunState = null)
     {
         public string DisplayName =>
             string.IsNullOrWhiteSpace(FriendlyName) ? Hostname : FriendlyName!;

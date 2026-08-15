@@ -66,6 +66,9 @@ builder.Services.AddScoped<MachineSoftwareCapabilityService>();
 builder.Services.AddScoped<FloodAccessGuard>();
 builder.Services.AddSingleton<ApiBuildStamp>();
 builder.Services.AddScoped<TuflowRunService>();
+builder.Services.Configure<TuflowBehaviourOptions>(
+    builder.Configuration.GetSection(TuflowBehaviourOptions.SectionName));
+builder.Services.AddScoped<TuflowBehaviourService>();
 builder.Services.AddScoped<RemoteAccessGroupService>();
 builder.Services.AddScoped<LiveSamplingService>();
 builder.Services.AddScoped<SessionDrilldownService>();

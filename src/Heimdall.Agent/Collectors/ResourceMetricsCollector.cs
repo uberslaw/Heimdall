@@ -221,6 +221,101 @@ public static class ResourceMetricsCollector
         return byName;
     }
 
+    /// <summary>
+    /// GPU Engine instance labels for the given PIDs (phys / engtype from counter instance names).
+    /// Best-effort; empty when the category is unavailable.
+    /// </summary>
+    public static List<GpuEngineSightingDto> CollectGpuEngineSightingsForPids(IReadOnlyCollection<int> pids)
+    {
+        var result = new List<GpuEngineSightingDto>();
+        if (pids.Count == 0)
+            return result;
+
+        var pidSet = pids as HashSet<int> ?? pids.ToHashSet();
+        List<PerformanceCounter>? counters = null;
+        try
+        {
+            if (!PerformanceCounterCategory.Exists("GPU Engine"))
+                return result;
+
+            var category = new PerformanceCounterCategory("GPU Engine");
+            var instanceNames = category.GetInstanceNames();
+            if (instanceNames.Length == 0)
+                return result;
+
+            counters = instanceNames
+                .Select(n =>
+                {
+                    try { return new PerformanceCounter("GPU Engine", "Utilization Percentage", n, readOnly: true); }
+                    catch { return null; }
+                })
+                .Where(c => c is not null)
+                .Select(c => c!)
+                .ToList();
+
+            foreach (var c in counters) SafeNextValue(c);
+            Thread.Sleep(60);
+
+            var byLabel = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            foreach (var c in counters)
+            {
+                var value = SafeNextValue(c);
+                if (value <= 0 || value > MaxSaneGpuPercent) continue;
+
+                var match = GpuInstancePidRegex.Match(c.InstanceName);
+                if (!match.Success) continue;
+                var pid = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+                if (!pidSet.Contains(pid)) continue;
+
+                var label = FormatGpuEngineLabel(c.InstanceName);
+                if (label.Length == 0) continue;
+                byLabel[label] = byLabel.TryGetValue(label, out var existing) ? existing + value : value;
+            }
+
+            foreach (var (label, util) in byLabel.OrderByDescending(kv => kv.Value).Take(12))
+            {
+                result.Add(new GpuEngineSightingDto
+                {
+                    Label = label,
+                    UtilizationPercent = Math.Round(util, 1)
+                });
+            }
+        }
+        catch { /* best-effort */ }
+        finally
+        {
+            if (counters is not null)
+                foreach (var c in counters) c.Dispose();
+        }
+
+        return result;
+    }
+
+    private static string FormatGpuEngineLabel(string instanceName)
+    {
+        // Typical: pid_1234_luid_0x00000000_00000000_phys_0_eng_0_engtype_3D
+        string? phys = null;
+        string? engtype = null;
+
+        var physIdx = instanceName.IndexOf("phys_", StringComparison.OrdinalIgnoreCase);
+        if (physIdx >= 0)
+        {
+            var rest = instanceName[(physIdx + "phys_".Length)..];
+            var end = rest.IndexOf('_');
+            phys = "phys_" + (end < 0 ? rest : rest[..end]);
+        }
+
+        var engIdx = instanceName.IndexOf("engtype_", StringComparison.OrdinalIgnoreCase);
+        if (engIdx >= 0)
+            engtype = instanceName[(engIdx + "engtype_".Length)..];
+
+        if (phys is null && engtype is null)
+            return instanceName.Length > 48 ? instanceName[..48] : instanceName;
+        if (phys is null) return engtype!;
+        if (engtype is null) return phys;
+        return phys + "/" + engtype;
+    }
+
     private static (double? CpuPercent, double? RamPercent, double? RamUsedGb, double? RamTotalGb) TryCollectSystemCpuRam()
     {
         double? cpu = null;

@@ -10,7 +10,10 @@ namespace Heimdall.Api.Services;
 /// </summary>
 public static class ClientPackFingerprint
 {
-    /// <summary>Relative paths/globs under repo root that affect the client pack.</summary>
+    /// <summary>
+    /// Relative paths/globs under repo root that affect the client pack.
+    /// Keep in lockstep with scripts/Write-ClientPackManifest.ps1 $SourceRoots.
+    /// </summary>
     public static IReadOnlyList<string> SourceRoots { get; } =
     [
         "src/Heimdall.Agent",
@@ -24,9 +27,13 @@ public static class ClientPackFingerprint
         "scripts/Heimdall-VersionCompare.ps1",
         "scripts/Heimdall-CollectorInstall.ps1",
         "scripts/Install-WorkstationCollector.cmd",
+        "scripts/Install-WorkstationCollector.ps1",
+        "scripts/Heimdall-AgentHeal.ps1",
         "scripts/Heimdall-Setup.cmd",
         "scripts/Heimdall-LaunchControl.cmd",
         "scripts/Heimdall-LaunchControl.ps1",
+        "scripts/Heimdall-LaunchRdp.vbs",
+        "scripts/Register-HeimdallRdp.cmd",
         "scripts/New-HeimdallShortcut.ps1",
         "docs/portable-client/README.md",
         "docs/portable-client/FILES.md",
