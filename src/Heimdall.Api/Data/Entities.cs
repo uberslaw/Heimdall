@@ -794,7 +794,7 @@ public class TuflowRunRecord
 }
 
 /// <summary>
-/// CPU-threshold-detected TUFLOW behaviour run (manual or Heimdall-launched). Independent of
+/// CPU/GPU-threshold-detected TUFLOW behaviour run (manual or Heimdall-launched). Independent of
 /// <see cref="TuflowRunRecord"/> which tracks launcher-managed starts. One open row per machine
 /// while Watching/Active; closed when stop is confirmed.
 /// </summary>
@@ -813,7 +813,7 @@ public class TuflowBehaviourRun
     public required string State { get; set; }
     /// <summary>When tuflow.exe was first observed for this watch window.</summary>
     public DateTimeOffset ProcessFirstSeenUtc { get; set; }
-    /// <summary>First of the confirming elevated pair (CPU &gt; threshold for N intervals).</summary>
+    /// <summary>First of the confirming elevated pair (CPU or GPU above threshold for N intervals).</summary>
     public DateTimeOffset? DetectedStartUtc { get; set; }
     /// <summary>First of the confirming low/gone pair.</summary>
     public DateTimeOffset? DetectedEndUtc { get; set; }

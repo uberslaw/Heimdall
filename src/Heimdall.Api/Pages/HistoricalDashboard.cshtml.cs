@@ -261,7 +261,7 @@ public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGu
         _ => "—"
     };
 
-    /// <summary>Active column sort key / plain fallback (Active/Idle/N/A or HH:mm dd/MM).</summary>
+    /// <summary>Active column display fallback / legacy text key (Active/Idle/N/A or HH:mm dd/MM).</summary>
     public static string ActiveColumnLabel(FleetDashboardService.LiveFleetRow r)
     {
         if (TryGetActiveStamp(r, out var stamp))
@@ -270,8 +270,37 @@ public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGu
     }
 
     /// <summary>
-    /// When a CPU-detected run is Active or recently Ended, returns stacked time (HH:mm) + date (dd/MM).
+    /// Numeric Active-column sort key for <c>data-sort="num"</c>.
+    /// Desc (first click): start stamps → stop stamps → Active/Idle/N/A (N/A last within plain).
+    /// Within a stamp tier, newer timestamps sort higher.
+    /// </summary>
+    public static long ActiveColumnSortValue(FleetDashboardService.LiveFleetRow r)
+    {
+        // 1e10 > any unix seconds (~1.7e9); keeps tiers from overlapping.
+        const long tier = 10_000_000_000L;
+
+        if ((string.Equals(r.DetectedRunState, TuflowBehaviourStates.Active, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(r.DetectedRunState, TuflowBehaviourStates.Watching, StringComparison.OrdinalIgnoreCase))
+            && r.DetectedRunStartedUtc is { } start)
+            return 2 * tier + start.ToUnixTimeSeconds();
+
+        if (string.Equals(r.DetectedRunState, TuflowBehaviourStates.Ended, StringComparison.OrdinalIgnoreCase)
+            && r.DetectedRunEndedUtc is { } end)
+            return 1 * tier + end.ToUnixTimeSeconds();
+
+        return r.Status switch
+        {
+            FleetDashboardService.FleetStatus.Active => 2,
+            FleetDashboardService.FleetStatus.Idle => 1,
+            FleetDashboardService.FleetStatus.NotRunning => 0,
+            _ => -1
+        };
+    }
+
+    /// <summary>
+    /// When a detected run is Active/Watching or Ended, returns stacked time (HH:mm) + date (dd/MM).
     /// Start stamps use green (hd-status-active); stop stamps use red (hd-status-off).
+    /// Stop stamps persist until the next Watching/Active run starts.
     /// </summary>
     public static bool TryGetActiveStamp(FleetDashboardService.LiveFleetRow r, out ActiveStamp stamp)
     {
@@ -313,7 +342,7 @@ public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGu
             && r.DetectedRunStartedUtc is { } start)
         {
             return $"Run detected active since {start.ToLocalTime():dd/MM/yyyy HH:mm:ss} local "
-                + $"(tuflow.exe CPU > {TuflowBehaviourDefaults.CpuPercentThreshold:0}% for "
+                + $"(tuflow.exe CPU > {TuflowBehaviourDefaults.CpuPercentThreshold:0}% or GPU > {TuflowBehaviourDefaults.GpuPercentThreshold:0}% for "
                 + $"{TuflowBehaviourDefaults.ConfirmIntervals} consecutive samples). Busy thresholds still apply to Today active hours.";
         }
 
@@ -321,7 +350,7 @@ public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGu
             && r.DetectedRunStartedUtc is { } seen)
         {
             return $"TUFLOW process first seen {seen.ToLocalTime():dd/MM/yyyy HH:mm:ss} local "
-                + $"(awaiting CPU > {TuflowBehaviourDefaults.CpuPercentThreshold:0}% for "
+                + $"(awaiting CPU > {TuflowBehaviourDefaults.CpuPercentThreshold:0}% or GPU > {TuflowBehaviourDefaults.GpuPercentThreshold:0}% for "
                 + $"{TuflowBehaviourDefaults.ConfirmIntervals} samples to confirm launch). Busy thresholds still apply to Today active hours.";
         }
 
@@ -329,16 +358,16 @@ public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGu
             && r.DetectedRunEndedUtc is { } end)
         {
             return $"Run stop detected at {end.ToLocalTime():dd/MM/yyyy HH:mm:ss} local "
-                + $"(CPU ≤ {TuflowBehaviourDefaults.CpuPercentThreshold:0}% or process gone for "
-                + $"{TuflowBehaviourDefaults.ConfirmIntervals} consecutive samples).";
+                + $"(CPU ≤ {TuflowBehaviourDefaults.CpuPercentThreshold:0}% and GPU ≤ {TuflowBehaviourDefaults.GpuPercentThreshold:0}% "
+                + $"or process gone for {TuflowBehaviourDefaults.ConfirmIntervals} consecutive samples).";
         }
 
         return r.Status switch
         {
             FleetDashboardService.FleetStatus.Active =>
-                "TUFLOW running and busy (GPU > 5%, CPU > 10%, or disk read/write > 5 MB/s). Launch time appears once the process is tracked (or after CPU > 20% for 2 samples).",
+                "TUFLOW running and busy (GPU > 5%, CPU > 10%, or disk read/write > 5 MB/s). Launch time appears once the process is tracked (or after CPU/GPU elevated for 2 samples).",
             FleetDashboardService.FleetStatus.Idle =>
-                "TUFLOW running but below busy thresholds. Launch time appears once the process is tracked (or after CPU > 20% for 2 samples).",
+                "TUFLOW running but below busy thresholds. Launch time appears once the process is tracked (or after CPU/GPU elevated for 2 samples).",
             FleetDashboardService.FleetStatus.NotRunning => "TUFLOW not detected.",
             _ => "No recent sample."
         };

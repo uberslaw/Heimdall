@@ -89,14 +89,15 @@
 </div>
 
 <div class="hd-panel mb-3">
-    <form method="post" asp-page-handler="AddCustomCatalog" class="row g-2 align-items-end">
+    <form method="post" asp-page-handler="AddCustomCatalog" class="row g-2 align-items-end" id="add-custom-catalog-form">
         <input type="hidden" name="Tab" value="create" />
-        <input type="hidden" asp-for="EditId" />
-        <input type="hidden" asp-for="ListName" />
-        <input type="hidden" asp-for="TeamId" />
-        <input type="hidden" asp-for="Notes" />
-        <input type="hidden" asp-for="DraftEntriesJson" />
-        <input type="hidden" asp-for="CreateSearch" />
+        @* Unique ids — avoid colliding with create-list-form fields; values synced from that form on submit. *@
+        <input type="hidden" name="EditId" id="catalog-EditId" value="@(Model.EditId?.ToString() ?? "")" />
+        <input type="hidden" name="ListName" id="catalog-ListName" value="@Model.ListName" />
+        <input type="hidden" name="TeamId" id="catalog-TeamId" value="@(Model.TeamId?.ToString() ?? "")" />
+        <input type="hidden" name="Notes" id="catalog-Notes" value="@Model.Notes" />
+        <input type="hidden" name="DraftEntriesJson" id="catalog-DraftEntriesJson" value="@Model.DraftEntriesJson" />
+        <input type="hidden" name="CreateSearch" id="catalog-CreateSearch" value="@Model.CreateSearch" />
         <div class="col-12">
             <h2 class="h6 mb-1">Add custom software to catalog</h2>
             <p class="text-secondary small mb-2">Pre-install apps: add path / exe / friendly name / description, then Add to list below. Tracking starts once this list is applied.</p>
@@ -129,6 +130,11 @@
     {
         <input type="hidden" name="edit" value="@eid" />
     }
+    @* Round-trip in-progress create fields across catalog Search (ops partial GET reload). *@
+    <input type="hidden" name="ListName" id="filter-ListName" value="@Model.ListName" />
+    <input type="hidden" name="TeamId" id="filter-TeamId" value="@(Model.TeamId?.ToString() ?? "")" />
+    <input type="hidden" name="Notes" id="filter-Notes" value="@Model.Notes" />
+    <input type="hidden" name="DraftEntriesJson" id="filter-DraftEntriesJson" value="@Model.DraftEntriesJson" />
     <div class="row g-2 align-items-end">
         <div class="col-md-6 col-lg-4">
             <label class="form-label" for="create-q">Search catalog</label>
@@ -199,19 +205,25 @@
 
 <script>
 (() => {
+  const createForm = document.getElementById('create-list-form');
   const draftInput = document.getElementById('draft-entries-json');
   const chips = document.getElementById('draft-chips');
   const countEl = document.getElementById('draft-count');
-  const saveBtn = document.getElementById('create-save-btn');
-  const nameInput = document.getElementById('ListName');
+  const nameInput = createForm?.querySelector('[name="ListName"]');
+  const teamInput = createForm?.querySelector('[name="TeamId"]');
+  const notesInput = createForm?.querySelector('[name="Notes"]');
+  const editInput = createForm?.querySelector('[name="EditId"]');
+  const storageKey = 'hd-applist-create:' + (editInput?.value || 'new');
 
   function readDraft() {
-    try { return JSON.parse(draftInput.value || '[]') || []; }
+    try { return JSON.parse(draftInput?.value || '[]') || []; }
     catch { return []; }
   }
   function writeDraft(list) {
+    if (!draftInput) return;
     draftInput.value = JSON.stringify(list);
-    countEl.textContent = String(list.length);
+    if (countEl) countEl.textContent = String(list.length);
+    if (!chips) return;
     chips.innerHTML = '';
     for (const e of list) {
       const label = e.displayName || e.DisplayName || e.processName || e.ProcessName;
@@ -222,6 +234,7 @@
       span.innerHTML = `${label} <button type="button" class="btn btn-link btn-sm p-0 ms-1 text-secondary draft-remove" aria-label="Remove">&times;</button>`;
       chips.appendChild(span);
     }
+    persistCreateState();
   }
   function addEntries(items) {
     const list = readDraft();
@@ -234,6 +247,76 @@
     }
     writeDraft(list);
   }
+
+  function persistCreateState() {
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify({
+        listName: nameInput?.value ?? '',
+        teamId: teamInput?.value ?? '',
+        notes: notesInput?.value ?? '',
+        draft: draftInput?.value ?? '[]'
+      }));
+    } catch { /* ignore quota / private mode */ }
+  }
+
+  function restoreCreateState() {
+    let raw;
+    try { raw = sessionStorage.getItem(storageKey); } catch { return; }
+    if (!raw) return;
+    let s;
+    try { s = JSON.parse(raw); } catch { return; }
+    if (!s || typeof s !== 'object') return;
+    if (nameInput && s.listName != null) nameInput.value = s.listName;
+    if (teamInput && s.teamId != null) teamInput.value = s.teamId;
+    if (notesInput && s.notes != null) notesInput.value = s.notes;
+    if (draftInput && typeof s.draft === 'string') {
+      draftInput.value = s.draft;
+      // Refresh chips without re-entering persist/restore.
+      const list = readDraft();
+      if (countEl) countEl.textContent = String(list.length);
+      if (chips) {
+        chips.innerHTML = '';
+        for (const e of list) {
+          const label = e.displayName || e.DisplayName || e.processName || e.ProcessName;
+          const proc = e.processName || e.ProcessName;
+          const span = document.createElement('span');
+          span.className = 'badge-pill badge-local';
+          span.dataset.draftProc = proc;
+          span.innerHTML = `${label} <button type="button" class="btn btn-link btn-sm p-0 ms-1 text-secondary draft-remove" aria-label="Remove">&times;</button>`;
+          chips.appendChild(span);
+        }
+      }
+    }
+  }
+
+  function syncCreateFieldsInto(form) {
+    if (!form) return;
+    const values = {
+      ListName: nameInput?.value ?? '',
+      TeamId: teamInput?.value ?? '',
+      Notes: notesInput?.value ?? '',
+      DraftEntriesJson: draftInput?.value ?? '[]',
+      EditId: editInput?.value ?? '',
+      CreateSearch: document.getElementById('create-q')?.value ?? ''
+    };
+    for (const [name, value] of Object.entries(values)) {
+      let el = form.querySelector(`[name="${name}"]`);
+      if (!el) {
+        el = document.createElement('input');
+        el.type = 'hidden';
+        el.name = name;
+        form.appendChild(el);
+      }
+      el.value = value;
+    }
+    persistCreateState();
+  }
+
+  // Prefer live typed values over server-rendered empties after Search / Add to catalog reloads.
+  restoreCreateState();
+
+  createForm?.addEventListener('input', persistCreateState);
+  createForm?.addEventListener('change', persistCreateState);
 
   chips?.addEventListener('click', (ev) => {
     const btn = ev.target.closest('.draft-remove');
@@ -264,12 +347,26 @@
     });
   });
 
-  document.getElementById('create-list-form')?.addEventListener('submit', (ev) => {
+  document.getElementById('add-custom-catalog-form')?.addEventListener('submit', () => {
+    syncCreateFieldsInto(document.getElementById('add-custom-catalog-form'));
+  });
+
+  document.getElementById('create-catalog-filter')?.addEventListener('submit', () => {
+    syncCreateFieldsInto(document.getElementById('create-catalog-filter'));
+  });
+
+  createForm?.addEventListener('submit', (ev) => {
     if (!nameInput?.value?.trim()) {
       ev.preventDefault();
       alert('Enter a list name before Save.');
       nameInput?.focus();
+      return;
     }
+    try { sessionStorage.removeItem(storageKey); } catch { /* ignore */ }
+  });
+
+  document.querySelector('#create-list-form a.hd-btn-rose')?.addEventListener('click', () => {
+    try { sessionStorage.removeItem(storageKey); } catch { /* ignore */ }
   });
 })();
 </script>

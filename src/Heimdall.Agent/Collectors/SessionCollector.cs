@@ -197,24 +197,33 @@ public sealed class SessionCollector
         }
     }
 
-    /// <summary>Primary interactive user (prefer Active session), for fleet snapshots.</summary>
+    /// <summary>
+    /// Primary interactive user for fleet snapshots.
+    /// Prefer a non-ops Active session, then any non-ops interactive, then Active (incl. ops),
+    /// then any interactive — so a transient ops.* fixer does not steal the Live USER label
+    /// when a normal user session is still present.
+    /// </summary>
     public string? TryGetPrimaryInteractiveUsername()
     {
         lock (_gate)
         {
-            var active = _sessions.Values
-                .Where(s => s.State == SessionState.Active && !string.IsNullOrWhiteSpace(s.Username))
-                .OrderBy(s => s.SessionId)
-                .FirstOrDefault();
-            if (active is not null)
-                return FormatUser(active.Domain, active.Username);
+            static bool HasUser(TrackedSession s) => !string.IsNullOrWhiteSpace(s.Username);
+            static bool IsOps(TrackedSession s) => SupportAccount.IsOpsSupport(s.Username, s.Domain);
 
-            var any = _sessions.Values
-                .Where(s => s.State is SessionState.Active or SessionState.Disconnected
-                            && !string.IsNullOrWhiteSpace(s.Username))
+            var interactive = _sessions.Values
+                .Where(s => (s.State is SessionState.Active or SessionState.Disconnected) && HasUser(s))
                 .OrderBy(s => s.SessionId)
-                .FirstOrDefault();
-            return any is null ? null : FormatUser(any.Domain, any.Username);
+                .ToList();
+            if (interactive.Count == 0)
+                return null;
+
+            var pick =
+                interactive.FirstOrDefault(s => s.State == SessionState.Active && !IsOps(s))
+                ?? interactive.FirstOrDefault(s => !IsOps(s))
+                ?? interactive.FirstOrDefault(s => s.State == SessionState.Active)
+                ?? interactive.FirstOrDefault();
+
+            return pick is null ? null : FormatUser(pick.Domain, pick.Username);
         }
     }
 

@@ -1,4 +1,5 @@
 using Heimdall.Api.Data;
+using Heimdall.Shared;
 using Heimdall.Shared.Contracts;
 using Microsoft.EntityFrameworkCore;
 
@@ -317,26 +318,26 @@ public class FleetDashboardService(
 
             sessionsByMachine.TryGetValue(m.MachineId, out var open);
             open ??= [];
-            var sampleUser = string.IsNullOrWhiteSpace(latest?.Username) ? null : latest!.Username.Trim();
+            behaviourByMachine.TryGetValue(m.MachineId, out var behaviour);
+            // Prefer behaviour-run / non-ops workload user over a transient ops.* interactive fixer.
+            var displayUser = ResolveLiveUsername(latest?.Username, behaviour?.Username, open, snaps);
             SessionState? sessionState = null;
-            if (sampleUser is not null)
+            if (displayUser is not null)
             {
                 sessionState = open
-                    .Where(s => string.Equals(s.Username, sampleUser, StringComparison.OrdinalIgnoreCase))
+                    .Where(s => UsersMatch(s.Username, s.Domain, displayUser))
                     .OrderByDescending(s => s.State == SessionState.Active)
                     .ThenByDescending(s => s.LastObservedUtc)
                     .Select(s => (SessionState?)s.State)
                     .FirstOrDefault();
             }
 
-            behaviourByMachine.TryGetValue(m.MachineId, out var behaviour);
-
             rows.Add(new LiveFleetRow(
                 m.MachineId,
                 m.Hostname,
                 string.IsNullOrWhiteSpace(m.FriendlyName) ? null : m.FriendlyName.Trim(),
                 m.LastIp,
-                latest?.Username,
+                displayUser,
                 latest?.TuflowRunning ?? false,
                 status,
                 latest?.CpuPercent,
@@ -361,6 +362,69 @@ public class FleetDashboardService(
         }
 
         return rows;
+    }
+
+    /// <summary>
+    /// USER column: prefer the username associated with the TUFLOW behaviour run / non-ops session
+    /// that likely owns the work. Latest fleet snapshot username alone is wrong when an ops.*
+    /// account logs on locally to fix the box while a run continues. Tuflow process owner is not
+    /// collected by the agent yet — this is the best signal available server-side.
+    /// </summary>
+    private static string? ResolveLiveUsername(
+        string? latestSnapshotUser,
+        string? behaviourUser,
+        IReadOnlyList<UserSession> openSessions,
+        IReadOnlyList<FleetMetricSnapshot> snaps)
+    {
+        static string? Norm(string? u) => string.IsNullOrWhiteSpace(u) ? null : u.Trim();
+
+        var behaviour = Norm(behaviourUser);
+        if (behaviour is not null && !SupportAccount.IsOpsSupport(behaviour))
+            return behaviour;
+
+        var fromSnaps = snaps
+            .AsEnumerable()
+            .Reverse()
+            .Where(s => s.TuflowRunning)
+            .Select(s => Norm(s.Username))
+            .FirstOrDefault(u => u is not null && !SupportAccount.IsOpsSupport(u));
+        if (fromSnaps is not null)
+            return fromSnaps;
+
+        var sess = openSessions
+            .Where(s => !string.IsNullOrWhiteSpace(s.Username) && !SupportAccount.IsOpsSupport(s.Username, s.Domain))
+            .OrderByDescending(s => s.State == SessionState.Active)
+            .ThenByDescending(s => s.LastObservedUtc)
+            .FirstOrDefault();
+        if (sess is not null)
+            return string.IsNullOrWhiteSpace(sess.Domain) ? sess.Username.Trim() : $"{sess.Domain.Trim()}\\{sess.Username.Trim()}";
+
+        if (behaviour is not null)
+            return behaviour;
+
+        return Norm(latestSnapshotUser);
+    }
+
+    private static bool UsersMatch(string sessionUsername, string? sessionDomain, string displayUser)
+    {
+        if (string.Equals(sessionUsername, displayUser, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(sessionDomain))
+        {
+            var combined = $"{sessionDomain.Trim()}\\{sessionUsername.Trim()}";
+            if (string.Equals(combined, displayUser, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        var slash = displayUser.IndexOf('\\');
+        if (slash > 0)
+        {
+            var bare = displayUser[(slash + 1)..];
+            if (string.Equals(sessionUsername, bare, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     public Task<int> PurgeSnapshotsOlderThanAsync(int retentionDays, CancellationToken ct)
@@ -621,11 +685,11 @@ public class FleetDashboardService(
         int? TeamId = null,
         string? TeamName = null,
         SessionState? SessionState = null,
-        /// <summary>Detected run launch (CPU &gt; threshold for 2 samples) when State is Active.</summary>
+        /// <summary>Detected run launch (CPU/GPU elevated for 2 samples) when State is Active/Watching.</summary>
         DateTimeOffset? DetectedRunStartedUtc = null,
-        /// <summary>Detected stop time when a recent Ended run is shown on the Active column.</summary>
+        /// <summary>Detected stop time for the latest Ended run (shown until the next run starts).</summary>
         DateTimeOffset? DetectedRunEndedUtc = null,
-        /// <summary>TuflowBehaviourStates.Active or Ended when driving Active-column timestamps; else null.</summary>
+        /// <summary>TuflowBehaviourStates.Active/Watching/Ended when driving Active-column timestamps; else null.</summary>
         string? DetectedRunState = null)
     {
         public string DisplayName =>

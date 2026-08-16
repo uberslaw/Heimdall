@@ -40,12 +40,13 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
     public bool FocusPendingInventory { get; private set; }
 
     [BindProperty] public int? EditId { get; set; }
-    [BindProperty] public string ListName { get; set; } = "";
-    [BindProperty] public int? TeamId { get; set; }
-    [BindProperty] public string? Notes { get; set; }
+    /// <summary>SupportsGet so Create-tab catalog Search can round-trip in-progress fields.</summary>
+    [BindProperty(SupportsGet = true)] public string ListName { get; set; } = "";
+    [BindProperty(SupportsGet = true)] public int? TeamId { get; set; }
+    [BindProperty(SupportsGet = true)] public string? Notes { get; set; }
     [BindProperty] public string ProcessesText { get; set; } = "";
     /// <summary>JSON array of {processName, displayName?} for Create-tab draft entries.</summary>
-    [BindProperty] public string DraftEntriesJson { get; set; } = "[]";
+    [BindProperty(SupportsGet = true)] public string DraftEntriesJson { get; set; } = "[]";
 
     [BindProperty(SupportsGet = true)]
     public string Tab { get; set; } = "lists";
@@ -138,6 +139,16 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
                 return;
             }
 
+            // Catalog Search round-trips create fields via query; keep those over DB defaults.
+            var keepDraft = Request.Query.ContainsKey("ListName")
+                || Request.Query.ContainsKey("TeamId")
+                || Request.Query.ContainsKey("Notes")
+                || Request.Query.ContainsKey("DraftEntriesJson");
+            var qListName = ListName;
+            var qTeamId = TeamId;
+            var qNotes = Notes;
+            var qDraft = DraftEntriesJson;
+
             EditId = list.Id;
             ListName = list.Name;
             TeamId = list.TeamId;
@@ -154,6 +165,13 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
                     ? e.ProcessName
                     : $"{e.DisplayName},{e.ProcessName}"));
             EditingIsSystem = list.IsSystem;
+            if (keepDraft)
+            {
+                ListName = qListName;
+                TeamId = qTeamId;
+                Notes = qNotes;
+                DraftEntriesJson = string.IsNullOrWhiteSpace(qDraft) ? "[]" : qDraft;
+            }
             CreateSearch = q;
             await LoadCreateCatalogAsync();
             return;
@@ -214,11 +232,14 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
 
     public async Task<IActionResult> OnPostAddCustomCatalogAsync()
     {
+        Tab = "create";
         var proc = ConfigService.NormalizeProcessName(CustomProcessName ?? "");
         if (proc.Length == 0)
         {
             TempData["Error"] = "Process name is required for custom software.";
-            return RedirectToPage(new { tab = "create", q = CreateSearch });
+            await LoadAsync(scanDiscoveryGap: false);
+            await LoadCreateCatalogAsync();
+            return Page();
         }
 
         await catalog.EnsureManualEntryAsync(
@@ -229,12 +250,10 @@ public class AppListsModel(HeimdallDbContext db, AppListService appLists, Proces
             HttpContext.RequestAborted);
 
         TempData["Message"] = $"Added “{(string.IsNullOrWhiteSpace(CustomDisplayName) ? proc : CustomDisplayName.Trim())}” to the apps catalog.";
-        return RedirectToPage(new
-        {
-            tab = "create",
-            q = CreateSearch,
-            edit = EditId
-        });
+        // Stay on Page() so ListName / TeamId / Notes / DraftEntriesJson from the post are kept.
+        await LoadAsync(scanDiscoveryGap: false);
+        await LoadCreateCatalogAsync();
+        return Page();
     }
 
     public async Task<IActionResult> OnPostDeleteListAsync(int id)

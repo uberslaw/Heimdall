@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Heimdall.Api.Data;
+using Heimdall.Shared;
 using Heimdall.Shared.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -11,16 +12,20 @@ public sealed class TuflowBehaviourOptions
     public const string SectionName = "Heimdall:TuflowBehaviour";
 
     public double CpuPercentThreshold { get; set; } = TuflowBehaviourDefaults.CpuPercentThreshold;
+    /// <summary>Process GPU (else machine GPU) above this counts as elevated — GPU-bound TUFLOW.</summary>
+    public double GpuPercentThreshold { get; set; } = TuflowBehaviourDefaults.GpuPercentThreshold;
     public int ConfirmIntervals { get; set; } = TuflowBehaviourDefaults.ConfirmIntervals;
     public int SampleRetentionDays { get; set; } = TuflowBehaviourDefaults.SampleRetentionDays;
+    /// <summary>Unused: Live Active-column stop stamps persist until the next run (see GetDisplayByMachineAsync).</summary>
     public int RecentStopDisplayHours { get; set; } = TuflowBehaviourDefaults.RecentStopDisplayHours;
     public bool Enabled { get; set; } = true;
 }
 
 /// <summary>
-/// Detects TUFLOW run start/stop from fleet process CPU samples and persists behaviour analytics.
-/// Start: process CPU &gt; threshold for ConfirmIntervals consecutive samples → DetectedStartUtc = first of that pair.
-/// Stop: CPU ≤ threshold or process gone for ConfirmIntervals → DetectedEndUtc = first of that low/gone pair.
+/// Detects TUFLOW run start/stop from fleet process CPU/GPU samples and persists behaviour analytics.
+/// Start: elevated (CPU &gt; threshold or GPU &gt; threshold) for ConfirmIntervals → DetectedStartUtc = first of that pair.
+/// Stop: not elevated (or process gone) for ConfirmIntervals → DetectedEndUtc = first of that low/gone pair.
+/// Idle-tail Ended rows resume Active if work elevates again while tuflow.exe is still present.
 /// </summary>
 public sealed class TuflowBehaviourService(
     HeimdallDbContext db,
@@ -44,7 +49,8 @@ public sealed class TuflowBehaviourService(
         if (!opts.Enabled)
             return;
 
-        var threshold = Math.Max(0, opts.CpuPercentThreshold);
+        var cpuThreshold = Math.Max(0, opts.CpuPercentThreshold);
+        var gpuThreshold = Math.Max(0, opts.GpuPercentThreshold);
         var confirm = Math.Max(1, opts.ConfirmIntervals);
         var sampledAt = dto.SampledAtUtc == default ? DateTimeOffset.UtcNow : dto.SampledAtUtc;
         var intervalSec = dto.SampleIntervalSeconds is > 0
@@ -71,8 +77,13 @@ public sealed class TuflowBehaviourService(
         }
 
         var processCpu = dto.TuflowRunning ? (dto.ProcessCpuPercent ?? 0) : 0;
-        var elevated = dto.TuflowRunning && processCpu > threshold;
+        // Prefer process GPU; also consider machine GPU while TUFLOW is present so GPU-bound runs
+        // stay elevated even when PID→engine mapping under-reports (Megatron-style: CPU ~15%, GPU ~96%).
         var processGpu = SanitizeGpu(dto.ProcessGpuPercent);
+        var machineGpu = dto.TuflowRunning ? SanitizeGpu(dto.GpuPercent) : null;
+        var elevatedGpu = MaxNullable(processGpu, machineGpu);
+        var elevated = dto.TuflowRunning
+            && (processCpu > cpuThreshold || elevatedGpu is { } eg && eg > gpuThreshold);
 
         if (open is null)
         {
@@ -84,13 +95,12 @@ public sealed class TuflowBehaviourService(
             db.TuflowBehaviourRuns.Add(open);
         }
 
-        if (!string.IsNullOrWhiteSpace(dto.Username))
-            open.Username = dto.Username.Trim();
+        AssignBehaviourUsername(open, dto.Username);
 
         open.UpdatedUtc = sampledAt;
         AppendSample(open, dto, sampledAt, intervalSec, processGpu);
         MergeGpuEngines(open, dto.GpuEngineSightings);
-        UpdatePeaksAndHistogram(open, processCpu, processGpu, intervalSec);
+        UpdatePeaksAndHistogram(open, processCpu, processGpu ?? elevatedGpu, intervalSec);
 
         // Refresh first-seen from fleet streak while still watching (recovers mid-job after API outage).
         if (open.State == TuflowBehaviourStates.Watching && open.DetectedStartUtc is null)
@@ -102,6 +112,10 @@ public sealed class TuflowBehaviourService(
 
         if (open.State == TuflowBehaviourStates.Ended)
         {
+            // False stop while process still busy (e.g. GPU-bound under CPU threshold): resume Active.
+            if (TryResumeActiveFromIdleTail(open, elevated, dto.TuflowRunning, sampledAt, confirm))
+                return;
+
             await HandleIdleTailAsync(open, dto, sampledAt, confirm, ct);
             return;
         }
@@ -134,7 +148,7 @@ public sealed class TuflowBehaviourService(
         {
             RunId = Guid.NewGuid().ToString("n"),
             MachineId = machine.Id,
-            Username = string.IsNullOrWhiteSpace(dto.Username) ? null : dto.Username.Trim(),
+            Username = PreferInitialUsername(dto.Username),
             HardwareCpu = machine.HardwareCpu,
             HardwareGpu = machine.HardwareGpu,
             HardwareRamGb = machine.HardwareRamGb,
@@ -147,6 +161,80 @@ public sealed class TuflowBehaviourService(
             GpuEnginesObservedJson = "[]",
             UpdatedUtc = sampledAt
         };
+
+    /// <summary>
+    /// Live USER should reflect who owns the TUFLOW work, not a transient ops.* console fixer.
+    /// Freeze a non-ops name once known; allow upgrade from ops → non-ops; never the reverse.
+    /// (Tuflow process owner is not collected by the agent yet.)
+    /// </summary>
+    private static void AssignBehaviourUsername(TuflowBehaviourRun open, string? sampleUser)
+    {
+        if (string.IsNullOrWhiteSpace(sampleUser))
+            return;
+
+        var trimmed = sampleUser.Trim();
+        var sampleOps = SupportAccount.IsOpsSupport(trimmed);
+
+        if (string.IsNullOrWhiteSpace(open.Username))
+        {
+            open.Username = trimmed;
+            return;
+        }
+
+        var currentOps = SupportAccount.IsOpsSupport(open.Username);
+        if (sampleOps && !currentOps)
+            return;
+        if (!sampleOps && currentOps)
+        {
+            open.Username = trimmed;
+            return;
+        }
+
+        // Once Active/Ended, keep the run owner stable (still allow ops→non-ops above).
+        if ((open.State is TuflowBehaviourStates.Active or TuflowBehaviourStates.Ended) && !currentOps)
+            return;
+
+        open.Username = trimmed;
+    }
+
+    private static string? PreferInitialUsername(string? sampleUser) =>
+        string.IsNullOrWhiteSpace(sampleUser) ? null : sampleUser.Trim();
+
+    /// <summary>
+    /// Idle-tail Ended while tuflow.exe still present: if util elevates again for ConfirmIntervals,
+    /// clear the false stop and return to Active (keeps original DetectedStartUtc).
+    /// </summary>
+    private bool TryResumeActiveFromIdleTail(
+        TuflowBehaviourRun open,
+        bool elevated,
+        bool tuflowRunning,
+        DateTimeOffset sampledAt,
+        int confirm)
+    {
+        if (!tuflowRunning || !elevated)
+        {
+            open.ElevatedStreak = 0;
+            return false;
+        }
+
+        open.ElevatedStreak++;
+        open.LowStreak = 0;
+        open.AbsentStreak = 0;
+        if (open.ElevatedStreak < confirm)
+            return true; // consumed this sample; do not advance idle-tail gone logic
+
+        open.State = TuflowBehaviourStates.Active;
+        open.DetectedEndUtc = null;
+        open.CandidateEndUtc = null;
+        open.ProcessGoneUtc = null;
+        open.RampDownSeconds = null;
+        open.ElevatedStreak = confirm;
+        open.DetectedStartUtc ??= open.CandidateStartUtc ?? open.ProcessFirstSeenUtc;
+        logger.LogInformation(
+            "TUFLOW behaviour resumed Active {RunId} machine {MachineId} at {At} (elevated again during idle-tail)",
+            open.RunId, open.MachineId, sampledAt);
+        return true;
+    }
 
     /// <summary>
     /// Walk recent fleet snapshots backward while TuflowRunning to recover the start of the current
@@ -404,6 +492,15 @@ public sealed class TuflowBehaviourService(
     private static double? SanitizeGpu(double? gpu) =>
         gpu is null or < 0 or > ResourceMetricsCollectorMaxGpu ? null : gpu;
 
+    private static double? MaxNullable(double? a, double? b) =>
+        (a, b) switch
+        {
+            (null, null) => null,
+            (null, { } y) => y,
+            ({ } x, null) => x,
+            ({ } x, { } y) => Math.Max(x, y)
+        };
+
     // Mirror agent MaxSaneGpuPercent without referencing Agent assembly.
     private const double ResourceMetricsCollectorMaxGpu = 1000.0;
 
@@ -414,10 +511,8 @@ public sealed class TuflowBehaviourService(
         if (machineIds.Count == 0)
             return new Dictionary<int, BehaviourDisplay>();
 
-        var opts = options.Value;
-        var recentCutoff = DateTimeOffset.UtcNow.AddHours(-Math.Max(1, opts.RecentStopDisplayHours));
-
-        // SQLite EF cannot translate DateTimeOffset comparisons in complex OR filters — filter Ended in memory.
+        // Open Active/Watching plus Ended rows (stop stamp persists until the next run starts —
+        // no RecentStopDisplayHours window). SQLite EF: filter/sort DateTimeOffset in memory.
         var candidates = await db.TuflowBehaviourRuns.AsNoTracking()
             .Where(r => machineIds.Contains(r.MachineId)
                 && (r.State == TuflowBehaviourStates.Active
@@ -425,13 +520,8 @@ public sealed class TuflowBehaviourService(
                     || r.State == TuflowBehaviourStates.Ended))
             .ToListAsync(ct);
 
-        var openOrRecent = candidates
-            .Where(r => r.State != TuflowBehaviourStates.Ended
-                || (r.DetectedEndUtc is { } end && end >= recentCutoff))
-            .ToList();
-
         var result = new Dictionary<int, BehaviourDisplay>();
-        foreach (var group in openOrRecent.GroupBy(r => r.MachineId))
+        foreach (var group in candidates.GroupBy(r => r.MachineId))
         {
             // Confirmed elevated run → DetectedStartUtc stamp.
             var active = group.FirstOrDefault(r => r.State == TuflowBehaviourStates.Active);
@@ -442,11 +532,12 @@ public sealed class TuflowBehaviourService(
                     TuflowBehaviourStates.Active,
                     start,
                     null,
-                    active.RampUpSeconds);
+                    active.RampUpSeconds,
+                    active.Username);
                 continue;
             }
 
-            // Open watch (process seen, not yet CPU-confirmed) → show process-first-seen as start
+            // Open watch (process seen, not yet elevated-confirmed) → show process-first-seen as start
             // so Active column is never stuck on literal "Active" while a run row is open.
             var watching = group.FirstOrDefault(r => r.State == TuflowBehaviourStates.Watching);
             if (watching is not null)
@@ -456,10 +547,12 @@ public sealed class TuflowBehaviourService(
                     TuflowBehaviourStates.Watching,
                     start,
                     null,
-                    watching.RampUpSeconds);
+                    watching.RampUpSeconds,
+                    watching.Username);
                 continue;
             }
 
+            // Most recent completed detection — keep showing until a new Watching/Active opens.
             var ended = group
                 .Where(r => r.State == TuflowBehaviourStates.Ended && r.DetectedEndUtc is not null)
                 .OrderByDescending(r => r.DetectedEndUtc)
@@ -470,7 +563,8 @@ public sealed class TuflowBehaviourService(
                     TuflowBehaviourStates.Ended,
                     ended.DetectedStartUtc,
                     end,
-                    ended.RampUpSeconds);
+                    ended.RampUpSeconds,
+                    ended.Username);
             }
         }
 
@@ -530,7 +624,8 @@ public sealed class TuflowBehaviourService(
         string State,
         DateTimeOffset? DetectedStartUtc,
         DateTimeOffset? DetectedEndUtc,
-        double? RampUpSeconds);
+        double? RampUpSeconds,
+        string? Username = null);
 
     public sealed record TuflowBehaviourListRow(
         string RunId,

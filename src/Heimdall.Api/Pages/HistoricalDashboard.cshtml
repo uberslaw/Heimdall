@@ -260,10 +260,10 @@
                             title="Friendly name when set, otherwise hostname. Hostname and IP show underneath when a friendly name is used. Click to sort.">Machine</th>
                         <th class="hd-col-user hd-th-tip" data-sort="text" scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
-                            title="Username from the latest fleet sample (~30s). Empty when nobody is reported on that sample. Click to sort.">User</th>
-                        <th class="hd-col-active hd-th-tip" data-sort="text" scope="col"
+                            title="Workload user: prefer TUFLOW behaviour-run / non-ops session over a transient ops.* console fixer. Empty when no better signal exists. Click to sort.">User</th>
+                        <th class="hd-col-active hd-th-tip" data-sort="num" scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
-                            title="Detected run: HH:mm on top, dd/MM under (green = launch, red = stop). Otherwise Active/Idle/N/A from busy thresholds. Click to sort.">Active</th>
+                            title="Detected run: HH:mm on top, dd/MM under (green = launch, red = stop — stop time stays until the next run starts). Elevated = CPU &gt; 20% or GPU &gt; 5% for 2 samples. Otherwise Active/Idle/N/A from busy thresholds. Click to sort.">Active</th>
                         <th class="hd-th-tip" data-sort="num" scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
                             title="GPU utilisation from the latest ~30s sample. Can exceed 100% when Windows GPU Engine counters are summed across engines. Click to sort.">GPU %</th>
@@ -332,7 +332,7 @@
                         <td class="hd-col-user" data-sort-value="@liveUser" data-live="user"
                             title="@(string.IsNullOrWhiteSpace(liveUser) ? null : liveUser)"
                             aria-label="@(string.IsNullOrWhiteSpace(liveUser) ? null : liveUser)">@UsernameDisplay.FormatOrDash(r.Username)</td>
-                        <td class="hd-col-active" data-sort-value="@statusLabel" data-live="status">
+                        <td class="hd-col-active" data-sort-value="@HistoricalDashboardModel.ActiveColumnSortValue(r)" data-live="status">
                             @if (hasActiveStamp)
                             {
                                 <span class="hd-active-stamp hd-status-text @activeStamp.CssClass" title="@statusTitle">
