@@ -3189,9 +3189,15 @@ function Start-GuidedApiInstall {
         return
     }
 
-    Write-HeimdallLog "Launching install-api.ps1 (elevated; progress window + auto-close)..." -Level STEP
+    Write-HeimdallLog "Launching install-api.ps1 (progress window + auto-close)..." -Level STEP
     Update-UiStep 2 "[...] 3. Install HeimdallApi"
-    Set-UiStatus "Installing API - accept UAC; watch progress window"
+    $alreadyAdmin = Test-IsAdministrator
+    if ($alreadyAdmin) {
+        Set-UiStatus "Installing API — already admin (no UAC spawn); watch progress window"
+    }
+    else {
+        Set-UiStatus "Installing API - accept UAC; watch progress window"
+    }
     $installStartedAt = Get-Date
     $installEstimate = $null
     if (Get-Command Get-InstallApiTimingEstimate -ErrorAction SilentlyContinue) {
@@ -3200,7 +3206,13 @@ function Start-GuidedApiInstall {
         Write-HeimdallLog "Estimated API install: ~$estMmSs (done by $($installEstimate.FinishAt.ToString('HH:mm:ss')); baseline $($installEstimate.BaselineSec)s from $($installEstimate.Source))" -Level INFO
     }
     $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$ps1`" -Port $($inputs.Port) -ApiKey `"$($inputs.ApiKey)`" -NoPrompt"
-    $p = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $arg -PassThru
+    if ($alreadyAdmin) {
+        Write-HeimdallLog "Already elevated — running install-api.ps1 in this token (no UAC spawn)." -Level STEP
+        $p = Start-Process -FilePath "powershell.exe" -ArgumentList $arg -WorkingDirectory (Split-Path -Parent $ps1) -PassThru
+    }
+    else {
+        $p = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $arg -PassThru
+    }
     $installExit = -1
     if ($installEstimate -and (Get-Command Wait-ProcessWithInstallCountdown -ErrorAction SilentlyContinue)) {
         $installExit = Wait-ProcessWithInstallCountdown -Process $p -FinishAt $installEstimate.FinishAt
