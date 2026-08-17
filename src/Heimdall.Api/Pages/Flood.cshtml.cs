@@ -15,6 +15,7 @@ public class FloodModel(FloodAccessGuard flood) : PageModel
         ("live", "Live", "/HistoricalDashboard"),
         ("historical", "Historical", "/HistoricalDashboard"),
         ("sims", "Fleet Sims", "/FleetSimProgress"),
+        ("behaviour", "Run behaviour", "/TuflowBehaviour"),
         ("enroll", "Enrollment", "/HistoricalDashboard"),
     ];
 

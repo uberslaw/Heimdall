@@ -8,6 +8,7 @@
         "live" => "Live",
         "historical" => "Historical",
         "sims" => "Fleet Sims",
+        "behaviour" => "Run behaviour",
         "enroll" => "Enrollment",
         _ => "Live"
     };
@@ -15,6 +16,7 @@
     {
         "live" or "historical" or "enroll" => "historical-dashboard",
         "sims" => "fleet-sims",
+        "behaviour" => "tuflow-behaviour",
         _ => "historical-dashboard"
     };
     ViewData["HelpFragment"] = helpFragment;
@@ -38,6 +40,7 @@
                    data-hd-flood-title="@t.Label"
                    data-hd-flood-help="@((t.Key) switch {
                        "sims" => "fleet-sims",
+                       "behaviour" => "tuflow-behaviour",
                        _ => "historical-dashboard"
                    })"
                    role="tab"

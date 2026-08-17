@@ -41,9 +41,11 @@ public static class HelpNav
             || path.Equals("/HistoricalDashboardMachine", StringComparison.OrdinalIgnoreCase))
         {
             var tab = request.Query["tab"].FirstOrDefault() ?? "live";
-            return string.Equals(tab, "sims", StringComparison.OrdinalIgnoreCase)
-                ? "fleet-sims"
-                : "historical-dashboard";
+            if (string.Equals(tab, "sims", StringComparison.OrdinalIgnoreCase))
+                return "fleet-sims";
+            if (string.Equals(tab, "behaviour", StringComparison.OrdinalIgnoreCase))
+                return "tuflow-behaviour";
+            return "historical-dashboard";
         }
 
         if (path.Equals("/Index", StringComparison.OrdinalIgnoreCase)
@@ -80,6 +82,9 @@ public static class HelpNav
 
         if (path.Equals("/TuflowRuns", StringComparison.OrdinalIgnoreCase))
             return "tuflow-runs";
+
+        if (path.Equals("/TuflowBehaviour", StringComparison.OrdinalIgnoreCase))
+            return "tuflow-behaviour";
 
         if (path.Equals("/StaffAccess", StringComparison.OrdinalIgnoreCase))
             return "staff-access";

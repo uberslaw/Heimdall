@@ -7,7 +7,12 @@
 
 <div class="hd-panel mb-3">
     <h2 class="hd-section-title mb-0">TUFLOW Runs</h2>
-    <p class="text-secondary small mb-0 mt-2"><a asp-page="/Flood" asp-route-tab="sims">View Fleet Sim Progress →</a> (who's running what, where, and how it's tracking)</p>
+    <p class="text-secondary small mb-0 mt-2">
+        <a asp-page="/Flood" asp-route-tab="sims">View Fleet Sim Progress →</a>
+        ·
+        <a asp-page="/Flood" asp-route-tab="behaviour">Run behaviour analytics →</a>
+        (start hours, avg duration by user / machine)
+    </p>
 </div>
 
 @if (TempData["Message"] is string msg)

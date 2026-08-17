@@ -21,6 +21,7 @@
         <a class="btn btn-ghost btn-sm" href="#remote-machines">Online Status</a>
         <a class="btn btn-ghost btn-sm" href="#storage">Storage</a>
         <a class="btn btn-ghost btn-sm" href="#tuflow-runs">TUFLOW Runs</a>
+        <a class="btn btn-ghost btn-sm" href="#tuflow-behaviour">Run behaviour</a>
         <a class="btn btn-ghost btn-sm" href="#historical-dashboard">Flood hub</a>
         <a class="btn btn-ghost btn-sm" href="#staff-access">Staff RDP</a>
         <a class="btn btn-ghost btn-sm" href="#remote-workstations">Remote Workstations</a>
@@ -197,10 +198,25 @@
         <li>Progress comes from TUFLOW’s own <code>.tsf</code>; crashes from <code>.tlf</code> ERROR lines. Machine detail also shows a TUFLOW panel + recent run history for flood-gated users.</li>
         <li>Agent needs <code>%ProgramFiles%\Heimdall\Agent\TuflowLauncher\TuflowLauncher.exe</code> (included when you pack/install the client or run <code>Install-Agent</code>).</li>
         <li>For active-run progress across the fleet, use <a href="#fleet-sims">Fleet Sims</a> (<a asp-page="/Flood" asp-route-tab="sims">Flood → Fleet Sims</a>).</li>
+        <li>For start-hour / duration analytics by user and machine, use <a href="#tuflow-behaviour">Run behaviour</a> (<a asp-page="/Flood" asp-route-tab="behaviour">Flood → Run behaviour</a>).</li>
     </ol>
     <p class="text-secondary small mb-0">
         Paths are free-form (not allowlisted job definitions yet). Modelling+DT RBAC is a follow-up.
     </p>
+</section>
+
+<section id="tuflow-behaviour" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">TUFLOW Run Behaviour (Flood → Run behaviour)</h2>
+    <p class="text-secondary small mb-2">
+        <strong>Purpose:</strong> analytics on when TUFLOW runs usually start and how long they run, by user and by machine —
+        built from the same <code>TuflowBehaviourRuns</code> start/end detection that powers Live Active stamps.
+    </p>
+    <ol class="small mb-0">
+        <li>Open <a asp-page="/Flood" asp-route-tab="behaviour">Flood → Run behaviour</a> (or follow the link from <a asp-page="/TuflowRuns">TUFLOW Runs</a>). Default window is last 30 days (7 / 14 / 90 / 180 selectable).</li>
+        <li>Only runs with a confirmed <code>DetectedStartUtc</code> are included. Watching-only (process seen, not yet elevated) are excluded.</li>
+        <li>Duration averages / medians use completed runs (<code>DetectedEndUtc</code> set). Open Active runs appear in start counts and the hour-of-day chart but not in duration averages.</li>
+        <li>Username comes from the interactive session on the host during sampling (ops.* is not preferred once a non-ops user is known).</li>
+    </ol>
 </section>
 
 <section id="fleet-sims" class="hd-panel mb-4 hd-help-section">
@@ -215,11 +231,11 @@
 </section>
 
 <section id="historical-dashboard" class="hd-panel mb-4 hd-help-section">
-    <h2 class="h5">Flood hub (Live / Historical / Enrollment / Sims)</h2>
+    <h2 class="h5">Flood hub (Live / Historical / Enrollment / Sims / Run behaviour)</h2>
     <p class="text-secondary small mb-2">
-        <strong>Purpose:</strong> Flood-gated workspace for TUFLOW fleet ops — Live and Historical analytics scoped to the Flood allowlist, Enrollment, and Fleet Sims.
+        <strong>Purpose:</strong> Flood-gated workspace for TUFLOW fleet ops — Live and Historical analytics scoped to the Flood allowlist, Enrollment, Fleet Sims, and Run behaviour.
         Open <a asp-page="/Flood">Flood</a> (visible only to <code>Heimdall:StaffAccess:AdminEmails</code> ∪ <code>Heimdall:FloodTeamEmails</code>).
-        Legacy <code>/HistoricalDashboard</code> and <code>/FleetSimProgress</code> URLs redirect into this hub.
+        Legacy <code>/HistoricalDashboard</code>, <code>/FleetSimProgress</code>, and <code>/TuflowBehaviour</code> URLs redirect into this hub.
         Estate-wide live util (all clients) lives under <a asp-page="/Fleet" asp-route-tab="live">Fleet → Live</a>.
     </p>
     <ol class="small">
@@ -228,6 +244,7 @@
         <li><strong>Active vs Idle</strong> — while TUFLOW is running: Active if <em>TUFLOW process</em> GPU &gt; 5%, CPU &gt; 10%, or disk read/write &gt; 5 MB/s; otherwise Idle. Not Running when TUFLOW is not detected.</li>
         <li><strong>Historical</strong> — fleet summary cards for enrolled machines, Totals (today / week / month / 30d / 3m / 6m / year) or Averages (daily / 7-day / monthly / all-time), plus rankings (GPU, CPU, RAM, disk I/O, most active).</li>
         <li><strong>Fleet Sims</strong> — see <a href="#fleet-sims">Fleet Sims</a>.</li>
+        <li><strong>Run behaviour</strong> — see <a href="#tuflow-behaviour">TUFLOW Run Behaviour</a>.</li>
         <li><strong>Machine detail</strong> — click a hostname (or open <code>/HistoricalDashboardMachine/{id}</code>) for period summary cards and Chart.js time series (24h / 7d / 30d / 90d / 365d).</li>
     </ol>
     <p class="text-secondary small mb-0">

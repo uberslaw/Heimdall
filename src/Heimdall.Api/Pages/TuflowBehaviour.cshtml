@@ -1,0 +1,172 @@
+@page
+@model Heimdall.Api.Pages.TuflowBehaviourModel
+@{
+    ViewData["Title"] = "TUFLOW Run Behaviour";
+    ViewData["HelpFragment"] = "tuflow-behaviour";
+    var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
+    if (isPartial)
+        Layout = null;
+
+    var a = Model.Analytics;
+    var maxHour = a.StartHourHistogram.Count > 0 ? a.StartHourHistogram.Max(h => h.Count) : 0;
+}
+
+@if (!isPartial)
+{
+    <p class="text-secondary small">
+        <a asp-page="/TuflowRuns">← TUFLOW Runs</a>
+        ·
+        <a asp-page="/Flood" asp-route-tab="sims">Fleet Sims</a>
+    </p>
+}
+
+<div class="hd-panel mb-3">
+    @if (!isPartial)
+    {
+        <h2 class="hd-section-title mb-2">TUFLOW run behaviour</h2>
+    }
+    <p class="text-secondary small mb-3">
+        Confirmed starts use <code>DetectedStartUtc</code> / <code>DetectedEndUtc</code> from CPU/GPU threshold detection
+        (same source as Live Active stamps). Watching-only rows without a confirmed start are excluded.
+        Duration averages use completed runs only; open Active runs are counted separately.
+    </p>
+
+    <form method="get" action="/TuflowBehaviour" class="d-flex flex-wrap gap-2 align-items-end mb-3">
+        <div>
+            <label class="form-label small mb-1" for="days">Date range</label>
+            <select class="form-select form-select-sm" id="days" name="days" onchange="this.form.submit()">
+                @foreach (var d in TuflowBehaviourModel.DayChoices)
+                {
+                    if (Model.Days == d)
+                    {
+                        <option value="@d" selected>Last @d days</option>
+                    }
+                    else
+                    {
+                        <option value="@d">Last @d days</option>
+                    }
+                }
+            </select>
+        </div>
+        <span class="text-secondary small pb-1">
+            From @a.FromUtc.ToLocalTime().ToString("dd/MM/yyyy") (local) · @a.ConfirmedStarts confirmed start@(a.ConfirmedStarts == 1 ? "" : "s")
+        </span>
+    </form>
+
+    <div class="hd-grid mb-0">
+        <div class="hd-stat"><div class="label">Confirmed starts</div><div class="value">@a.ConfirmedStarts</div></div>
+        <div class="hd-stat"><div class="label">Completed</div><div class="value">@a.CompletedRuns</div></div>
+        <div class="hd-stat"><div class="label">Open / in progress</div><div class="value">@a.OpenRuns</div></div>
+        <div class="hd-stat"><div class="label">Avg completed</div><div class="value">@TuflowBehaviourModel.FormatDuration(a.AvgCompletedDuration)</div></div>
+        <div class="hd-stat"><div class="label">Median completed</div><div class="value">@TuflowBehaviourModel.FormatDuration(a.MedianCompletedDuration)</div></div>
+        <div class="hd-stat"><div class="label">Peak start hour</div><div class="value">@TuflowBehaviourModel.FormatPeakHour(a.PeakStartHourLocal)</div></div>
+    </div>
+</div>
+
+<div class="hd-panel mb-3">
+    <h3 class="h6 mb-2">When do runs usually start?</h3>
+    <p class="text-secondary small mb-2">Local hour of day · confirmed <code>DetectedStartUtc</code> only</p>
+    @if (maxHour <= 0)
+    {
+        <p class="text-secondary mb-0">No confirmed starts in this range.</p>
+    }
+    else
+    {
+        <div class="hd-user-bars hd-user-bars--hours">
+            @foreach (var row in a.StartHourHistogram)
+            {
+                <div class="hd-user-bar-row">
+                    <div class="hd-user-bar-label" title="@($"{row.HourLocal:00}:00")">@($"{row.HourLocal:00}")</div>
+                    <div class="hd-user-bar-track" title="@row.Count start(s)" aria-hidden="true">
+                        <div class="hd-user-bar-fill" style="width:@TuflowBehaviourModel.FormatHourBar(row.Count, maxHour)"></div>
+                    </div>
+                    <div class="hd-user-bar-val">@row.Count</div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<div class="hd-panel mb-3">
+    <h3 class="h6 mb-2">By user</h3>
+    <p class="text-secondary small mb-2">
+        Username from the interactive session on the host when the run was detected
+        (ops.* names are not preferred once a non-ops user is known).
+    </p>
+    @if (a.ByUser.Count == 0)
+    {
+        <p class="text-secondary mb-0">No data.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="hd-table hd-sortable mb-0">
+                <thead>
+                    <tr>
+                        <th data-sort="text">User</th>
+                        <th data-sort="num">Starts</th>
+                        <th data-sort="num">Completed</th>
+                        <th data-sort="num">Open</th>
+                        <th data-sort="num">Avg duration</th>
+                        <th data-sort="num">Median duration</th>
+                        <th data-sort="num">Peak start hour</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var row in a.ByUser)
+                {
+                    <tr>
+                        <td>@row.Label</td>
+                        <td data-sort-value="@row.RunCount">@row.RunCount</td>
+                        <td data-sort-value="@row.CompletedCount">@row.CompletedCount</td>
+                        <td data-sort-value="@row.OpenCount">@row.OpenCount</td>
+                        <td data-sort-value="@(row.AvgCompletedDuration?.TotalSeconds ?? -1)">@TuflowBehaviourModel.FormatDuration(row.AvgCompletedDuration)</td>
+                        <td data-sort-value="@(row.MedianCompletedDuration?.TotalSeconds ?? -1)">@TuflowBehaviourModel.FormatDuration(row.MedianCompletedDuration)</td>
+                        <td data-sort-value="@(row.PeakStartHourLocal ?? -1)">@TuflowBehaviourModel.FormatPeakHour(row.PeakStartHourLocal)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<div class="hd-panel mb-3">
+    <h3 class="h6 mb-2">By machine</h3>
+    @if (a.ByMachine.Count == 0)
+    {
+        <p class="text-secondary mb-0">No data.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="hd-table hd-sortable mb-0">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Machine</th>
+                        <th data-sort="num">Starts</th>
+                        <th data-sort="num">Completed</th>
+                        <th data-sort="num">Open</th>
+                        <th data-sort="num">Avg duration</th>
+                        <th data-sort="num">Median duration</th>
+                        <th data-sort="num">Peak start hour</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var row in a.ByMachine)
+                {
+                    <tr>
+                        <td>@row.Label</td>
+                        <td data-sort-value="@row.RunCount">@row.RunCount</td>
+                        <td data-sort-value="@row.CompletedCount">@row.CompletedCount</td>
+                        <td data-sort-value="@row.OpenCount">@row.OpenCount</td>
+                        <td data-sort-value="@(row.AvgCompletedDuration?.TotalSeconds ?? -1)">@TuflowBehaviourModel.FormatDuration(row.AvgCompletedDuration)</td>
+                        <td data-sort-value="@(row.MedianCompletedDuration?.TotalSeconds ?? -1)">@TuflowBehaviourModel.FormatDuration(row.MedianCompletedDuration)</td>
+                        <td data-sort-value="@(row.PeakStartHourLocal ?? -1)">@TuflowBehaviourModel.FormatPeakHour(row.PeakStartHourLocal)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>

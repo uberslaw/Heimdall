@@ -604,6 +604,143 @@ public sealed class TuflowBehaviourService(
             .ToList();
     }
 
+    /// <summary>
+    /// Aggregates confirmed behaviour runs (DetectedStartUtc set) over a rolling window.
+    /// Watching-only rows without a confirmed start are excluded. Open Active runs count toward
+    /// starts / hour-of-day but are omitted from completed-duration averages.
+    /// Does not mutate run rows — safe for Live Active stamps.
+    /// </summary>
+    public async Task<TuflowBehaviourAnalytics> GetBehaviourAnalyticsAsync(int days, CancellationToken ct)
+    {
+        days = Math.Clamp(days, 1, 365);
+        var fromUtc = DateTimeOffset.UtcNow.AddDays(-days);
+
+        // SQLite DateTimeOffset filter — load candidates then filter in memory.
+        var rows = await db.TuflowBehaviourRuns.AsNoTracking()
+            .Include(r => r.Machine)
+            .Where(r => r.DetectedStartUtc != null)
+            .ToListAsync(ct);
+
+        var inWindow = rows
+            .Where(r => r.DetectedStartUtc is { } s && s >= fromUtc)
+            .ToList();
+
+        var completed = inWindow
+            .Where(r => r.DetectedEndUtc is not null
+                && (r.State == TuflowBehaviourStates.Ended
+                    || r.DetectedEndUtc <= DateTimeOffset.UtcNow))
+            .Select(r => (r, Duration: r.DetectedEndUtc!.Value - r.DetectedStartUtc!.Value))
+            .Where(x => x.Duration > TimeSpan.Zero)
+            .ToList();
+
+        var openCount = inWindow.Count(r =>
+            r.State is TuflowBehaviourStates.Active or TuflowBehaviourStates.Watching
+            || (r.State == TuflowBehaviourStates.Ended && r.DetectedEndUtc is null));
+
+        var startHours = new int[24];
+        foreach (var r in inWindow)
+        {
+            var localHour = r.DetectedStartUtc!.Value.ToLocalTime().Hour;
+            startHours[localHour]++;
+        }
+
+        var byUser = BuildDimensionRows(
+            inWindow,
+            completed,
+            r => string.IsNullOrWhiteSpace(r.Username) ? "(unknown)" : r.Username.Trim(),
+            r => string.IsNullOrWhiteSpace(r.Username) ? "(unknown)" : r.Username.Trim());
+
+        var byMachine = BuildDimensionRows(
+            inWindow,
+            completed,
+            r => r.Machine.Hostname,
+            r => string.IsNullOrWhiteSpace(r.Machine.FriendlyName)
+                ? r.Machine.Hostname
+                : r.Machine.FriendlyName.Trim());
+
+        return new TuflowBehaviourAnalytics(
+            days,
+            fromUtc,
+            inWindow.Count,
+            completed.Count,
+            openCount,
+            AverageDuration(completed.Select(c => c.Duration)),
+            MedianDuration(completed.Select(c => c.Duration)),
+            PeakStartHour(startHours),
+            startHours.Select((count, hour) => new HourBucket(hour, count)).ToList(),
+            byUser,
+            byMachine);
+    }
+
+    private static IReadOnlyList<BehaviourDimensionRow> BuildDimensionRows(
+        IReadOnlyList<TuflowBehaviourRun> inWindow,
+        IReadOnlyList<(TuflowBehaviourRun r, TimeSpan Duration)> completed,
+        Func<TuflowBehaviourRun, string> groupKey,
+        Func<TuflowBehaviourRun, string> displayName)
+    {
+        var completedByKey = completed
+            .GroupBy(c => groupKey(c.r), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Duration).ToList(), StringComparer.OrdinalIgnoreCase);
+
+        return inWindow
+            .GroupBy(groupKey, StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var label = displayName(g.First());
+                var hours = new int[24];
+                foreach (var r in g)
+                {
+                    var h = r.DetectedStartUtc!.Value.ToLocalTime().Hour;
+                    hours[h]++;
+                }
+
+                completedByKey.TryGetValue(g.Key, out var durations);
+                durations ??= [];
+                var open = g.Count(r =>
+                    r.State is TuflowBehaviourStates.Active or TuflowBehaviourStates.Watching
+                    || (r.State == TuflowBehaviourStates.Ended && r.DetectedEndUtc is null));
+
+                return new BehaviourDimensionRow(
+                    label,
+                    g.Count(),
+                    durations.Count,
+                    open,
+                    AverageDuration(durations),
+                    MedianDuration(durations),
+                    PeakStartHour(hours));
+            })
+            .OrderByDescending(r => r.RunCount)
+            .ThenBy(r => r.Label, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static TimeSpan? AverageDuration(IEnumerable<TimeSpan> durations)
+    {
+        var list = durations.ToList();
+        if (list.Count == 0)
+            return null;
+        return TimeSpan.FromTicks((long)list.Average(d => d.Ticks));
+    }
+
+    private static TimeSpan? MedianDuration(IEnumerable<TimeSpan> durations)
+    {
+        var list = durations.OrderBy(d => d).ToList();
+        if (list.Count == 0)
+            return null;
+        var mid = list.Count / 2;
+        return list.Count % 2 == 0
+            ? TimeSpan.FromTicks((list[mid - 1].Ticks + list[mid].Ticks) / 2)
+            : list[mid];
+    }
+
+    private static int? PeakStartHour(int[] hourCounts)
+    {
+        var max = hourCounts.Max();
+        if (max <= 0)
+            return null;
+        return Array.IndexOf(hourCounts, max);
+    }
+
     public async Task<int> PurgeOlderThanAsync(int retentionDays, CancellationToken ct)
     {
         var cutoff = DateTimeOffset.UtcNow.AddDays(-Math.Max(1, retentionDays));
@@ -651,4 +788,28 @@ public sealed class TuflowBehaviourService(
                 ? (DetectedEndUtc ?? DateTimeOffset.UtcNow) - s
                 : null;
     }
+
+    public sealed record TuflowBehaviourAnalytics(
+        int Days,
+        DateTimeOffset FromUtc,
+        int ConfirmedStarts,
+        int CompletedRuns,
+        int OpenRuns,
+        TimeSpan? AvgCompletedDuration,
+        TimeSpan? MedianCompletedDuration,
+        int? PeakStartHourLocal,
+        IReadOnlyList<HourBucket> StartHourHistogram,
+        IReadOnlyList<BehaviourDimensionRow> ByUser,
+        IReadOnlyList<BehaviourDimensionRow> ByMachine);
+
+    public sealed record HourBucket(int HourLocal, int Count);
+
+    public sealed record BehaviourDimensionRow(
+        string Label,
+        int RunCount,
+        int CompletedCount,
+        int OpenCount,
+        TimeSpan? AvgCompletedDuration,
+        TimeSpan? MedianCompletedDuration,
+        int? PeakStartHourLocal);
 }
