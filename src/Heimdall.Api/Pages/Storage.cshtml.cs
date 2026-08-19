@@ -67,7 +67,7 @@ public class StorageModel(HeimdallDbContext db, StorageScanService storageScans)
         LastWeeklyRunUtc = await storageScans.GetLastWeeklyRunUtcAsync(ct);
 
         var now = DateTimeOffset.UtcNow;
-        var onlineCutoff = now.AddMinutes(-5);
+        var onlineCutoff = now.Add(-RemoteMachineService.OnlineWindow);
 
         var machines = await db.Machines.AsNoTracking()
             .OrderBy(m => m.Hostname)

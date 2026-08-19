@@ -21,11 +21,11 @@
         <div class="value">@Model.Rows.Count</div>
     </div>
     <div class="hd-stat">
-        <div class="label" title="Agent contacted the API within 5 minutes. Not ping or RDP.">Online (agent 5m)</div>
+        <div class="label" title="Agent contacted the API within ~60 seconds. Not ping or RDP.">Online (agent 60s)</div>
         <div class="value">@Model.OnlineCount</div>
     </div>
     <div class="hd-stat">
-        <div class="label" title="No agent heartbeat in 5 minutes. Ping and RDP can still succeed.">Offline (no agent)</div>
+        <div class="label" title="No agent contact in ~60 seconds. Ping and RDP can still succeed.">Offline (no agent)</div>
         <div class="value">@Model.OfflineCount</div>
     </div>
     <div class="hd-stat">
@@ -48,7 +48,7 @@
         </colgroup>
         <thead>
             <tr>
-                <th data-sort="text" title="Agent heartbeat within 5 minutes. Not ping or RDP.">Status</th>
+                <th data-sort="text" title="Agent contact within ~60 seconds. Not ping or RDP.">Status</th>
                 <th data-sort="text">Machine</th>
                 <th class="hd-th-stacked" data-sort="text" title="Last IP reported by the agent."><span>IP</span><span>Address</span></th>
                 <th class="hd-th-contact" data-sort="text" title="When this host last posted a heartbeat to the API.">Agent last contact</th>
@@ -76,14 +76,14 @@
                 <td>
                     @if (r.IsOnline)
                     {
-                        <span class="badge-pill badge-active hd-status-badge" title="Agent contacted API within 5 minutes">
+                        <span class="badge-pill badge-active hd-status-badge" title="Agent contacted API within ~60 seconds">
                             <span class="hd-status-full">Online</span>
                             <span class="hd-status-short" aria-hidden="true">On</span>
                         </span>
                     }
                     else
                     {
-                        <span class="badge-pill badge-ended hd-status-badge" title="No agent heartbeat in 5 minutes (Ping/RDP can still succeed)">
+                        <span class="badge-pill badge-ended hd-status-badge" title="No agent contact in ~60 seconds (Ping/RDP can still succeed)">
                             <span class="hd-status-full">Offline</span>
                             <span class="hd-status-short" aria-hidden="true">Off</span>
                         </span>

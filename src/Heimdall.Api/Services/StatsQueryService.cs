@@ -161,7 +161,7 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
 
         var lastSession = allSessions.OrderByDescending(s => s.LastObservedUtc).FirstOrDefault();
         var (lastUserDepartedUtc, lastUserStillLoggedIn) = ResolveLastUserDeparture(lastSession);
-        var onlineCutoff = now.AddMinutes(-5);
+        var onlineCutoff = now.Add(-RemoteMachineService.OnlineWindow);
 
         var runs = FilterRunsInWindow(
             (await db.ProcessRuns.AsNoTracking().ToListAsync(ct))

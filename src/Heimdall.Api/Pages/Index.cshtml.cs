@@ -28,7 +28,7 @@ public class IndexModel(HeimdallDbContext db, MachineUtilisationService util) : 
         PeriodLabel = MachineUtilisationService.PeriodOptions.First(p => p.Key == Period).Label;
 
         var now = DateTimeOffset.UtcNow;
-        var onlineCutoff = now.AddMinutes(-5);
+        var onlineCutoff = now.Add(-RemoteMachineService.OnlineWindow);
 
         var machines = await db.Machines.AsNoTracking()
             .Include(m => m.Team)

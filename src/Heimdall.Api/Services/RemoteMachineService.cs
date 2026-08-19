@@ -13,7 +13,19 @@ public class RemoteMachineService(HeimdallDbContext db, ConfigService config, IL
 
     public const int DefaultConfigRefreshSeconds = 300;
 
-    public static readonly TimeSpan OnlineWindow = TimeSpan.FromMinutes(5);
+    /// <summary>
+    /// Agent is "online" when <c>LastSeenUtc</c> is within this window.
+    /// Sized for ~2 missed 30s fleet snapshots after shutdown (Live orange halo / Online Status).
+    /// Heartbeat ingest and fleet snapshots both refresh <c>LastSeenUtc</c>; either stopping
+    /// ends contact — there is no separate ping that keeps hosts looking online.
+    /// </summary>
+    public static readonly TimeSpan OnlineWindow = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Client Version deploy-queue "Online" stays deliberately looser so brief gaps do not
+    /// flip hosts offline while updates are queued. Live / Online Status use <see cref="OnlineWindow"/>.
+    /// </summary>
+    public static readonly TimeSpan ClientVersionOnlineWindow = TimeSpan.FromMinutes(5);
 
     private static readonly TimeSpan RdpVerifyDelay = TimeSpan.FromSeconds(2);
 

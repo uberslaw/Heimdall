@@ -257,7 +257,7 @@
                     <tr>
                         <th class="hd-col-host hd-th-tip" data-sort="text" scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
-                            title="Friendly name when set, otherwise hostname. Hostname and IP show underneath when a friendly name is used. Click to sort.">Machine</th>
+                            title="Friendly name when set, otherwise hostname. Rose gold link; orange halo when agent is offline (no check-in in ~60 seconds). Hostname and IP show underneath when a friendly name is used. Click to sort.">Machine</th>
                         <th class="hd-col-user hd-th-tip" data-sort="text" scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
                             title="Workload user: prefer TUFLOW behaviour-run / non-ops session over a transient ops.* console fixer. Empty when no better signal exists. Click to sort.">User</th>
@@ -307,7 +307,7 @@
                 @foreach (var r in Model.FilteredLiveRows)
                 {
                     var checkInUtc = r.LastSeenUtc;
-                    var stale = (DateTimeOffset.UtcNow - checkInUtc).TotalMinutes > 15;
+                    var offline = checkInUtc < DateTimeOffset.UtcNow.Add(-RemoteMachineService.OnlineWindow);
                     var checkInLabel = HistoricalDashboardModel.FormatContact(checkInUtc);
                     var liveUser = UsernameDisplay.Format(r.Username);
                     var statusLabel = HistoricalDashboardModel.ActiveColumnLabel(r);
@@ -315,11 +315,11 @@
                     var statusTitle = HistoricalDashboardModel.ActiveColumnTitle(r);
                     var hasActiveStamp = HistoricalDashboardModel.TryGetActiveStamp(r, out var activeStamp);
                     <tr data-machine-id="@r.MachineId">
-                        <td class="hd-col-host" data-sort-value="@r.DisplayName" data-live="host" title="@(stale ? $"Last agent check-in: {checkInLabel} (stale)" : r.Hostname)">
-                            <a class="hd-live-host @(stale ? "hd-live-host-stale" : null)"
+                        <td class="hd-col-host" data-sort-value="@r.DisplayName" data-live="host" title="@(offline ? $"Last agent check-in: {checkInLabel} (offline)" : r.Hostname)">
+                            <a class="hd-live-host @(offline ? "hd-live-host-offline" : null)"
                                asp-page="/HistoricalDashboardMachine"
                                asp-route-id="@r.MachineId"
-                               title="@(stale ? $"Last agent check-in: {checkInLabel}" : r.Hostname)">@r.DisplayName</a>
+                               title="@(offline ? $"Last agent check-in: {checkInLabel}" : r.Hostname)">@r.DisplayName</a>
                             @if (!string.IsNullOrWhiteSpace(r.FriendlyName))
                             {
                                 <div class="hd-live-hostname text-secondary small">@r.Hostname</div>
@@ -736,6 +736,7 @@
           if (oldLink.textContent !== newLink.textContent) oldLink.textContent = newLink.textContent;
           if (newLink.getAttribute('href') && oldLink.getAttribute('href') !== newLink.getAttribute('href'))
             oldLink.setAttribute('href', newLink.getAttribute('href'));
+          oldLink.classList.toggle('hd-live-host-offline', newLink.classList.contains('hd-live-host-offline'));
           oldLink.classList.toggle('hd-live-host-stale', newLink.classList.contains('hd-live-host-stale'));
           if (newLink.hasAttribute('title')) oldLink.title = newLink.title;
         }

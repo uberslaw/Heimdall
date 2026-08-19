@@ -73,6 +73,7 @@
     <ol class="small mb-0">
         <li>Open <a asp-page="/Fleet" asp-route-tab="live">Fleet → Live</a>. Auto-refreshes every 30s.</li>
         <li>Sampling is always-on after the agent’s first heartbeat — no Flood enrollment required.</li>
+        <li>Orange halo on the machine name means no agent contact in ~60 seconds (<code>LastSeenUtc</code> / fleet snapshot or heartbeat). After a shutdown, expect offline within about two missed 30s samples.</li>
         <li>Active / Idle badges apply while TUFLOW is detected on that host; most estate machines show gauges with Active/Idle as —.</li>
         <li>Flood’s own Live tab (under <a asp-page="/Flood">Flood hub</a>) stays scoped to the Flood allowlist.</li>
     </ol>
@@ -84,7 +85,7 @@
     <ol class="small mb-0">
         <li>Computers are grouped under <strong>team section headings</strong>. Active app-list names for that team appear beside the heading.</li>
         <li>Summary counts (Computers / Active / Idle / Off) sit beside the Period control — Computers in gold; Active / Idle / Off labels in status colours (green / amber / red); silver numbers centered underneath. Click any column header to sort (first click descending, then toggle).</li>
-        <li><strong>Status</strong> (5‑minute check-in): green Active = online with a non-disconnected session; amber Idle = online, no active session; red Off = no recent check-in. Status is colored text (same size as the computer name).</li>
+        <li><strong>Status</strong> (~60s check-in): green Active = online with a non-disconnected session; amber Idle = online, no active session; red Off = no recent check-in. Status is colored text (same size as the computer name).</li>
         <li><strong>Period</strong> (Today / 24h / 5d / 7d / 30d / All) sets Active / Passive / Free % and GPU·CPU·IO columns for the whole list.</li>
         <li>Click any metric cell (Active, Passive, Free, GPU h, CPU h, Dr, Dw, NTx, NRx) to open a <strong>breakdown</strong> of processes, people, and days that built that total. Period cycling on cells was removed — change Period only via the dropdown.</li>
         <li>Active % is WTS Active (connected) session time over the calendar window (agent ActiveSeconds; Disconnected time is excluded; stale open sessions stop at last observation). Passive, GPU/CPU hours, and disk/network columns use <strong>always-on 30s fleet samples</strong> from every Heimdall client (independent of Flood enrollment). Until samples arrive those cells show —.</li>
@@ -176,7 +177,7 @@
     <h2 class="h5">Online Status</h2>
     <p class="text-secondary small mb-2"><strong>Purpose:</strong> Ping, RDP handshake, and RDS service from this API host — also under <a asp-page="/Fleet" asp-route-tab="online">Fleet → Online status</a>. Utilisation lives on Computers; live metrics on Live.</p>
     <ol class="small mb-0">
-        <li><strong>Online / Offline</strong> means the Heimdall agent last contacted the API within 5 minutes (<code>LastSeenUtc</code>) — not ICMP ping and not RDP. A machine can be Offline here while Ping succeeds and RDP accepts (agent stopped, wrong API URL/key, or ingest not reaching this DB).</li>
+        <li><strong>Online / Offline</strong> means the Heimdall agent last contacted the API within ~60 seconds (<code>LastSeenUtc</code> / <code>RemoteMachineService.OnlineWindow</code>) — not ICMP ping and not RDP. Fleet snapshots (~30s) and heartbeats both refresh contact; after shutdown, offline appears after about two missed samples. A machine can be Offline here while Ping succeeds and RDP accepts (agent stopped, wrong API URL/key, or ingest not reaching this DB). Client Version keeps a separate 5‑minute Online window for the deploy queue.</li>
         <li><strong>Ping</strong> uses ICMP from this API host (may be blocked by firewall). Click Ping to probe — results are not automatic.</li>
         <li><strong>RDS service</strong> status is reported by the agent on each heartbeat.</li>
         <li><strong>Restart RDS</strong> queues <code>RestartTermService</code> for the agent. A per-machine countdown estimates agent pickup (~config refresh interval, typically 300s). When the agent acknowledges the restart (or TermService reports Running after the expected window), the API automatically runs an RDP test and updates the row.</li>

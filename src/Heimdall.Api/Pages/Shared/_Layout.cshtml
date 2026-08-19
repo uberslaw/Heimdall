@@ -117,6 +117,31 @@
                             <a class="dropdown-item" asp-page="/Teams">Teams</a>
                         </div>
                     </div>
+                    @if (showFloodNav)
+                    {
+                        var floodPath = Context.Request.Path.Value ?? "";
+                        var onFlood = floodPath.Equals("/Flood", StringComparison.OrdinalIgnoreCase)
+                                      || floodPath.Equals("/HistoricalDashboard", StringComparison.OrdinalIgnoreCase)
+                                      || floodPath.Equals("/FleetSimProgress", StringComparison.OrdinalIgnoreCase)
+                                      || floodPath.Equals("/TuflowBehaviour", StringComparison.OrdinalIgnoreCase);
+                        var floodTab = Context.Request.Query["tab"].FirstOrDefault() ?? "live";
+                        floodTab = FloodModel.NormalizeTab(floodTab);
+                        <div class="dropdown hd-nav-dropdown">
+                            <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                Flood
+                            </button>
+                            <div class="dropdown-menu hd-nav-dropdown-menu">
+                                @foreach (var t in FloodModel.Tabs)
+                                {
+                                    var isActive = onFlood && t.Key == floodTab;
+                                    <a class="dropdown-item @(isActive ? "active" : null)"
+                                       asp-page="/Flood"
+                                       asp-route-tab="@t.Key">@t.Label</a>
+                                }
+                                <a class="dropdown-item" asp-page="/TuflowRuns">TUFLOW Runs</a>
+                            </div>
+                        </div>
+                    }
                     <div class="dropdown hd-nav-dropdown">
                         <button class="hd-nav-dropdown-toggle dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
                             Staff
@@ -124,11 +149,6 @@
                         <div class="dropdown-menu hd-nav-dropdown-menu">
                             <a class="dropdown-item" asp-page="/RemoteWorkstations">Remote Workstations</a>
                             <a class="dropdown-item" asp-page="/StaffAccess">Staff Access</a>
-                            @if (showFloodNav)
-                            {
-                                <a class="dropdown-item" asp-page="/Flood">Flood hub</a>
-                                <a class="dropdown-item" asp-page="/TuflowRuns">TUFLOW Runs</a>
-                            }
                         </div>
                     </div>
                     <div class="dropdown hd-nav-dropdown">

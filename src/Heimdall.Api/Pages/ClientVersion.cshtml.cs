@@ -9,7 +9,8 @@ namespace Heimdall.Api.Pages;
 
 /// <summary>
 /// Fleet view: agent simple version per host vs. published baseline (PublishedVersionService).
-/// Online = last seen within 5 minutes; in-use from heartbeat; Active User from open sessions.
+/// Online = last seen within <see cref="RemoteMachineService.ClientVersionOnlineWindow"/> (5 minutes;
+/// deliberately looser than Live's 60s window); in-use from heartbeat; Active User from open sessions.
 /// Pack readiness + silent Deploy Client (agent pull).
 /// </summary>
 public class ClientVersionModel(
@@ -141,7 +142,7 @@ public class ClientVersionModel(
         PublishedSetBy = info.SetBy;
 
         var now = DateTimeOffset.UtcNow;
-        var onlineCutoff = now.AddMinutes(-5);
+        var onlineCutoff = now.Add(-RemoteMachineService.ClientVersionOnlineWindow);
 
         var machines = await db.Machines.AsNoTracking()
             .OrderBy(m => m.Hostname)
