@@ -1,8 +1,19 @@
 ﻿# Elevated one-shot: publish API (exclude appsettings), copy TuflowLauncher beside agent, restart HeimdallApi.
-# Shows the same WinForms progress window as install-api (step X of Y + ETA).
+# Shows the same WinForms progress window as install-api (step X of Y + ETA), unless -NoProgressWindow
+# (Launch Control ActionOnly / console-driven redeploy — progress is mirrored into launch-control logs).
 # Exit 0 = publish + deploy + /api/health OK. Flood UI pages are NOT used as a gate (they return 403
 # without an interactive Windows identity / flood membership).
+param(
+    [switch]$NoProgressWindow,
+    # When Launch Control pre-creates a session log, use that path only (avoids matching republish-api-deploy.log).
+    [string]$SessionLog = ''
+)
+
 $ErrorActionPreference = 'Stop'
+
+if ($env:HEIMDALL_REDEPLOY_NO_UI -eq '1') {
+    $NoProgressWindow = $true
+}
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'src\Heimdall.Api\Heimdall.Api.csproj'))) {
@@ -17,7 +28,21 @@ $agentLauncher = Join-Path $env:ProgramFiles 'Heimdall\Agent\TuflowLauncher'
 $launcherSrc = Join-Path $repoRoot 'dist\TuflowLauncher-publish'
 $logDir = Join-Path $env:ProgramData 'Heimdall\logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-$log = Join-Path $logDir ("republish-api-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
+if (-not [string]::IsNullOrWhiteSpace($SessionLog)) {
+    $log = $SessionLog.Trim()
+    $parent = Split-Path -Parent $log
+    if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+}
+elseif (-not [string]::IsNullOrWhiteSpace($env:HEIMDALL_REDEPLOY_LOG)) {
+    $log = $env:HEIMDALL_REDEPLOY_LOG.Trim()
+}
+else {
+    $log = Join-Path $logDir ("republish-api-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
+}
+# Touch session log early so the parent can tail only this file (not the cumulative deploy log).
+if (-not (Test-Path -LiteralPath $log)) {
+    Set-Content -LiteralPath $log -Value '' -Encoding utf8
+}
 $deployLog = Join-Path $logDir 'republish-api-deploy.log'
 
 $timingHelper = Join-Path $PSScriptRoot 'Heimdall-InstallApiTiming.ps1'
@@ -164,12 +189,17 @@ try {
             $script:RepublishTimingEstimate.EstimatedSec,
             $script:RepublishTimingEstimate.BaselineSec,
             $script:RepublishTimingEstimate.Source)
-        Start-InstallApiConsoleCountdown `
-            -FinishAt $script:RepublishTimingEstimate.FinishAt `
-            -EstimatedSec $script:RepublishTimingEstimate.EstimatedSec `
-            -LogPath $log `
-            -TotalSteps $script:RepublishTotalSteps `
-            -WindowTitle 'Heimdall API redeploy'
+        if (-not $NoProgressWindow) {
+            Start-InstallApiConsoleCountdown `
+                -FinishAt $script:RepublishTimingEstimate.FinishAt `
+                -EstimatedSec $script:RepublishTimingEstimate.EstimatedSec `
+                -LogPath $log `
+                -TotalSteps $script:RepublishTotalSteps `
+                -WindowTitle 'Heimdall API redeploy'
+        }
+        else {
+            Write-RepublishLog 'Progress window skipped (-NoProgressWindow) — watch Launch Control console / this log' -Level INFO
+        }
     }
 
     Set-RepublishStep 1 'Preparing'
@@ -251,22 +281,64 @@ try {
 
     Set-RepublishStep 6 'Start service + health'
     Write-RepublishLog 'Starting HeimdallApi...'
-    Start-Service HeimdallApi
-    Wait-RepublishSeconds 4
-
-    $svc = Get-Service HeimdallApi
-    if ($svc.Status -ne 'Running') {
-        throw "HeimdallApi status is $($svc.Status), expected Running"
+    # SCM default ServicesPipeTimeout is 30s. After a large robocopy / AV scan / DB seed,
+    # HeimdallApi often reports RUNNING a few seconds later — Start-Service then throws 1053
+    # even though the process is still starting. Do not treat that as a hard fail; poll health.
+    try {
+        Start-Service HeimdallApi -ErrorAction Stop
+    }
+    catch {
+        Write-RepublishLog ("Start-Service: $($_.Exception.Message) — will poll for Running + health") -Level WARN
+        try { & sc.exe start HeimdallApi 2>&1 | Out-Null } catch { }
     }
 
-    # Public health only - do not probe Flood-gated Razor pages (403 without flood access).
-    $health = Invoke-RestMethod 'http://127.0.0.1:5080/api/health' -TimeoutSec 15
-    Write-RepublishLog ("Health: " + ($health | ConvertTo-Json -Compress)) -Level OK
+    $health = $null
+    $deadline = (Get-Date).AddSeconds(120)
+    while ((Get-Date) -lt $deadline) {
+        $svc = Get-Service HeimdallApi -ErrorAction SilentlyContinue
+        if ($svc -and $svc.Status -eq 'Running') {
+            try {
+                # Public health only - do not probe Flood-gated Razor pages (403 without flood access).
+                $health = Invoke-RestMethod 'http://127.0.0.1:5080/api/health' -TimeoutSec 10
+                if ($health -and "$($health.status)" -match '^(?i)ok$') { break }
+            }
+            catch {
+                # Still binding / seeding — keep waiting.
+            }
+        }
+        Wait-RepublishSeconds 2
+    }
+
+    $svc = Get-Service HeimdallApi -ErrorAction SilentlyContinue
+    if (-not $svc -or $svc.Status -ne 'Running') {
+        throw "HeimdallApi status is $(if ($svc) { $svc.Status } else { 'missing' }), expected Running"
+    }
     if (-not $health -or "$($health.status)" -notmatch '^(?i)ok$') {
-        throw "Unexpected health payload: $($health | ConvertTo-Json -Compress)"
+        throw "HeimdallApi is Running but /api/health did not return ok within 120s"
     }
+    Write-RepublishLog ("Health: " + ($health | ConvertTo-Json -Compress)) -Level OK
 
+    $dllPath = Join-Path $dest 'Heimdall.Api.dll'
+    $dllInfo = Get-Item -LiteralPath $dllPath -ErrorAction Stop
+    $dllStamp = $dllInfo.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')
+    Write-RepublishLog ("Installed Heimdall.Api.dll LastWriteTime={0} Size={1}" -f $dllStamp, $dllInfo.Length) -Level OK
+
+    # Unique success markers for Launch Control (do not rely on MSBuild "Done" noise).
+    Write-RepublishLog 'HEIMDALL_REDEPLOY_OK' -Level OK
     Write-RepublishLog "DONE (log: $log)" -Level OK
+
+    $resultPath = Join-Path $logDir 'republish-api-last-result.json'
+    $result = [ordered]@{
+        ok                = $true
+        finishedUtc       = (Get-Date).ToUniversalTime().ToString('o')
+        logPath           = $log
+        dllPath           = $dllPath
+        dllLastWriteTime  = $dllInfo.LastWriteTime.ToString('o')
+        dllLength         = $dllInfo.Length
+        health            = $health
+    }
+    ($result | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $resultPath -Encoding UTF8
+
     if ($script:RepublishStartedAt -and (Get-Command Save-InstallApiTimingResult -ErrorAction SilentlyContinue)) {
         $actualSec = [int][Math]::Max(0, ((Get-Date) - $script:RepublishStartedAt).TotalSeconds)
         Save-InstallApiTimingResult -DurationSec $actualSec -Success $true
@@ -277,6 +349,18 @@ try {
 }
 catch {
     Write-RepublishLog "FAIL: $($_.Exception.Message)" -Level ERROR
+    Write-RepublishLog 'HEIMDALL_REDEPLOY_FAIL' -Level ERROR
+    try {
+        $failPath = Join-Path $logDir 'republish-api-last-result.json'
+        $failObj = [ordered]@{
+            ok          = $false
+            finishedUtc = (Get-Date).ToUniversalTime().ToString('o')
+            logPath     = $log
+            error       = $_.Exception.Message
+        }
+        ($failObj | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $failPath -Encoding UTF8
+    }
+    catch { }
     try { Start-Service HeimdallApi -ErrorAction SilentlyContinue } catch { }
     if ($script:RepublishStartedAt -and (Get-Command Save-InstallApiTimingResult -ErrorAction SilentlyContinue)) {
         $actualSec = [int][Math]::Max(0, ((Get-Date) - $script:RepublishStartedAt).TotalSeconds)
@@ -286,7 +370,7 @@ catch {
     $script:RepublishExitCode = 1
 }
 finally {
-    if (Get-Command Stop-InstallApiConsoleCountdown -ErrorAction SilentlyContinue) {
+    if (-not $NoProgressWindow -and (Get-Command Stop-InstallApiConsoleCountdown -ErrorAction SilentlyContinue)) {
         if ($script:RepublishExitCode -eq 0) {
             if (Get-Command Set-InstallApiProgressStatus -ErrorAction SilentlyContinue) {
                 Set-InstallApiProgressStatus -StatusLine 'Redeploy finished successfully'

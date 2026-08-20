@@ -767,6 +767,9 @@ public class ConfigService(HeimdallDbContext db)
             PendingTuflowStart = TuflowRunService.DeserializeStartRequest(machine?.PendingTuflowStartJson),
             PendingClientUpdate = ClientUpdateService.DeserializeRequest(machine?.PendingClientUpdateJson),
             PendingClientDeposit = ClientUpdateService.DeserializeDepositRequest(machine?.PendingClientDepositJson),
+            PendingApiBaseUrl = string.IsNullOrWhiteSpace(machine?.PendingApiBaseUrl)
+                ? null
+                : machine!.PendingApiBaseUrl.Trim(),
             PendingDiskUsageScan = DeserializeDiskUsageScanRequest(machine?.PendingDiskUsageScanJson),
             FleetSamplingEnabled = fleetSamplingEnabled,
             FleetProcessNames = ["tuflow"]
@@ -1265,6 +1268,7 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN TuflowRunStatusJson TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingClientUpdateJson TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingClientDepositJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingApiBaseUrl TEXT NULL");
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN ClientUpdateProgressJson TEXT NULL");
         await TryExec(db, "ALTER TABLE ProcessRuns ADD COLUMN PeakGpuPercent REAL NULL");
         await TryExec(db, "ALTER TABLE ProcessRuns ADD COLUMN DiskReadBytes INTEGER NULL");
@@ -1774,6 +1778,10 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN TopGpuProcessesJson TEXT NOT NULL DEFAULT '[]'");
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN TopDiskReadProcessesJson TEXT NOT NULL DEFAULT '[]'");
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN TopDiskWriteProcessesJson TEXT NOT NULL DEFAULT '[]'");
+        await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN TuflowInstanceCount INTEGER NULL");
+        await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ClaimedHpcSeats INTEGER NULL");
+        await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ClaimedClassicSeats INTEGER NULL");
+        await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN TuflowClaimDetail TEXT NULL");
         // GPU Engine perf counter glitches (1e13+%) blow up Today GPU h — null them out.
         await TryExec(db, """
             UPDATE FleetMetricSnapshots
@@ -2041,6 +2049,17 @@ public static class SeedData
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowQueueItems_State ON TuflowQueueItems(State)");
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowQueueItems_AssignedMachineId ON TuflowQueueItems(AssignedMachineId)");
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowQueueItems_RunId ON TuflowQueueItems(RunId)");
+        await TryExec(db, "ALTER TABLE TuflowQueueItems ADD COLUMN UseLocalScratch INTEGER NOT NULL DEFAULT 0");
+        await TryExec(db, "ALTER TABLE TuflowQueueItems ADD COLUMN ArchiveShare TEXT NULL");
+        await TryExec(db, "ALTER TABLE TuflowQueueItems ADD COLUMN AutoCleanAfterVerify INTEGER NOT NULL DEFAULT 0");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN TuflowPreferLocalScratch INTEGER NOT NULL DEFAULT 1");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN TuflowScratchMinFreeGb REAL NOT NULL DEFAULT 50");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN TuflowAllowScratchOnC INTEGER NOT NULL DEFAULT 0");
+        await TryExec(db, "ALTER TABLE TuflowRunRecords ADD COLUMN ScratchDrive TEXT NULL");
+        await TryExec(db, "ALTER TABLE TuflowRunRecords ADD COLUMN LocalResultsPath TEXT NULL");
+        await TryExec(db, "ALTER TABLE TuflowRunRecords ADD COLUMN ArchivePath TEXT NULL");
+        await TryExec(db, "ALTER TABLE TuflowRunRecords ADD COLUMN TransferState TEXT NULL");
+        await TryExec(db, "ALTER TABLE TuflowRunRecords ADD COLUMN TransferDetail TEXT NULL");
 
         await EnsureCanonicalTeamsAsync(db);
     }

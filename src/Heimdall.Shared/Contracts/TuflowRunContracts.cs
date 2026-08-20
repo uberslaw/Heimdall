@@ -55,6 +55,27 @@ public sealed class TuflowStartRequestDto
     /// editable so this never silently ends up blank.
     /// </summary>
     public string? RequestedBy { get; init; }
+
+    /// <summary>
+    /// When true and <see cref="WorkingDirectory"/> is empty, the agent picks a local scratch folder
+    /// on the best non-C fixed drive (see host scratch policy).
+    /// </summary>
+    public bool UseLocalScratch { get; init; }
+
+    /// <summary>
+    /// UNC archive root for post-run verified robocopy. May include <c>{hostname}</c>.
+    /// Empty = org default template. Agent appends a per-run folder under this root.
+    /// </summary>
+    public string? ArchiveShare { get; init; }
+
+    /// <summary>After verified offload, delete local scratch results. Default false (safe).</summary>
+    public bool AutoCleanAfterVerify { get; init; }
+
+    /// <summary>Host policy: prefer local scratch when UseLocalScratch is true (agent-side defaults).</summary>
+    public double ScratchMinFreeGb { get; init; } = 50;
+
+    /// <summary>Host policy: allow scratch on C: when no other drive qualifies.</summary>
+    public bool AllowScratchOnC { get; init; }
 }
 
 /// <summary>TuflowStartRequestDto.LaunchMode / RunSpec.LaunchMode values.</summary>
@@ -116,6 +137,32 @@ public sealed class TuflowRunStatusDto
 
     /// <summary>First few "ERROR"-prefixed lines found in the .tlf (or stderr as fallback) on a crash.</summary>
     public string? ErrorSummary { get; init; }
+
+    // --- Local scratch + post-run archive transfer (agent-filled) ---
+
+    /// <summary>Drive letter chosen for scratch, e.g. <c>D:</c>.</summary>
+    public string? ScratchDrive { get; init; }
+    /// <summary>Local folder used as WorkingDirectory / results root under scratch.</summary>
+    public string? LocalResultsPath { get; init; }
+    /// <summary>Final UNC destination for verified robocopy.</summary>
+    public string? ArchivePath { get; init; }
+    /// <summary>One of <see cref="TuflowTransferStates"/>.*</summary>
+    public string? TransferState { get; init; }
+    public string? TransferDetail { get; init; }
+    public int? TransferLocalFileCount { get; init; }
+    public int? TransferDestFileCount { get; init; }
+    public long? TransferLocalBytes { get; init; }
+    public long? TransferDestBytes { get; init; }
+}
+
+/// <summary>TuflowRunStatusDto.TransferState values for post-run archive.</summary>
+public static class TuflowTransferStates
+{
+    public const string Pending = "Pending";
+    public const string Copying = "Copying";
+    public const string Verified = "Verified";
+    public const string Failed = "Failed";
+    public const string Skipped = "Skipped";
 }
 
 /// <summary>TuflowRunStatusDto.State values. Mirrors TuflowLauncher.RunState — see RunStateWire.ToWireState().</summary>
@@ -176,4 +223,7 @@ public sealed class TuflowQueueFileItemDto
     public List<string> Scenarios { get; init; } = [];
     public List<string> Events { get; init; } = [];
     public string? ResultsFolder { get; init; }
+    public bool UseLocalScratch { get; init; }
+    public string? ArchiveShare { get; init; }
+    public bool AutoCleanAfterVerify { get; init; }
 }

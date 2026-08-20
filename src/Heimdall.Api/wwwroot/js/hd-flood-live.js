@@ -145,31 +145,17 @@
     return hay.indexOf(q) >= 0;
   }
 
-  function chartCardHtml(c) {
-    var user = userDisplay(c.username);
-    var startLabel = c.startUnix
-      ? localParts(new Date(c.startUnix * 1000)).time +
-        " " +
-        localParts(new Date(c.startUnix * 1000)).date
-      : "—";
+  function chartRowHtml(c, colCount) {
     return (
-      '<div class="hd-run-block hd-flood-live-chart" data-live-chart-machine="' +
+      '<tr class="hd-live-chart-row" data-follow-for="' +
+      c.machineId +
+      '" data-live-chart-machine="' +
       c.machineId +
       '">' +
-      '<div class="hd-run-meta-row">' +
-      '<div class="hd-flood-live-chart-meta">' +
-      "<strong>" +
-      escapeHtml(c.label) +
-      "</strong>" +
-      '<span class="text-secondary small ms-2">' +
-      escapeHtml(user) +
-      "</span>" +
-      '<span class="text-secondary small ms-2">start ' +
-      startLabel +
-      "</span>" +
-      "</div>" +
-      '<button type="button" class="btn btn-sm btn-outline-secondary hd-run-gpu-toggle" data-gpu-toggle aria-pressed="true">Hide GPU</button>' +
-      "</div>" +
+      '<td colspan="' +
+      colCount +
+      '">' +
+      '<div class="hd-flood-live-chart-wrap">' +
       '<div class="hd-gpu-chart" data-gpu-panel data-start-unix="' +
       c.startUnix +
       '" data-end-unix="' +
@@ -184,17 +170,9 @@
       '<button type="button" class="btn btn-sm btn-outline-secondary" data-zoom-reset title="Show full run">Reset</button>' +
       "</div></div>" +
       '<canvas class="hd-gpu-chart-canvas" width="900" height="140" aria-label="Utilization over time"></canvas>' +
-      '<p class="hd-gpu-chart-hint text-secondary small mb-0">Shared live stream · scroll to zoom</p>' +
-      "</div></div>"
+      '<p class="hd-gpu-chart-hint text-secondary small mb-0">Scroll to zoom · drag to pan when zoomed</p>' +
+      "</div></div></td></tr>"
     );
-  }
-
-  function escapeHtml(s) {
-    return String(s || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
   }
 
   function boot(root) {
@@ -207,12 +185,23 @@
 
     var liveOnly = root.getAttribute("data-live-only") === "1";
     var form = root.querySelector("[data-flood-live-filter]");
-    var chartsHost = root.querySelector("[data-flood-live-charts]");
     var lastPayload = null;
     var nextAt = Date.now() + FALLBACK_MS;
     var usingSse = false;
     var fallbackTimer = null;
     var countdownTimer = null;
+    // machineId -> whether chart panel is shown (default true when chart first appears)
+    var chartVisible = {};
+
+    function tableBody() {
+      return root.querySelector("#live-fleet-table tbody");
+    }
+
+    function colCount() {
+      var table = root.querySelector("#live-fleet-table");
+      var ths = table && table.querySelectorAll("thead tr:first-child th");
+      return ths && ths.length ? ths.length : 15;
+    }
 
     function filterState() {
       var q = "";
@@ -226,26 +215,25 @@
       return { q: q, status: status };
     }
 
-    function updateMeta(filtered, total, label) {
+    function updateMeta(filtered, total) {
       var meta = root.querySelector('[data-live="meta"]');
       if (!meta) return;
       meta.setAttribute("data-filtered", String(filtered));
       meta.setAttribute("data-total", String(total));
-      var countEl = meta.querySelector("[data-live-meta-count]");
-      if (countEl) countEl.textContent = filtered + " / " + total + " enrolled";
-      var cd = meta.querySelector("[data-live-meta-countdown]");
-      if (cd && label) cd.textContent = label;
+      meta.title =
+        filtered +
+        " / " +
+        total +
+        " enrolled" +
+        (usingSse ? " · live stream" : " · polling");
+      tickCountdown();
     }
 
     function tickCountdown() {
       var cd = root.querySelector("[data-live-meta-countdown]");
       if (!cd) return;
-      if (usingSse) {
-        cd.textContent = "Live stream · shared update";
-        return;
-      }
       var remaining = Math.max(0, Math.ceil((nextAt - Date.now()) / 1000));
-      cd.textContent = "Next update in " + remaining + "s";
+      cd.textContent = "Live update in " + remaining + "s";
     }
 
     function patchRow(tr, row) {
@@ -278,11 +266,86 @@
         statusCell.innerHTML = statusHtml(row);
         statusCell.setAttribute("data-sort-value", String(activeSortValue(row)));
       }
-      function metric(key, text, sort) {
+      function licenseCellHtml(cm, claimed) {
+        if (claimed == null || claimed === undefined) return String(cm || 0);
+        var mismatch = Number(claimed) !== Number(cm || 0);
+        return (
+          '<span class="hd-lic-cm">' +
+          String(cm || 0) +
+          '</span><span class="hd-lic-claim' +
+          (mismatch ? " hd-lic-mismatch" : "") +
+          '" title="Agent claim (estimate)">/' +
+          String(claimed) +
+          "</span>"
+        );
+      }
+      function licenseTitle(hpc, classic, hpcDetail, classicDetail, claimedHpc, claimedClassic, claimDetail) {
+        var seats = Math.max(hpc || 0, classic || 0);
+        var parts = [
+          "Seats in use: " +
+            seats +
+            " = max(HPC " +
+            (hpc || 0) +
+            ", Classic " +
+            (classic || 0) +
+            "). TUFLOW GPU/HPC typically holds both products — do not add them."
+        ];
+        if (hpcDetail) parts.push("HPC: " + hpcDetail);
+        else if (!(hpc > 0)) parts.push("No HPC checkout at this machine LastIp");
+        if (classicDetail) parts.push("Classic: " + classicDetail);
+        else if (!(classic > 0)) parts.push("No Classic checkout at this machine LastIp");
+        var claimed = effectiveClaim(claimedHpc, claimedClassic);
+        if (claimed != null) {
+          parts.push(
+            "Agent claim: " +
+              claimed +
+              " (max HPC " +
+              (claimedHpc != null ? claimedHpc : "—") +
+              " / Classic " +
+              (claimedClassic != null ? claimedClassic : "—") +
+              ")" +
+              (claimDetail ? " — " + claimDetail : "")
+          );
+          if (Number(claimed) !== Number(seats))
+            parts.push(
+              "Mismatch: CodeMeter is source of truth; claim is from local process args (-nt/GPU)."
+            );
+        }
+        return parts.join(" · ");
+      }
+      function effectiveClaim(hpc, classic) {
+        if (hpc == null && classic == null) return null;
+        return Math.max(hpc || 0, classic || 0);
+      }
+      function metric(key, text, sort, detail) {
         var cell = tr.querySelector('[data-live="' + key + '"]');
         if (!cell) return;
         cell.textContent = text;
         cell.setAttribute("data-sort-value", String(sort));
+        if (detail) {
+          cell.title = "CodeMeter (by client IP only): " + detail;
+        }
+      }
+      function licenseMetric(hpc, classic, hpcDetail, classicDetail, claimedHpc, claimedClassic, claimDetail) {
+        var cell = tr.querySelector('[data-live="seats"]');
+        if (!cell) return;
+        var seats = Math.max(hpc || 0, classic || 0);
+        var claimed = effectiveClaim(claimedHpc, claimedClassic);
+        cell.innerHTML = licenseCellHtml(seats, claimed);
+        cell.setAttribute("data-sort-value", String(seats));
+        cell.title = licenseTitle(
+          hpc,
+          classic,
+          hpcDetail,
+          classicDetail,
+          claimedHpc,
+          claimedClassic,
+          claimDetail
+        );
+        cell.classList.toggle(
+          "hd-lic-cell-warn",
+          claimed != null && Number(claimed) !== Number(seats)
+        );
       }
       metric("gpu", formatGauge(row.gpuPercent), row.gpuPercent == null ? -1 : row.gpuPercent);
       metric("cpu", formatGauge(row.cpuPercent), row.cpuPercent == null ? -1 : row.cpuPercent);
@@ -295,53 +358,165 @@
       metric("runtime", formatHours(row.todayRuntimeHours) + "\u00A0h", row.todayRuntimeHours);
       metric("activeh", formatHours(row.todayActiveHours) + "\u00A0h", row.todayActiveHours);
       metric("gpuh", formatHours(row.todayGpuHours) + "\u00A0h", row.todayGpuHours);
-      metric("hpc", String(row.hpcSeats || 0), row.hpcSeats || 0);
-      metric("classic", String(row.classicSeats || 0), row.classicSeats || 0);
+      licenseMetric(
+        row.hpcSeats,
+        row.classicSeats,
+        row.hpcSeatDetail,
+        row.classicSeatDetail,
+        row.claimedHpcSeats,
+        row.claimedClassicSeats,
+        row.tuflowClaimDetail
+      );
       tr.hidden = false;
     }
 
-    function formatLicenseStrip(lic) {
-      if (!lic) return "CodeMeter: —";
-      if (!lic.enabled) return "CodeMeter licenses: off";
-      if (!lic.available) return "CodeMeter: waiting for first poll…";
-      function pool(used, total, avail) {
-        if (used == null) return "—/" + total;
-        var s = used + "/" + total;
-        if (avail != null) s += " (" + avail + " free)";
-        return s;
+    function licenseStripHtml(lic) {
+      if (!lic) {
+        return '<div class="hd-lic-strip" data-live-lic-body><span class="hd-lic-chip hd-lic-chip-label">CodeMeter</span><span class="hd-lic-chip is-muted">—</span></div>';
+      }
+      if (!lic.enabled) {
+        return '<div class="hd-lic-strip" data-live-lic-body><span class="hd-lic-chip hd-lic-chip-label">CodeMeter</span><span class="hd-lic-chip is-muted">Off</span></div>';
+      }
+      if (!lic.available) {
+        return '<div class="hd-lic-strip" data-live-lic-body><span class="hd-lic-chip hd-lic-chip-label">CodeMeter</span><span class="hd-lic-chip hd-lic-chip-warn">Waiting for first poll…</span></div>';
+      }
+      function poolChip(key, used, total, avail, title) {
+        var v = used == null ? "—/" + total : used + "/" + total;
+        var free =
+          avail != null
+            ? '<span class="hd-lic-free">' + avail + " free</span>"
+            : "";
+        return (
+          '<span class="hd-lic-chip" title="' +
+          title +
+          '"><span class="hd-lic-k">' +
+          key +
+          '</span><span class="hd-lic-v">' +
+          v +
+          "</span>" +
+          free +
+          "</span>"
+        );
       }
       function age() {
-        if (!lic.queriedAtUtc) return "";
-        var sec = Math.max(0, Math.floor((Date.now() - new Date(lic.queriedAtUtc).getTime()) / 1000));
+        if (!lic.queriedAtUtc) return "—";
+        var sec = Math.max(
+          0,
+          Math.floor((Date.now() - new Date(lic.queriedAtUtc).getTime()) / 1000)
+        );
         return sec < 90 ? sec + "s ago" : Math.floor(sec / 60) + "m ago";
       }
-      var poll =
+      function nextPollLabel() {
+        if (!lic.queriedAtUtc) return "—";
+        var interval = Math.max(15, Math.min(600, Number(lic.pollIntervalSeconds) || 60));
+        var started =
+          new Date(lic.queriedAtUtc).getTime() -
+          Math.max(0, Number(lic.pollDurationMs) || 0);
+        var rem = Math.ceil((started + interval * 1000 - Date.now()) / 1000);
+        if (rem <= 0) return "due";
+        return rem + "s";
+      }
+      var pollDur =
         lic.pollDurationMs >= 1000
           ? (lic.pollDurationMs / 1000).toFixed(1) + "s"
           : Math.round(lic.pollDurationMs || 0) + "ms";
-      var text =
-        "HPC " +
-        pool(lic.hpcUsed, lic.hpcTotal, lic.hpcAvailable) +
-        " · Classic " +
-        pool(lic.classicUsed, lic.classicTotal, lic.classicAvailable) +
-        " · poll " +
-        poll +
+      var html =
+        '<div class="hd-lic-strip" data-live-lic-body>' +
+        '<span class="hd-lic-chip hd-lic-chip-label">CodeMeter</span>' +
+        poolChip(
+          "HPC",
+          lic.hpcUsed,
+          lic.hpcTotal,
+          lic.hpcAvailable,
+          "HPC pool Used=/Total from CodeMeter (product 926). Separate from Classic — do not add to Classic or to the Seats column."
+        ) +
+        poolChip(
+          "Classic",
+          lic.classicUsed,
+          lic.classicTotal,
+          lic.classicAvailable,
+          "Classic pool Used=/Total from CodeMeter (product 920). Separate from HPC — do not add to HPC or to the Seats column."
+        ) +
+        '<span class="hd-lic-chip hd-lic-chip-meta" title="How long the last CodeMeter query took · age of that result" data-live-lic-last>' +
+        '<span class="hd-lic-k">Last poll</span><span class="hd-lic-v">' +
+        pollDur +
         " · " +
-        age();
-      if (lic.partial) text += " · partial";
-      var other = (lic.unmatchedHpc || 0) + (lic.unmatchedClassic || 0);
-      if (other > 0) text += " · other " + other;
-      return text;
+        age() +
+        "</span></span>" +
+        '<span class="hd-lic-chip hd-lic-chip-meta" title="Estimated time until the next CodeMeter poll starts" data-live-lic-next>' +
+        '<span class="hd-lic-k">Next poll</span><span class="hd-lic-v" data-live-lic-next-val>' +
+        nextPollLabel() +
+        "</span></span>";
+      if (lic.partial) {
+        html +=
+          '<span class="hd-lic-chip hd-lic-chip-warn" title="Some license servers failed or timed out">Partial</span>';
+      }
+      var outside = lic.unmatchedEffective || 0;
+      if (outside > 0) {
+        var tip =
+          lic.unmatchedDetail ||
+          "Seats outside Flood enrollment: " +
+            outside +
+            " (max HPC/Classic per IP; not additive). CodeMeter products: HPC " +
+            (lic.unmatchedHpc || 0) +
+            " · Classic " +
+            (lic.unmatchedClassic || 0);
+        var tipAttr = String(tip)
+          .replace(/&/g, "&amp;")
+          .replace(/"/g, "&quot;")
+          .replace(/</g, "&lt;")
+          .replace(/\n/g, "&#10;");
+        html +=
+          '<span class="hd-lic-chip hd-lic-chip-outside" title="' +
+          tipAttr +
+          '"><span class="hd-lic-k">In use by other offices</span><span class="hd-lic-v">' +
+          outside +
+          "</span></span>";
+      }
+      html += "</div>";
+      return html;
     }
 
     function updateLicenses(payload) {
       var el = root.querySelector('[data-live="licenses"]');
       if (!el) return;
       var lic = payload.licenses;
-      el.title = (lic && lic.statusNote) || "";
+      var poll =
+        lic && lic.pollDurationMs >= 1000
+          ? (lic.pollDurationMs / 1000).toFixed(1) + "s poll"
+          : lic
+            ? Math.round(lic.pollDurationMs || 0) + "ms poll"
+            : "";
+      var note = (lic && lic.statusNote) || "";
+      el.title = [note, poll].filter(Boolean).join(" · ");
+      el.classList.toggle("is-muted", !(lic && lic.enabled));
       el.classList.toggle("text-secondary", !(lic && lic.enabled));
-      var textEl = el.querySelector("[data-live-lic-text]");
-      if (textEl) textEl.textContent = formatLicenseStrip(lic);
+      el.innerHTML = licenseStripHtml(lic);
+    }
+
+    function ensureGpuToggle(tr, hasChart) {
+      var cell = tr.querySelector('[data-live="status"]');
+      if (!cell) return;
+      var btn = cell.querySelector("[data-gpu-toggle]");
+      if (!hasChart) {
+        if (btn) btn.remove();
+        return;
+      }
+      var id = Number(tr.getAttribute("data-machine-id"));
+      var show = chartVisible[id] === true;
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.type = "button";
+        btn.className =
+          "btn btn-sm btn-outline-secondary hd-run-gpu-toggle hd-live-gpu-toggle";
+        btn.setAttribute("data-gpu-toggle", "");
+        btn.title = "Show or hide this machine’s live utilization chart";
+        cell.appendChild(btn);
+      }
+      btn.setAttribute("aria-pressed", show ? "true" : "false");
+      btn.textContent = show ? "Hide GPU" : "Show GPU";
+      // Bright + periodic pulse only while collapsed and a run chart is available.
+      btn.classList.toggle("is-entice", !show);
     }
 
     function applyRows(payload) {
@@ -350,22 +525,36 @@
       var filtered = rows.filter(function (r) {
         return matchesFilter(r, f.q, f.status);
       });
-      var tbody = root.querySelector("#live-fleet-table tbody");
+      var tbody = tableBody();
       if (!tbody) return;
       var byId = {};
       rows.forEach(function (r) {
         byId[r.machineId] = r;
+      });
+      var chartIds = {};
+      (payload.charts || []).forEach(function (c) {
+        chartIds[c.machineId] = true;
       });
       var seen = {};
       tbody.querySelectorAll("tr[data-machine-id]").forEach(function (tr) {
         var id = Number(tr.getAttribute("data-machine-id"));
         seen[id] = true;
         var row = byId[id];
+        var chartRow = tbody.querySelector(
+          'tr[data-follow-for="' + id + '"]'
+        );
         if (!row || !matchesFilter(row, f.q, f.status)) {
           tr.hidden = true;
+          if (chartRow) chartRow.hidden = true;
+          ensureGpuToggle(tr, false);
           return;
         }
         patchRow(tr, row);
+        ensureGpuToggle(tr, !!chartIds[id]);
+        if (chartRow) {
+          var showChart = !!chartIds[id] && chartVisible[id] === true;
+          chartRow.hidden = !showChart;
+        }
       });
       // New machines: force HTML fallback once so structure stays correct.
       var missing = filtered.some(function (r) {
@@ -379,35 +568,42 @@
     }
 
     function syncCharts(payload) {
-      if (!chartsHost) return;
+      var tbody = tableBody();
+      if (!tbody) return;
       var charts = payload.charts || [];
       var ids = {};
       charts.forEach(function (c) {
         ids[c.machineId] = c;
       });
-      chartsHost.querySelectorAll("[data-live-chart-machine]").forEach(function (el) {
+      tbody.querySelectorAll("tr[data-live-chart-machine]").forEach(function (el) {
         var id = Number(el.getAttribute("data-live-chart-machine"));
-        if (!ids[id]) el.remove();
+        if (!ids[id]) {
+          el.remove();
+          var main = tbody.querySelector('tr[data-machine-id="' + id + '"]');
+          if (main) ensureGpuToggle(main, false);
+        }
       });
-      var empty = chartsHost.querySelector("[data-flood-live-charts-empty]");
-      if (charts.length === 0) {
-        if (empty) empty.hidden = false;
-        return;
-      }
-      if (empty) empty.hidden = true;
       charts.forEach(function (c) {
-        var card = chartsHost.querySelector(
-          '[data-live-chart-machine="' + c.machineId + '"]'
+        var main = tbody.querySelector(
+          'tr[data-machine-id="' + c.machineId + '"]'
+        );
+        if (!main || main.hidden) return;
+        ensureGpuToggle(main, true);
+        var card = tbody.querySelector(
+          'tr[data-live-chart-machine="' + c.machineId + '"]'
         );
         if (!card) {
-          chartsHost.insertAdjacentHTML("beforeend", chartCardHtml(c));
-          card = chartsHost.querySelector(
-            '[data-live-chart-machine="' + c.machineId + '"]'
+          main.insertAdjacentHTML("afterend", chartRowHtml(c, colCount()));
+          card = tbody.querySelector(
+            'tr[data-live-chart-machine="' + c.machineId + '"]'
           );
-          var chartEl = card && card.querySelector(".hd-gpu-chart");
-          if (chartEl && window.HeimdallGpuRunCharts)
+          if (card && window.HeimdallGpuRunCharts)
             window.HeimdallGpuRunCharts.init(card);
+        } else if (card.previousElementSibling !== main) {
+          main.after(card);
         }
+        var show = chartVisible[c.machineId] === true;
+        card.hidden = !show;
         var chartEl = card.querySelector(".hd-gpu-chart");
         if (chartEl && window.HeimdallGpuRunCharts) {
           window.HeimdallGpuRunCharts.setData(
@@ -460,24 +656,32 @@
             bodyOld.innerHTML = bodyNew.innerHTML;
             if (window.HeimdallTable) window.HeimdallTable.initSort(bodyOld);
           }
-          if (lastPayload) applyRows(lastPayload);
+          if (lastPayload) {
+            applyRows(lastPayload);
+            syncCharts(lastPayload);
+          }
           nextAt = Date.now() + FALLBACK_MS;
         })
         .catch(function () {});
     }
 
-    // Per-run GPU toggle (same pattern as behaviour).
+    // Show/Hide GPU on the machine stats row — toggles the chart row underneath.
     root.addEventListener("click", function (ev) {
       var btn = ev.target.closest && ev.target.closest("[data-gpu-toggle]");
       if (!btn || !root.contains(btn)) return;
       ev.preventDefault();
-      var block = btn.closest(".hd-run-block");
-      if (!block) return;
-      var panel = block.querySelector("[data-gpu-panel]");
+      var main = btn.closest("tr[data-machine-id]");
+      if (!main) return;
+      var id = Number(main.getAttribute("data-machine-id"));
       var show = btn.getAttribute("aria-pressed") !== "true";
-      if (panel) panel.hidden = !show;
+      chartVisible[id] = show;
       btn.setAttribute("aria-pressed", show ? "true" : "false");
       btn.textContent = show ? "Hide GPU" : "Show GPU";
+      btn.classList.toggle("is-entice", !show);
+      var chartRow = tableBody() && tableBody().querySelector(
+        'tr[data-follow-for="' + id + '"]'
+      );
+      if (chartRow) chartRow.hidden = !show;
       window.dispatchEvent(new Event("resize"));
     });
 

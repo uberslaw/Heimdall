@@ -40,6 +40,12 @@ public sealed class AgentConfigDto
     /// </summary>
     public ClientDepositRequestDto? PendingClientDeposit { get; init; }
 
+    /// <summary>
+    /// New API base URL to write into Program Files agent appsettings (http://host:5080).
+    /// Cleared when the agent acks SetApiBaseUrl. Pair with PendingCommands SetApiBaseUrl.
+    /// </summary>
+    public string? PendingApiBaseUrl { get; init; }
+
     /// <summary>When true, agent runs the always-on 30s fleet sampler (Historical Dashboard enrollment).</summary>
     public bool FleetSamplingEnabled { get; init; }
 

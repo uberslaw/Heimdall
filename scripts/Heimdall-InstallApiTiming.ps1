@@ -531,9 +531,9 @@ function Invoke-DotNetPublishWithProgress {
         [Parameter(Mandatory = $true)][string]$LogPath
     )
 
-    $cmdLine = "dotnet publish `"$Project`" -c Release -o `"$OutputDir`" --self-contained false -v detailed"
+    $cmdLine = "dotnet publish `"$Project`" -c Release -o `"$OutputDir`" --self-contained false -v minimal"
     Write-InstallApiProgressLogLine -Line ">>> $cmdLine"
-    Set-InstallApiProgressStatus -StatusLine "Publishing API (verbose output in log only)"
+    Set-InstallApiProgressStatus -StatusLine "Publishing API (minimal verbosity; full log on disk)"
 
     $queueState = @{
         Sync  = New-Object object
@@ -542,7 +542,7 @@ function Invoke-DotNetPublishWithProgress {
 
     $proc = New-Object System.Diagnostics.Process
     $proc.StartInfo.FileName = "dotnet"
-    $proc.StartInfo.Arguments = "publish `"$Project`" -c Release -o `"$OutputDir`" --self-contained false -v detailed"
+    $proc.StartInfo.Arguments = "publish `"$Project`" -c Release -o `"$OutputDir`" --self-contained false -v minimal"
     $proc.StartInfo.RedirectStandardOutput = $true
     $proc.StartInfo.RedirectStandardError = $true
     $proc.StartInfo.UseShellExecute = $false
@@ -593,6 +593,9 @@ function Invoke-DotNetPublishWithProgress {
                 }
                 elseif ($ln -match '^\s*\d+:\d+>Done building target "([^"]+)"') {
                     Add-InstallApiPublishActionCount -Increment 1
+                }
+                elseif ($UpdateStatus -and $ln -match '(?i)(Heimdall\.Api ->|publish.*(succeeded|failed)|error )') {
+                    Set-InstallApiProgressStatus -StatusLine ($ln.Trim())
                 }
             }
         }

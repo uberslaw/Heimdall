@@ -607,6 +607,15 @@ else if (d is not null)
                             <div class="value">@warn</div>
                         </div>
                     }
+                    @if (!string.IsNullOrWhiteSpace(cur.TransferState))
+                    {
+                        <div class="hd-stat">
+                            <div class="label">Archive</div>
+                            <div class="value" style="font-size:1rem;margin-top:0.35rem" title="@(cur.TransferDetail ?? cur.ArchivePath)">
+                                @cur.TransferState
+                            </div>
+                        </div>
+                    }
                     @if (cur.MassErrorPercent is double mErr)
                     {
                         <div class="hd-stat">

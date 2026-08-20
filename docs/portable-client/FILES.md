@@ -12,6 +12,10 @@ Heimdall-Client/
 ├── Install-WorkstationCollector.cmd   # Silent/scripted install entry
 ├── Install-WorkstationCollector.ps1   # Lock/stages/1072 waits/LKG + optional heal register
 ├── Heimdall-AgentHeal.ps1             # Phase 3 self-heal watchdog (opt-in at install)
+├── Set-ApiUrl.lnk                     # Point agent at API (IP set in .cmd)
+├── Set-HeimdallAgentApiBaseUrl.cmd    # Edit API_IP at top; run as admin
+├── Set-HeimdallAgentApiBaseUrl.ps1
+├── pack-api.json                      # Optional bake from Create client pack
 ├── Heimdall-Setup.lnk / .cmd          # Advanced tools (health, logs)
 ├── Heimdall-LaunchControl.*           # Compat aliases → Setup
 ├── Heimdall-LaunchRdp.vbs             # One-click Connect (wscript, no PowerShell)

@@ -219,10 +219,13 @@ function Save-LastInstallSettings {
 }
 
 function Get-DefaultApiUrlForWizard {
-    return Resolve-HeimdallDefaultCollectorApiUrl -LastInstallSettingsFile $script:LastInstallSettingsFile -Log {
-        param([string]$Message, [string]$Level)
-        Write-InstallLog $Message -Level $Level
-    }
+    return Resolve-HeimdallDefaultCollectorApiUrl `
+        -LastInstallSettingsFile $script:LastInstallSettingsFile `
+        -PackFolder $script:ScriptDir `
+        -Log {
+            param([string]$Message, [string]$Level)
+            Write-InstallLog $Message -Level $Level
+        }
 }
 
 function Get-DefaultMachineGroup {

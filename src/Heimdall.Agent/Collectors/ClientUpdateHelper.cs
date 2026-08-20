@@ -209,6 +209,7 @@ internal static class ClientUpdateHelper
             }
 
             var (apiUrl, apiKey, machineGroup) = ReadInstallSettings(config);
+            apiUrl = ApplyPackApiUrlOverride(packRoot, apiUrl, logger);
             var installCmd = Path.Combine(packRoot, "Install-WorkstationCollector.cmd");
             // NOPAUSE so silent Deploy never blocks on pause; SKIP_LAUNCH skips Install.cmd wizard redirect.
             var args =
@@ -339,6 +340,53 @@ internal static class ClientUpdateHelper
             {
                 logger.LogDebug(renameEx, "Client update: leaving locked extract dir {Dir}", dir);
             }
+        }
+    }
+
+    /// <summary>
+    /// When pack-api.json has forceOnUpdate=true and a non-empty apiBaseUrl, silent Deploy
+    /// uses the pack URL. Otherwise keep the agent's existing ApiBaseUrl (VPN-safe).
+    /// </summary>
+    private static string ApplyPackApiUrlOverride(string packRoot, string currentApiUrl, ILogger logger)
+    {
+        try
+        {
+            var path = Path.Combine(packRoot, "pack-api.json");
+            if (!File.Exists(path))
+                return currentApiUrl;
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("forceOnUpdate", out var forceEl) || !forceEl.GetBoolean())
+                return currentApiUrl;
+
+            if (!root.TryGetProperty("apiBaseUrl", out var urlEl))
+                return currentApiUrl;
+
+            var url = urlEl.GetString()?.Trim().TrimEnd('/');
+            if (string.IsNullOrWhiteSpace(url))
+                return currentApiUrl;
+
+            if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                && !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning("Client update: pack-api.json apiBaseUrl ignored (need http/https): {Url}", url);
+                return currentApiUrl;
+            }
+
+            if (!string.Equals(url, currentApiUrl, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning(
+                    "Client update: forceOnUpdate — ApiBaseUrl {Old} → pack {New}",
+                    currentApiUrl, url);
+            }
+
+            return url;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Client update: could not read pack-api.json");
+            return currentApiUrl;
         }
     }
 

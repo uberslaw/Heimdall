@@ -37,6 +37,12 @@ public static class RemoteMachineCommands
     /// does not replace the running agent. Version comes from PendingClientDeposit / pack VERSION.json.
     /// </summary>
     public const string DepositClientPack = "DepositClientPack";
+
+    /// <summary>
+    /// Rewrite Program Files agent appsettings.json Heimdall:ApiBaseUrl, then restart the service.
+    /// Payload is AgentConfigDto.PendingApiBaseUrl.
+    /// </summary>
+    public const string SetApiBaseUrl = "SetApiBaseUrl";
 }
 
 /// <summary>Result of a single agent command execution attempt (success or failure).</summary>

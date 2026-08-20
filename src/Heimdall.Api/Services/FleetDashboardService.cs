@@ -13,6 +13,7 @@ namespace Heimdall.Api.Services;
 public class FleetDashboardService(
     HeimdallDbContext db,
     TuflowBehaviourService tuflowBehaviour,
+    CodeMeterLicenseHub codeMeterHub,
     ILogger<FleetDashboardService> logger)
 {
     /// <summary>Default nominal sample interval used when bridging consecutive snapshots.</summary>
@@ -182,6 +183,26 @@ public class FleetDashboardService(
         if (sampledAt >= machine.LastSeenUtc)
             machine.LastSeenUtc = sampledAt;
 
+        // Phase 2: Flood enrolled TuflowRunning flip → nudge CodeMeter poll (counts still from CodeMeter).
+        var enrolled = await db.FleetDashboardMachines.AsNoTracking()
+            .AnyAsync(e => e.MachineId == machine.Id, ct);
+        if (enrolled)
+        {
+            // SQLite cannot ORDER BY DateTimeOffset — use Id (insert order) for "latest".
+            var prevRunning = await db.FleetMetricSnapshots.AsNoTracking()
+                .Where(s => s.MachineId == machine.Id)
+                .OrderByDescending(s => s.Id)
+                .Select(s => (bool?)s.TuflowRunning)
+                .FirstOrDefaultAsync(ct);
+            if (prevRunning is not null && prevRunning.Value != dto.TuflowRunning)
+            {
+                codeMeterHub.RequestPollSoon(
+                    dto.TuflowRunning
+                        ? $"tuflow-on:{machine.Hostname}"
+                        : $"tuflow-off:{machine.Hostname}");
+            }
+        }
+
         db.FleetMetricSnapshots.Add(new FleetMetricSnapshot
         {
             SampledAtUtc = sampledAt,
@@ -201,6 +222,10 @@ public class FleetDashboardService(
             ProcessDiskReadMBps = dto.ProcessDiskReadMBps,
             ProcessDiskWriteMBps = dto.ProcessDiskWriteMBps,
             IsActive = isActive,
+            TuflowInstanceCount = dto.TuflowInstanceCount,
+            ClaimedHpcSeats = dto.ClaimedHpcSeats,
+            ClaimedClassicSeats = dto.ClaimedClassicSeats,
+            TuflowClaimDetail = string.IsNullOrWhiteSpace(dto.TuflowClaimDetail) ? null : dto.TuflowClaimDetail.Trim(),
             TopCpuProcessesJson = SerializeTopProcesses(dto.TopCpuProcesses),
             TopGpuProcessesJson = SerializeTopProcesses(dto.TopGpuProcesses),
             TopDiskReadProcessesJson = SerializeTopProcesses(dto.TopDiskReadProcesses),
@@ -358,7 +383,11 @@ public class FleetDashboardService(
                 sessionState,
                 behaviour?.DetectedStartUtc,
                 behaviour?.DetectedEndUtc,
-                behaviour?.State));
+                behaviour?.State,
+                latest?.TuflowInstanceCount,
+                latest?.ClaimedHpcSeats,
+                latest?.ClaimedClassicSeats,
+                latest?.TuflowClaimDetail));
         }
 
         return rows;
@@ -690,7 +719,11 @@ public class FleetDashboardService(
         /// <summary>Detected stop time for the latest Ended run (shown until the next run starts).</summary>
         DateTimeOffset? DetectedRunEndedUtc = null,
         /// <summary>TuflowBehaviourStates.Active/Watching/Ended when driving Active-column timestamps; else null.</summary>
-        string? DetectedRunState = null)
+        string? DetectedRunState = null,
+        int? TuflowInstanceCount = null,
+        int? ClaimedHpcSeats = null,
+        int? ClaimedClassicSeats = null,
+        string? TuflowClaimDetail = null)
     {
         public string DisplayName =>
             string.IsNullOrWhiteSpace(FriendlyName) ? Hostname : FriendlyName!;

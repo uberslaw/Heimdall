@@ -145,9 +145,18 @@ function Write-HeimdallLog {
     if ($script:LogPath) {
         Add-Content -Path $script:LogPath -Value $line -Encoding UTF8
     }
+    # Stable file the WPF Launch Control always follows (ActionOnly creates a new stamped log each run).
+    try {
+        $live = Join-Path $script:LogRoot "launch-control-live.log"
+        if (-not (Test-Path -LiteralPath $script:LogRoot)) {
+            New-Item -ItemType Directory -Path $script:LogRoot -Force | Out-Null
+        }
+        Add-Content -LiteralPath $live -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+    }
+    catch { }
     if ($script:UiLogBox -and -not $script:UiLogBox.IsDisposed) {
         $color = switch ($Level) {
-            "OK"    { [System.Drawing.Color]::DarkGreen }
+            "OK"    { [System.Drawing.Color]::FromArgb(143, 219, 168) } # light green #8FDBA8
             "WARN"  { [System.Drawing.Color]::DarkGoldenrod }
             "ERROR" { [System.Drawing.Color]::Firebrick }
             "STEP"  { [System.Drawing.Color]::DarkBlue }
@@ -269,7 +278,7 @@ function Set-HeimdallServiceStatusLabel {
     }
     $Label.Text = $info.StatusText
     $Label.ForeColor = switch ($info.StatusText) {
-        "Running" { [System.Drawing.Color]::DarkGreen }
+        "Running" { [System.Drawing.Color]::FromArgb(143, 219, 168) } # light green #8FDBA8
         "Stopped" { [System.Drawing.Color]::Firebrick }
         default { [System.Drawing.Color]::DarkGoldenrod }
     }
@@ -372,7 +381,11 @@ function Wait-ProcessWithUiPump {
         [int]$TimeoutSec = 0,
         [string]$SuccessLogPattern = "",
         [string]$LogDir = "",
-        [datetime]$MinLogWriteTime = [datetime]::MinValue
+        [datetime]$MinLogWriteTime = [datetime]::MinValue,
+        # Prefer this single session file (never republish-api-deploy.log).
+        [string]$SessionLogPath = "",
+        # When set, mirror big-ticket republish lines into Write-HeimdallLog (Launch Control console).
+        [switch]$MirrorRepublishLog
     )
     if ($StatusText) { Set-UiStatus $StatusText }
     $deadline = if ($TimeoutSec -gt 0) { (Get-Date).AddSeconds($TimeoutSec) } else { $null }
@@ -382,28 +395,86 @@ function Wait-ProcessWithUiPump {
     if ($minLog -eq [datetime]::MinValue -and $Process.StartTime) {
         $minLog = $Process.StartTime.AddSeconds(-2)
     }
+    $mirrorOffset = 0
+    $mirrorPath = $null
+    $mirrored = @{}
+
     while ($Process -and -not $Process.HasExited) {
         [System.Windows.Forms.Application]::DoEvents()
 
-        if ($SuccessLogPattern -and $LogDir -and -not $sawLogSuccess -and (Test-Path -LiteralPath $LogDir)) {
-            $hit = Get-ChildItem -LiteralPath $LogDir -Filter "republish-api-*.log" -ErrorAction SilentlyContinue |
-                Where-Object { $_.LastWriteTime -ge $minLog } |
-                Sort-Object LastWriteTime -Descending |
-                Select-Object -First 3 |
+        $latestLog = $null
+        if ($SessionLogPath -and (Test-Path -LiteralPath $SessionLogPath)) {
+            $latestLog = Get-Item -LiteralPath $SessionLogPath -ErrorAction SilentlyContinue
+        }
+        elseif ($LogDir -and (Test-Path -LiteralPath $LogDir)) {
+            # Timestamped session logs only — exclude cumulative republish-api-deploy.log
+            # (that file matches republish-api-*.log and is always newest).
+            $latestLog = Get-ChildItem -LiteralPath $LogDir -Filter "republish-api-*.log" -ErrorAction SilentlyContinue |
                 Where-Object {
-                    Select-String -LiteralPath $_.FullName -Pattern $SuccessLogPattern -Quiet -ErrorAction SilentlyContinue
+                    $_.Name -match '^republish-api-\d{8}-\d{6}\.log$' -and
+                    $_.LastWriteTime -ge $minLog
                 } |
+                Sort-Object LastWriteTime -Descending |
                 Select-Object -First 1
-            if ($hit) {
-                $sawLogSuccess = $true
-                $logSuccessSince = Get-Date
-                Set-UiStatus "Redeploy log reports success — waiting for elevated window to close..."
+        }
+
+        if ($latestLog) {
+            if ($mirrorPath -ne $latestLog.FullName) {
+                $mirrorPath = $latestLog.FullName
+                $mirrorOffset = 0
+                if ($MirrorRepublishLog) {
+                    Write-HeimdallLog ("Republish log: " + $mirrorPath) -Level INFO
+                }
+            }
+
+            if ($MirrorRepublishLog -and $mirrorPath) {
+                try {
+                    $fs = [System.IO.File]::Open($mirrorPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                    try {
+                        if ($mirrorOffset -gt $fs.Length) { $mirrorOffset = 0 }
+                        $fs.Position = $mirrorOffset
+                        $sr = New-Object System.IO.StreamReader($fs)
+                        while ($null -ne ($raw = $sr.ReadLine())) {
+                            $mirrorOffset = $fs.Position
+                            # Big-ticket only: STEP/OK/ERROR/WARN + a few INFO milestones.
+                            if ($raw -notmatch '\[(STEP|OK|ERROR|WARN)\]' `
+                                -and $raw -notmatch '(?i)(Publishing API to|Robocopy|Starting HeimdallApi|Estimated redeploy|Progress window skipped|Project:)') {
+                                continue
+                            }
+                            # Strip leading [HH:mm:ss] [LEVEL] so Write-HeimdallLog adds its own stamp.
+                            $msg = $raw
+                            $lvl = "INFO"
+                            if ($raw -match '^\[[^\]]+\]\s+\[(STEP|OK|ERROR|WARN|INFO)\]\s*(.*)$') {
+                                $lvl = $Matches[1]
+                                $msg = $Matches[2]
+                            }
+                            $key = "$lvl|$msg"
+                            if ($mirrored.ContainsKey($key)) { continue }
+                            $mirrored[$key] = $true
+                            if ($lvl -notin @("STEP", "OK", "ERROR", "WARN", "INFO", "ASK")) { $lvl = "INFO" }
+                            Write-HeimdallLog $msg -Level $lvl
+                            if ($lvl -eq "STEP") { Set-UiStatus $msg }
+                        }
+                    }
+                    finally {
+                        $fs.Dispose()
+                    }
+                }
+                catch { }
+            }
+
+            if ($SuccessLogPattern -and -not $sawLogSuccess) {
+                if (Select-String -LiteralPath $latestLog.FullName -Pattern $SuccessLogPattern -Quiet -ErrorAction SilentlyContinue) {
+                    $sawLogSuccess = $true
+                    $logSuccessSince = Get-Date
+                    Set-UiStatus "Redeploy succeeded in log — finishing up..."
+                }
             }
         }
 
-        # If the log already says DONE but the elevated host hangs on its progress UI, don't wait forever.
-        if ($sawLogSuccess -and $logSuccessSince -and ((Get-Date) - $logSuccessSince).TotalSeconds -ge 25) {
-            Write-HeimdallLog "Republish log already shows success; elevated process still running after 25s — continuing" -Level WARN
+        # If the log already says OK but the elevated host hangs on UI, don't wait forever.
+        if ($sawLogSuccess -and $logSuccessSince -and ((Get-Date) - $logSuccessSince).TotalSeconds -ge 15) {
+            Write-HeimdallLog "Republish log already shows success; child process still running after 15s — continuing" -Level WARN
             try {
                 if (-not $Process.HasExited) { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue }
             }
@@ -415,7 +486,7 @@ function Wait-ProcessWithUiPump {
             Write-HeimdallLog "Timed out waiting for process PID $($Process.Id) after ${TimeoutSec}s (HasExited=$($Process.HasExited))" -Level WARN
             return -2
         }
-        Start-Sleep -Milliseconds 150
+        Start-Sleep -Milliseconds 200
     }
     if ($Process) {
         try {
@@ -1150,7 +1221,9 @@ function Show-InputForm {
     $form.MaximizeBox = $false
     $form.MinimizeBox = $false
     $form.Width = 560
-    $form.Height = 160 + (40 * $Fields.Count)
+    $promptLines = @($Prompt -split "`r?`n").Count
+    $promptHeight = [Math]::Max(48, [Math]::Min(160, 18 + (18 * $promptLines)))
+    $form.Height = 120 + $promptHeight + (40 * $Fields.Count)
     $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 
     $lbl = New-Object System.Windows.Forms.Label
@@ -1158,11 +1231,11 @@ function Show-InputForm {
     $lbl.Left = 16
     $lbl.Top = 12
     $lbl.Width = 520
-    $lbl.Height = 48
+    $lbl.Height = $promptHeight
     $form.Controls.Add($lbl)
 
     $boxes = @{}
-    $y = 68
+    $y = 16 + $promptHeight
     foreach ($key in $Fields.Keys) {
         $fl = New-Object System.Windows.Forms.Label
         $fl.Text = $key
@@ -3143,22 +3216,38 @@ function Start-RedeployApi {
     Update-UiStep 0 "[OK] 1. Script: $ps1"
 
     $republishLogDir = Join-Path $env:ProgramData "Heimdall\logs"
+    New-Item -ItemType Directory -Force -Path $republishLogDir | Out-Null
     $republishLogHint = Join-Path $republishLogDir "republish-api-deploy.log"
     $logMarker = Get-Date
-    $psArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $ps1)
+    # Pre-create THIS run's session log so we never read cumulative republish-api-deploy.log
+    # (that name matches republish-api-*.log and caused false OK/FAIL from Aug history).
+    $sessionLog = Join-Path $republishLogDir ("republish-api-{0:yyyyMMdd-HHmmss}.log" -f $logMarker)
+    Set-Content -LiteralPath $sessionLog -Value "" -Encoding utf8
+    Write-HeimdallLog "Session log: $sessionLog" -Level INFO
+    # -NoProgressWindow: no WinForms ETA popup — big-ticket lines mirror into this Launch Control console.
+    $psArgs = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", $ps1,
+        "-NoProgressWindow",
+        "-SessionLog", $sessionLog
+    )
     $alreadyAdmin = Test-IsAdministrator
+    Write-HeimdallLog "Redeploy API: publishing Release build, copying to Program Files (keeps appsettings), restarting HeimdallApi." -Level STEP
+    Write-HeimdallLog "Watch this console for steps (Preparing → Publish → Stop service → Copy → Start → Health). UAC only if needed." -Level INFO
     try {
         if ($alreadyAdmin) {
-            Write-HeimdallLog "Launching republish in elevated session (excludes appsettings.json; progress window + ETA)..." -Level STEP
+            Write-HeimdallLog "Already admin — starting hidden republish (no extra progress window)..." -Level STEP
             Update-UiStep 1 "[...] 2. Republish (already admin)"
-            Set-UiStatus "Redeploying API — watch progress window"
-            $p = Start-Process -FilePath "powershell.exe" -ArgumentList $psArgs -WorkingDirectory (Split-Path -Parent $ps1) -PassThru
+            Set-UiStatus "Redeploying API — see console steps"
+            $p = Start-Process -FilePath "powershell.exe" -ArgumentList $psArgs `
+                -WorkingDirectory (Split-Path -Parent $ps1) -PassThru -WindowStyle Hidden
         }
         else {
-            Write-HeimdallLog "Launching elevated republish (excludes appsettings.json; progress window + ETA)..." -Level STEP
+            Write-HeimdallLog "Elevation required — accept UAC; progress continues in this console..." -Level STEP
             Update-UiStep 1 "[...] 2. Elevated republish"
-            Set-UiStatus "Redeploying API — accept UAC; watch progress window"
-            $p = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $psArgs -WorkingDirectory (Split-Path -Parent $ps1) -PassThru
+            Set-UiStatus "Redeploying API — accept UAC; see console steps"
+            $p = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $psArgs `
+                -WorkingDirectory (Split-Path -Parent $ps1) -PassThru -WindowStyle Hidden
         }
     }
     catch {
@@ -3176,63 +3265,92 @@ function Start-RedeployApi {
     }
     $exit = Wait-ProcessWithUiPump `
         -Process $p `
-        -StatusText $(if ($alreadyAdmin) { "Redeploying API (watch progress window)..." } else { "Redeploying API (accept UAC; watch progress window)..." }) `
-        -TimeoutSec 600 `
-        -SuccessLogPattern '\[OK\]\s+DONE' `
+        -StatusText $(if ($alreadyAdmin) { "Redeploying API…" } else { "Redeploying API (UAC)…" }) `
+        -TimeoutSec 900 `
+        -SuccessLogPattern 'HEIMDALL_REDEPLOY_OK' `
         -LogDir $republishLogDir `
-        -MinLogWriteTime $logMarker
+        -MinLogWriteTime $logMarker `
+        -SessionLogPath $sessionLog `
+        -MirrorRepublishLog
 
-    $latest = Get-ChildItem -LiteralPath $republishLogDir -Filter "republish-api-*.log" -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTime -ge $logMarker.AddSeconds(-2) } |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
+    $latest = Get-Item -LiteralPath $sessionLog -ErrorAction SilentlyContinue
+    if (-not $latest) {
+        $latest = Get-ChildItem -LiteralPath $republishLogDir -Filter "republish-api-*.log" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -match '^republish-api-\d{8}-\d{6}\.log$' -and
+                $_.LastWriteTime -ge $logMarker.AddSeconds(-2)
+            } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+    }
     $logOk = $false
     $logFail = $false
     $logFailMsg = $null
     if ($latest) {
-        $logOk = [bool](Select-String -LiteralPath $latest.FullName -Pattern '\[OK\]\s+DONE' -Quiet -ErrorAction SilentlyContinue)
-        $failHit = Select-String -LiteralPath $latest.FullName -Pattern '\[ERROR\]\s+FAIL:\s*(.+)$' -ErrorAction SilentlyContinue |
+        $logOk = [bool](Select-String -LiteralPath $latest.FullName -Pattern 'HEIMDALL_REDEPLOY_OK' -Quiet -ErrorAction SilentlyContinue)
+        $failHit = Select-String -LiteralPath $latest.FullName -Pattern 'HEIMDALL_REDEPLOY_FAIL|\[ERROR\]\s+FAIL:\s*(.+)$' -ErrorAction SilentlyContinue |
             Select-Object -Last 1
         if ($failHit) {
             $logFail = $true
-            $logFailMsg = $failHit.Matches.Groups[1].Value.Trim()
+            if ($failHit.Line -match 'FAIL:\s*(.+)$') { $logFailMsg = $Matches[1].Trim() }
+            else { $logFailMsg = $failHit.Line.Trim() }
         }
     }
 
     if ($null -eq $exit) { $exit = -1 }
-    $succeeded = ($exit -eq 0) -or $logOk
+    $succeeded = (($exit -eq 0) -or $logOk) -and -not $logFail
     if (-not $succeeded) {
         Update-UiStep 1 "[X] 2. Republish failed (exit $exit)"
         if ($latest) {
             $detail = if ($logFailMsg) { $logFailMsg } else { "see $($latest.FullName)" }
-            Write-HeimdallLog "Redeploy API failed (exit $exit): $detail" -Level ERROR
+            Write-HeimdallLog "Redeploy API FAILED (exit $exit): $detail" -Level ERROR
             Write-HeimdallLog "Log: $($latest.FullName) | $republishLogHint" -Level ERROR
         }
         else {
-            Write-HeimdallLog "Redeploy API exited with code $exit with no new republish-api-*.log — script never ran (parse/encoding error, or UAC denied). Try: powershell -NoProfile -File `"$ps1`" and check the console. See $republishLogHint" -Level ERROR
+            Write-HeimdallLog "Redeploy API FAILED (exit $exit) — no new republish-api-*.log (UAC denied, or script never started). Try: powershell -NoProfile -File `"$ps1`"" -Level ERROR
         }
-        Set-UiStatus "Redeploy API failed (exit $exit) — check ProgramData\Heimdall\logs\republish-api*"
+        Write-HeimdallLog "=== API REDEPLOY FAILED — do not Pack/Deploy until redeploy succeeds (check log: robocopy may have run before start/health failed). ===" -Level ERROR
+        Set-UiStatus "Redeploy API FAILED (exit $exit) — see console + ProgramData\Heimdall\logs\republish-api*"
         return
     }
 
     if ($exit -ne 0 -and $logOk) {
-        Write-HeimdallLog "Elevated process exit was $exit but log shows DONE — treating as success ($($latest.FullName))" -Level WARN
+        Write-HeimdallLog "Elevated process exit was $exit but log shows HEIMDALL_REDEPLOY_OK — treating as success ($($latest.FullName))" -Level WARN
     }
     Update-UiStep 1 "[OK] 2. Republish finished"
-    Write-HeimdallLog "Redeploy API succeeded (exit $exit)$(if ($latest) { " — $($latest.FullName)" })" -Level OK
+
+    $dllPath = Join-Path $script:ApiInstallDir "Heimdall.Api.dll"
+    $dllOk = $false
+    $dllStamp = "(missing)"
+    if (Test-Path -LiteralPath $dllPath) {
+        $dllInfo = Get-Item -LiteralPath $dllPath
+        $dllStamp = $dllInfo.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
+        # Must be newer than when we started this Redeploy (allow 2 min clock skew / copy lag).
+        $dllOk = $dllInfo.LastWriteTime -ge $logMarker.AddMinutes(-2)
+    }
+
+    if (-not $dllOk) {
+        Update-UiStep 2 "[X] 3. Binaries not updated (DLL $dllStamp)"
+        Write-HeimdallLog "Redeploy claimed OK but Heimdall.Api.dll is still old: $dllPath LastWriteTime=$dllStamp (started at $($logMarker.ToString('HH:mm:ss')))." -Level ERROR
+        Write-HeimdallLog "=== API REDEPLOY NOT VERIFIED — health may still be the previous process. Republish again. ===" -Level ERROR
+        Set-UiStatus "Redeploy NOT verified — DLL timestamp unchanged"
+        return
+    }
 
     $healthUrl = "http://127.0.0.1:5080/api/health"
     try {
         $h = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 10
-        Update-UiStep 2 "[OK] 3. Health OK ($($h.status))"
+        Update-UiStep 2 "[OK] 3. Health OK ($($h.status)) · DLL $dllStamp"
         Write-HeimdallLog "Health $healthUrl -> $($h | ConvertTo-Json -Compress)" -Level OK
-        Set-UiStatus "API redeployed. Health OK."
+        Write-HeimdallLog "=== API REDEPLOY SUCCEEDED === DLL $dllPath @ $dllStamp · service health OK · log $(if ($latest) { $latest.FullName } else { $republishLogHint })" -Level OK
+        Set-UiStatus "API redeploy SUCCEEDED — DLL $dllStamp · health OK"
         Update-HeimdallServiceStatusUi
     }
     catch {
         Update-UiStep 2 "[X] 3. Health check failed: $($_.Exception.Message)"
-        Write-HeimdallLog "Health check failed after redeploy: $($_.Exception.Message)" -Level ERROR
-        Set-UiStatus "Redeploy finished but health check failed — check service / port."
+        Write-HeimdallLog "Health check failed after redeploy (DLL was updated to $dllStamp): $($_.Exception.Message)" -Level ERROR
+        Write-HeimdallLog "=== API REDEPLOY PARTIAL — binaries copied but /api/health failed ===" -Level ERROR
+        Set-UiStatus "Redeploy copied binaries but health check failed — check service / port."
     }
 }
 
@@ -4114,6 +4232,65 @@ function Deposit-ClientPackViaApi {
         $(if ($apiResult.Ok -and $apiResult.Errors -eq 0 -and $apiResult.Queued -gt 0) { "Information" } else { "Warning" })) | Out-Null
 }
 
+function Read-PackApiBakeChoice {
+    <#
+      Returns @{ Url = string|null; ForceOnUpdate = bool; Cancelled = bool }
+      Blank URL = do not bake (VPN-safe updates). Non-blank optionally force on Deploy.
+    #>
+    # Non-interactive / API pack: honor env only (no UI).
+    if ($env:HEIMDALL_PACK_FROM_API -eq "1") {
+        $envUrl = if ($env:HEIMDALL_PACK_API_URL) { $env:HEIMDALL_PACK_API_URL.Trim() } else { "" }
+        $force = ($env:HEIMDALL_PACK_FORCE_API_URL -eq "1")
+        return @{ Url = $envUrl; ForceOnUpdate = $force; Cancelled = $false }
+    }
+
+    $hint = Get-DefaultCollectorApiUrl
+    $prompt = @(
+        "API URL for this pack (blank = don't bake / don't change on update).",
+        "",
+        "If you enter a URL: fresh Install.lnk / silent install defaults use it,",
+        "and Set-ApiUrl.lnk is pre-filled. Silent Deploy still keeps each agent's",
+        "existing URL unless you choose Force on the next prompt (VPN agents).",
+        "",
+        "Example: $hint"
+    ) -join "`r`n"
+
+    $inputs = Show-InputForm `
+        -Title "Pack API base URL" `
+        -Prompt $prompt `
+        -Fields ([ordered]@{ ApiUrl = "" }) `
+        -AcceptLabel "Continue"
+    if ($null -eq $inputs) {
+        return @{ Url = $null; ForceOnUpdate = $false; Cancelled = $true }
+    }
+
+    $url = if ($inputs.ApiUrl) { [string]$inputs.ApiUrl.Trim() } else { "" }
+    if ([string]::IsNullOrWhiteSpace($url)) {
+        Write-HeimdallLog "Pack API bake: blank (preserve agent URL on update; Set-ApiUrl still in pack)" -Level INFO
+        return @{ Url = ""; ForceOnUpdate = $false; Cancelled = $false }
+    }
+
+    if ($url -notmatch '^https?://') {
+        [System.Windows.Forms.MessageBox]::Show(
+            "URL must start with http:// or https://`r`n`r`nGot: $url",
+            "Invalid API URL", "OK", "Warning") | Out-Null
+        return @{ Url = $null; ForceOnUpdate = $false; Cancelled = $true }
+    }
+
+    $forceAsk = [System.Windows.Forms.MessageBox]::Show(
+        ("Bake URL:`r`n  {0}`r`n`r`nAlso FORCE this URL on silent Deploy/update?`r`n`r`nYes = overwrite every agent's ApiBaseUrl (breaks VPN agents pointed elsewhere).`r`nNo  = new installs only; updates keep each agent's existing URL (recommended)." -f $url.TrimEnd("/")),
+        "Force API URL on update?",
+        [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+        [System.Windows.Forms.MessageBoxIcon]::Question)
+    if ($forceAsk -eq [System.Windows.Forms.DialogResult]::Cancel) {
+        return @{ Url = $null; ForceOnUpdate = $false; Cancelled = $true }
+    }
+
+    $force = ($forceAsk -eq [System.Windows.Forms.DialogResult]::Yes)
+    Write-HeimdallLog ("Pack API bake: url={0} forceOnUpdate={1}" -f $url.TrimEnd("/"), $force) -Level INFO
+    return @{ Url = $url.TrimEnd("/"); ForceOnUpdate = $force; Cancelled = $false }
+}
+
 function Start-GuidedPack {
     param(
         [switch]$OfferInstallAfter
@@ -4137,6 +4314,13 @@ function Start-GuidedPack {
     }
     Update-UiStep 0 "[OK] 1. Prerequisites"
 
+    $bake = Read-PackApiBakeChoice
+    if ($bake.Cancelled) {
+        Write-HeimdallLog "Pack cancelled at API URL prompt" -Level WARN
+        Set-UiStatus "Pack cancelled"
+        return $false
+    }
+
     $cmd = Join-Path $script:ScriptDir "Pack-WorkstationCollector.cmd"
     if (-not (Test-Path $cmd)) {
         Write-HeimdallLog "Pack-WorkstationCollector.cmd missing" -Level ERROR
@@ -4147,9 +4331,24 @@ function Start-GuidedPack {
     Update-UiStep 1 "[...] 2. Publishing..."
     $prevNoPause = $env:HEIMDALL_NOPAUSE
     $prevForceVer = $env:HEIMDALL_CLIENT_PRODUCT_VERSION
+    $prevPackApi = $env:HEIMDALL_PACK_API_URL
+    $prevPackForce = $env:HEIMDALL_PACK_FORCE_API_URL
     $env:HEIMDALL_NOPAUSE = "1"
     # Pack always resolves N+1; clear any leftover ForceVersion pin from the machine/session.
     Remove-Item env:HEIMDALL_CLIENT_PRODUCT_VERSION -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrWhiteSpace([string]$bake.Url)) {
+        Remove-Item env:HEIMDALL_PACK_API_URL -ErrorAction SilentlyContinue
+        Remove-Item env:HEIMDALL_PACK_FORCE_API_URL -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:HEIMDALL_PACK_API_URL = [string]$bake.Url
+        if ($bake.ForceOnUpdate) {
+            $env:HEIMDALL_PACK_FORCE_API_URL = "1"
+        }
+        else {
+            Remove-Item env:HEIMDALL_PACK_FORCE_API_URL -ErrorAction SilentlyContinue
+        }
+    }
     try {
         $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$cmd`"" -WorkingDirectory $script:ScriptDir -PassThru
         $exit = Wait-ProcessWithUiPump -Process $p -StatusText "Creating client pack (watch console window)..."
@@ -4167,6 +4366,18 @@ function Start-GuidedPack {
         }
         else {
             $env:HEIMDALL_CLIENT_PRODUCT_VERSION = $prevForceVer
+        }
+        if ($null -eq $prevPackApi) {
+            Remove-Item env:HEIMDALL_PACK_API_URL -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:HEIMDALL_PACK_API_URL = $prevPackApi
+        }
+        if ($null -eq $prevPackForce) {
+            Remove-Item env:HEIMDALL_PACK_FORCE_API_URL -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:HEIMDALL_PACK_FORCE_API_URL = $prevPackForce
         }
     }
 
@@ -4212,16 +4423,30 @@ function Start-GuidedPack {
         }
 
         $installNow = [System.Windows.Forms.DialogResult]::No
+        $bakeNote = ""
+        $packApiFile = Join-Path $out "pack-api.json"
+        if (Test-Path -LiteralPath $packApiFile) {
+            try {
+                $meta = Get-Content -LiteralPath $packApiFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                $bakeNote = "`r`n`r`nPack API URL: $($meta.apiBaseUrl) (forceOnUpdate=$($meta.forceOnUpdate))"
+            }
+            catch {
+                $bakeNote = "`r`n`r`nPack includes pack-api.json (baked API URL)."
+            }
+        }
+        else {
+            $bakeNote = "`r`n`r`nNo API URL baked — updates preserve each agent's existing ApiBaseUrl."
+        }
         if ($OfferInstallAfter) {
             $installNow = [System.Windows.Forms.MessageBox]::Show(
-                "Client pack ready.`r`n`r`n$out`r`n`r`nCopy that ONE folder to other PCs, then run Install.lnk there.$publishNote`r`n`r`nInstall the agent on THIS PC now?",
+                "Client pack ready.`r`n`r`n$out$bakeNote`r`n`r`nCopy that ONE folder to other PCs, then run Install.lnk there.$publishNote`r`n`r`nInstall the agent on THIS PC now?",
                 "Client pack ready",
                 [System.Windows.Forms.MessageBoxButtons]::YesNo,
                 [System.Windows.Forms.MessageBoxIcon]::Question)
         }
         else {
             [System.Windows.Forms.MessageBox]::Show(
-                "Client pack ready.`r`n`r`n$out`r`n`r`nCopy that ONE folder to other PCs, then double-click Install.lnk.$publishNote`r`n`r`nLog: $($script:LogPath)",
+                "Client pack ready.`r`n`r`n$out$bakeNote`r`n`r`nCopy that ONE folder to other PCs, then double-click Install.lnk.$publishNote`r`n`r`nLog: $($script:LogPath)",
                 "Client pack ready", "OK", "Information") | Out-Null
         }
         Start-Process explorer.exe $out

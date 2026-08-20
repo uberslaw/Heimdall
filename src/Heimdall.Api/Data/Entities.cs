@@ -120,11 +120,19 @@ public class Machine
     public int? TuflowMaxGpuCards { get; set; }
     /// <summary>Optional CPU thread cap for queue dispatch (informational). Null = unset.</summary>
     public int? TuflowMaxCpuThreads { get; set; }
+    /// <summary>When true, queue items with UseLocalScratch pick a non-C local drive at launch.</summary>
+    public bool TuflowPreferLocalScratch { get; set; } = true;
+    /// <summary>Minimum free GB required on a volume before it can be used as TUFLOW scratch.</summary>
+    public double TuflowScratchMinFreeGb { get; set; } = 50;
+    /// <summary>Allow scratch on C: when no other fixed drive meets the free-space floor.</summary>
+    public bool TuflowAllowScratchOnC { get; set; }
 
     /// <summary>JSON ClientUpdateRequestDto queued for silent agent self-update.</summary>
     public string? PendingClientUpdateJson { get; set; }
     /// <summary>JSON ClientDepositRequestDto queued for DepositClientPack (versioned Temp drop).</summary>
     public string? PendingClientDepositJson { get; set; }
+    /// <summary>Queued ApiBaseUrl for SetApiBaseUrl (agent rewrites appsettings then restarts).</summary>
+    public string? PendingApiBaseUrl { get; set; }
     /// <summary>Client update workflow progress (phase, detail, timestamps).</summary>
     public string? ClientUpdateProgressJson { get; set; }
 
@@ -753,6 +761,15 @@ public class FleetMetricSnapshot
     /// <summary>True when TuflowRunning and any active threshold is met (stored at ingest for stable history).</summary>
     public bool IsActive { get; set; }
 
+    /// <summary>Local TUFLOW process count from agent (null = older agent).</summary>
+    public int? TuflowInstanceCount { get; set; }
+    /// <summary>Agent-estimated HPC seats from -nt/GPU/cmdline (null = older agent).</summary>
+    public int? ClaimedHpcSeats { get; set; }
+    /// <summary>Agent-estimated Classic seats (null = older agent).</summary>
+    public int? ClaimedClassicSeats { get; set; }
+    /// <summary>Short claim evidence for tooltips.</summary>
+    public string? TuflowClaimDetail { get; set; }
+
     /// <summary>JSON array of TopProcessSampleDto — top CPU contributors at this sample.</summary>
     public string TopCpuProcessesJson { get; set; } = "[]";
     /// <summary>JSON array of TopProcessSampleDto — top GPU contributors at this sample.</summary>
@@ -799,6 +816,14 @@ public class TuflowRunRecord
     public string? ErrorSummary { get; set; }
     public string? LastCheckpointFile { get; set; }
     public DateTimeOffset UpdatedUtc { get; set; }
+
+    /// <summary>Local scratch drive letter, e.g. D:.</summary>
+    public string? ScratchDrive { get; set; }
+    public string? LocalResultsPath { get; set; }
+    public string? ArchivePath { get; set; }
+    /// <summary>One of TuflowTransferStates.*</summary>
+    public string? TransferState { get; set; }
+    public string? TransferDetail { get; set; }
 }
 
 /// <summary>
@@ -1024,6 +1049,12 @@ public class TuflowQueueItem
     public string? RunName { get; set; }
     public string? RequestedBy { get; set; }
     public string? RunId { get; set; }
+    /// <summary>When true and WorkingDirectory empty, agent picks local non-C scratch.</summary>
+    public bool UseLocalScratch { get; set; }
+    /// <summary>Archive UNC template/root; may include {hostname}. Empty = org default.</summary>
+    public string? ArchiveShare { get; set; }
+    /// <summary>Delete local scratch after verified robocopy. Default false.</summary>
+    public bool AutoCleanAfterVerify { get; set; }
     public DateTimeOffset CreatedUtc { get; set; }
     public DateTimeOffset? StartedUtc { get; set; }
     public DateTimeOffset? EndedUtc { get; set; }

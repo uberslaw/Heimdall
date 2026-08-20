@@ -37,7 +37,7 @@ public class TuflowRunsModel(TuflowRunService runs, TuflowBehaviourService behav
 
     public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
 
         Rows = await runs.ListAsync(ct);
@@ -64,7 +64,7 @@ public class TuflowRunsModel(TuflowRunService runs, TuflowBehaviourService behav
         string? requestedBy,
         CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
 
         if (string.IsNullOrWhiteSpace(hostname))
@@ -118,7 +118,7 @@ public class TuflowRunsModel(TuflowRunService runs, TuflowBehaviourService behav
 
     public async Task<IActionResult> OnPostStopGracefulAsync(string hostname, CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
 
         if (string.IsNullOrWhiteSpace(hostname))

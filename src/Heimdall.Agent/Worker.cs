@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Runtime.Versioning;
 using Heimdall.Agent.Collectors;
 using Heimdall.Agent.Services;
+using Heimdall.Shared;
 using Heimdall.Shared.Contracts;
 
 namespace Heimdall.Agent;
@@ -111,6 +112,14 @@ public sealed class Worker(
                     {
                         await TryProcessDepositClientPackAsync(remote.PendingClientDeposit, stoppingToken);
                     }
+
+                    if (remote.PendingCommands.Any(c =>
+                            string.Equals(c, RemoteMachineCommands.SetApiBaseUrl, StringComparison.OrdinalIgnoreCase))
+                        && !string.IsNullOrWhiteSpace(remote.PendingApiBaseUrl))
+                    {
+                        await TryProcessSetApiBaseUrlAsync(hostname, group, remote.PendingApiBaseUrl, stoppingToken);
+                    }
+
                     logger.LogInformation("Config refreshed v{Version}; tracking {Count} processes{Inventory}{Commands}",
                         _config.ConfigVersion, _config.IncludeProcesses.Count,
                         remote.PendingAppAnalysis ? "; inventory requested" : "",
@@ -430,7 +439,7 @@ public sealed class Worker(
                 DiskVolumes = volumes,
                 PrimaryIpAddress = NetworkInfoHelper.TryGetPrimaryIPv4(),
                 TermServiceStatus = TermServiceHelper.GetStatus(),
-                TuflowRunStatus = TuflowRunHelper.ReadCurrentStatus(),
+                TuflowRunStatus = TuflowRunHelper.ReadCurrentStatus(logger),
                 AcknowledgedCommands = acks,
                 CommandExecutionReports = reports
             },
@@ -643,7 +652,12 @@ public sealed class Worker(
         var processNames = _config.FleetProcessNames is { Count: > 0 }
             ? _config.FleetProcessNames
             : ["tuflow"];
-        var tuflowRunning = IsFleetProcessRunning(sample, processNames);
+        var tuflowRunningQuick = IsFleetProcessRunning(sample, processNames);
+        // CommandLine WMI is heavier — only when a fleet process is already visible.
+        var claim = tuflowRunningQuick
+            ? TuflowProcessInspector.Inspect(processNames)
+            : TuflowLicenseClaimEstimator.Aggregate([]);
+        var tuflowRunning = claim.InstanceCount > 0 || tuflowRunningQuick;
         // Faster GPU/process cadence while TUFLOW is present (or still ending) — not globally.
         var interval = tuflowRunning
             ? TimeSpan.FromSeconds(TuflowBehaviourDefaults.FastSampleSeconds)
@@ -651,12 +665,14 @@ public sealed class Worker(
         _nextFleetSample = now.Add(interval);
 
         var processUtil = AggregateFleetProcessUtil(sample, processNames);
-        var fleetPids = sample.ProcessesByName
-            .Where(kv => MatchesFleetProcess(kv.Key, processNames))
-            .Select(kv => kv.Value.ProcessId)
-            .Where(pid => pid > 0)
-            .Distinct()
-            .ToList();
+        var fleetPids = claim.Processes.Count > 0
+            ? claim.Processes.Select(p => p.ProcessId).Where(pid => pid > 0).Distinct().ToList()
+            : sample.ProcessesByName
+                .Where(kv => MatchesFleetProcess(kv.Key, processNames))
+                .Select(kv => kv.Value.ProcessId)
+                .Where(pid => pid > 0)
+                .Distinct()
+                .ToList();
         var gpuEngines = tuflowRunning && fleetPids.Count > 0
             ? ResourceMetricsCollector.CollectGpuEngineSightingsForPids(fleetPids)
             : [];
@@ -687,7 +703,11 @@ public sealed class Worker(
             TopDiskReadProcesses = ResourceMetricsCollector.TopByDiskRead(sample, 5),
             TopDiskWriteProcesses = ResourceMetricsCollector.TopByDiskWrite(sample, 5),
             GpuEngineSightings = gpuEngines,
-            SampleIntervalSeconds = (int)interval.TotalSeconds
+            SampleIntervalSeconds = (int)interval.TotalSeconds,
+            TuflowInstanceCount = claim.InstanceCount,
+            ClaimedHpcSeats = claim.ClaimedHpcSeats,
+            ClaimedClassicSeats = claim.ClaimedClassicSeats,
+            TuflowClaimDetail = string.IsNullOrWhiteSpace(claim.Detail) ? null : claim.Detail
         };
 
         var ok = await api.ReportFleetSnapshotAsync(dto, ct);
@@ -851,6 +871,49 @@ public sealed class Worker(
         }
     }
 
+    private async Task TryProcessSetApiBaseUrlAsync(
+        string hostname,
+        string? group,
+        string? pendingUrl,
+        CancellationToken ct)
+    {
+        const string command = RemoteMachineCommands.SetApiBaseUrl;
+        if (_executedPendingCommands.Contains(command))
+            return;
+
+        var ok = ApiBaseUrlHelper.TryApply(pendingUrl, logger, out var detail, out var scheduleRestart);
+        RecordCommandReport(command, ok, detail);
+        if (!ok)
+            return;
+
+        _executedPendingCommands.Add(command);
+        lock (_commandsToAck)
+        {
+            if (!_commandsToAck.Contains(command, StringComparer.OrdinalIgnoreCase))
+                _commandsToAck.Add(command);
+        }
+
+        // Flush ack before service restart so the API clears PendingApiBaseUrl.
+        try
+        {
+            await FlushAsync(hostname, group, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "SetApiBaseUrl: flush before restart failed (will still restart)");
+        }
+
+        if (scheduleRestart
+            && ClientMaintenanceHelper.TryExecuteCommand(RemoteMachineCommands.RestartAgent, logger, out var restartDetail))
+        {
+            RecordCommandReport(RemoteMachineCommands.RestartAgent, success: true, restartDetail);
+        }
+        else if (scheduleRestart)
+        {
+            logger.LogWarning("SetApiBaseUrl wrote appsettings but RestartAgent failed — restart HeimdallAgent manually");
+        }
+    }
+
     private void ProcessPendingCommands(IReadOnlyList<string> commands)
     {
         if (commands.Count == 0)
@@ -861,9 +924,10 @@ public sealed class Worker(
             if (_executedPendingCommands.Contains(command))
                 continue;
 
-            // Handled asynchronously via PendingClientUpdate payload / deposit helper
+            // Handled asynchronously via PendingClientUpdate / deposit / PendingApiBaseUrl helpers
             if (string.Equals(command, RemoteMachineCommands.UpdateClient, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(command, RemoteMachineCommands.DepositClientPack, StringComparison.OrdinalIgnoreCase))
+                || string.Equals(command, RemoteMachineCommands.DepositClientPack, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(command, RemoteMachineCommands.SetApiBaseUrl, StringComparison.OrdinalIgnoreCase))
                 continue;
 
             if (TermServiceHelper.TryExecuteCommand(command, logger, out var detail)

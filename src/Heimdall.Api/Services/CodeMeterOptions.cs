@@ -14,6 +14,12 @@ public sealed class CodeMeterOptions
     /// <summary>Seconds between poll starts. Skips a tick if the previous poll is still running.</summary>
     public int PollSeconds { get; set; } = 60;
 
+    /// <summary>
+    /// Minimum gap between polls when woken by TuflowRunning flip / TUFLOW start-stop (Phase 2).
+    /// Interval polls still use <see cref="PollSeconds"/>.
+    /// </summary>
+    public int EventPollMinSeconds { get; set; } = 15;
+
     public int InitialDelaySeconds { get; set; } = 5;
 
     /// <summary>Per cmu32 invocation timeout.</summary>

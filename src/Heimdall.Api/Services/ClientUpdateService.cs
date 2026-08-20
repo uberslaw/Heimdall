@@ -179,7 +179,8 @@ public sealed class ClientUpdateService(
 
             if (string.Equals(report.Command, RemoteMachineCommands.RestartAgent, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(report.Command, RemoteMachineCommands.CleanupClientStaging, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(report.Command, RemoteMachineCommands.DepositClientPack, StringComparison.OrdinalIgnoreCase))
+                || string.Equals(report.Command, RemoteMachineCommands.DepositClientPack, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(report.Command, RemoteMachineCommands.SetApiBaseUrl, StringComparison.OrdinalIgnoreCase))
             {
                 // Do not clobber an in-flight Deploy progress line.
                 if (target is not null)
@@ -203,6 +204,15 @@ public sealed class ClientUpdateService(
                 string.Equals(c, RemoteMachineCommands.DepositClientPack, StringComparison.OrdinalIgnoreCase)))
         {
             machine.PendingClientDepositJson = null;
+        }
+
+        if (heartbeat.AcknowledgedCommands.Any(c =>
+                string.Equals(c, RemoteMachineCommands.SetApiBaseUrl, StringComparison.OrdinalIgnoreCase)))
+        {
+            machine.PendingApiBaseUrl = null;
+            var pending = RemoteMachineService.DeserializeCommands(machine.PendingCommandsJson);
+            pending.RemoveAll(c => string.Equals(c, RemoteMachineCommands.SetApiBaseUrl, StringComparison.OrdinalIgnoreCase));
+            machine.PendingCommandsJson = pending.Count == 0 ? null : JsonSerializer.Serialize(pending, JsonOptions);
         }
 
         // Ack clears pending command token; also clear payload when acked or version matches
@@ -314,6 +324,91 @@ public sealed class ClientUpdateService(
             phase: "Queued",
             detail: "Waiting for agent to pick up CleanupClientStaging",
             ct);
+    }
+
+    /// <summary>
+    /// Queue SetApiBaseUrl + PendingApiBaseUrl for selected hosts. Agents rewrite appsettings and restart.
+    /// Only works while they can still reach the current API. Refuses hosts with UpdateClient pending.
+    /// </summary>
+    public async Task<(int Queued, int Blocked, string Message)> QueueSetApiBaseUrlAsync(
+        IReadOnlyList<string> hostnames,
+        string apiBaseUrl,
+        CancellationToken ct = default)
+    {
+        var url = NormalizeApiBaseUrl(apiBaseUrl);
+        if (url is null)
+            return (0, 0, "Enter a valid API URL starting with http:// or https:// (e.g. http://host:5080).");
+
+        var queued = 0;
+        var blocked = 0;
+        var now = DateTimeOffset.UtcNow;
+
+        foreach (var raw in hostnames.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var hostname = raw.Trim();
+            if (hostname.Length == 0)
+                continue;
+
+            var machine = await db.Machines.FirstOrDefaultAsync(m => m.Hostname == hostname, ct);
+            if (machine is null)
+            {
+                logger.LogWarning("SetApiBaseUrl: unknown hostname {Host}", hostname);
+                continue;
+            }
+
+            if (HasPendingUpdateClient(machine))
+            {
+                blocked++;
+                logger.LogInformation("SetApiBaseUrl: blocked on {Host} — UpdateClient deploy pending", hostname);
+                continue;
+            }
+
+            var pending = RemoteMachineService.DeserializeCommands(machine.PendingCommandsJson);
+            if (!pending.Contains(RemoteMachineCommands.SetApiBaseUrl, StringComparer.OrdinalIgnoreCase))
+                pending.Add(RemoteMachineCommands.SetApiBaseUrl);
+            machine.PendingCommandsJson = JsonSerializer.Serialize(pending, JsonOptions);
+            machine.PendingApiBaseUrl = url;
+            machine.ClientUpdateProgressJson = JsonSerializer.Serialize(new ClientUpdateProgressDto
+            {
+                Phase = "Queued",
+                Detail = $"SetApiBaseUrl: waiting for agent → {url}",
+                UpdatedUtc = now
+            }, JsonOptions);
+            queued++;
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        if (queued == 0 && blocked == 0)
+            return (0, 0, "No machines queued.");
+        if (queued == 0 && blocked > 0)
+        {
+            OpsFileLog.Write("SetApiBaseUrl", $"queued=0; blocked={blocked}; url={url}");
+            return (0, blocked, $"{blocked} machine(s) have Deploy/UpdateClient pending — finish or clear Deploy first.");
+        }
+
+        if (blocked > 0)
+        {
+            OpsFileLog.Write("SetApiBaseUrl", $"queued={queued}; blocked={blocked}; url={url}");
+            return (queued, blocked, $"Queued SetApiBaseUrl for {queued} machine(s); {blocked} blocked by Deploy.");
+        }
+
+        OpsFileLog.Write("SetApiBaseUrl", $"queued={queued}; url={url}");
+        return (queued, 0, $"Queued SetApiBaseUrl → {url} for {queued} machine(s). Agents pick up on next config poll (~5 min), then restart.");
+    }
+
+    public static string? NormalizeApiBaseUrl(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+        var url = raw.Trim().TrimEnd('/');
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return null;
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            return null;
+        if (string.IsNullOrWhiteSpace(uri.Host))
+            return null;
+        return url;
     }
 
     /// <summary>

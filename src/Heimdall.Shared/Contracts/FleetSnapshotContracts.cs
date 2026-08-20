@@ -46,6 +46,20 @@ public sealed class FleetSnapshotDto
     /// Null on older agents — ingest assumes normal fleet interval.
     /// </summary>
     public int? SampleIntervalSeconds { get; init; }
+
+    /// <summary>Count of local TUFLOW-like processes (null on older agents).</summary>
+    public int? TuflowInstanceCount { get; init; }
+
+    /// <summary>
+    /// Estimated HPC seats from local process args (-nt / GPU / HPC binary). Not CodeMeter truth.
+    /// </summary>
+    public int? ClaimedHpcSeats { get; init; }
+
+    /// <summary>Estimated Classic seats (typically 1 per Classic process). Not CodeMeter truth.</summary>
+    public int? ClaimedClassicSeats { get; init; }
+
+    /// <summary>Short evidence string for tooltips (process#-ntN; …). Truncated by agent.</summary>
+    public string? TuflowClaimDetail { get; init; }
 }
 
 /// <summary>Active / Idle thresholds applied when TUFLOW is running (POC defaults).</summary>

@@ -55,6 +55,18 @@
                     }
                 }
             </select>
+            @if (d.Hosts.Any(h => !string.IsNullOrWhiteSpace(h.DriveFreeHint)))
+            {
+                <div class="small text-secondary mt-2 mb-0">
+                    <strong>Host free space</strong> (latest heartbeat):
+                    <ul class="mb-0 ps-3">
+                        @foreach (var h in d.Hosts.Where(x => !string.IsNullOrWhiteSpace(x.DriveFreeHint)).Take(12))
+                        {
+                            <li><code>@(h.FriendlyName ?? h.Hostname)</code> — @h.DriveFreeHint</li>
+                        }
+                    </ul>
+                </div>
+            }
         </fieldset>
         <div class="row g-2 mb-2">
             <div class="col-md-6">
@@ -88,8 +100,36 @@
                 <input class="form-control form-control-sm" name="requestedBy" value="@Model.SuggestedRequestedBy" />
             </div>
             <div class="col-md-4">
-                <label class="form-label small mb-1">Working directory (optional UNC)</label>
-                <input class="form-control form-control-sm" name="workingDirectory" />
+                <label class="form-label small mb-1">Working directory (optional — overrides scratch)</label>
+                <input class="form-control form-control-sm" name="workingDirectory" placeholder="Leave blank to use local scratch" />
+            </div>
+        </div>
+        <div class="row g-2 mb-2">
+            <div class="col-md-6">
+                <label class="form-label small mb-1">Archive share (post-run robocopy)</label>
+                <input class="form-control form-control-sm" name="archiveShare" value="@d.ArchiveShareTemplate"
+                       placeholder="\\global\australasia\bne\analysis\{hostname}" />
+                <p class="text-secondary small mb-0 mt-1">
+                    Default <code>\\global\australasia\bne\analysis\{hostname}</code>.
+                    <code>{hostname}</code> is replaced when a host claims the item. Results copy here after the run finishes.
+                </p>
+            </div>
+            <div class="col-md-6">
+                <label class="d-flex align-items-start gap-2 small mb-2">
+                    <input type="checkbox" name="useLocalScratch" value="true" @(d.PreferLocalScratchDefault ? "checked" : null) class="mt-1" />
+                    <span>
+                        <strong>Use local scratch (prefer non-C)</strong>
+                        — agent picks D/E/F by free space for WorkingDirectory; <code>.tcf</code> stays on UNC.
+                        Explicit working directory above wins.
+                    </span>
+                </label>
+                <label class="d-flex align-items-start gap-2 small mb-0">
+                    <input type="checkbox" name="autoCleanAfterVerify" value="true" class="mt-1" />
+                    <span>
+                        <strong>Auto-clean local after verified copy</strong>
+                        — only deletes scratch when file count and bytes match the archive. Off by default (safe).
+                    </span>
+                </label>
             </div>
         </div>
         <button type="submit" class="btn btn-hd btn-sm">Add to queue</button>
@@ -163,6 +203,7 @@
                         <th>Run</th>
                         <th>Host</th>
                         <th>State</th>
+                        <th></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -170,8 +211,39 @@
                 {
                     <tr>
                         <td>@(item.RunName ?? item.RunId)</td>
-                        <td>@(item.AssignedHostname ?? "—")</td>
-                        <td><span class="badge-pill badge-active">@item.State</span></td>
+                        <td>
+                            @if (!string.IsNullOrWhiteSpace(item.AssignedFriendlyName))
+                            {
+                                <div>@item.AssignedFriendlyName</div>
+                                <div class="text-secondary small"><code>@(item.AssignedHostname ?? "—")</code></div>
+                            }
+                            else
+                            {
+                                <code>@(item.AssignedHostname ?? "—")</code>
+                            }
+                        </td>
+                        <td><span class="badge-pill @(item.State == TuflowQueueItemStates.Running ? "badge-active" : "badge-ended")">@item.State</span></td>
+                        <td class="text-nowrap">
+                            @if (!string.IsNullOrWhiteSpace(item.AssignedHostname))
+                            {
+                                <form method="post" asp-page-handler="StopGraceful" class="d-inline">
+                                    <input type="hidden" name="hostname" value="@item.AssignedHostname" />
+                                    <input type="hidden" name="machineId" value="@(d.MachineId?.ToString() ?? "")" />
+                                    <button class="btn btn-ghost btn-sm" type="submit"
+                                            onclick="return confirm('Send a graceful stop to TUFLOW on @(item.AssignedFriendlyName ?? item.AssignedHostname)?');">
+                                        Stop
+                                    </button>
+                                </form>
+                                <form method="post" asp-page-handler="Abandon" class="d-inline">
+                                    <input type="hidden" name="hostname" value="@item.AssignedHostname" />
+                                    <input type="hidden" name="machineId" value="@(d.MachineId?.ToString() ?? "")" />
+                                    <button class="btn btn-ghost btn-sm" type="submit"
+                                            onclick="return confirm('Force-clear the stuck run on @(item.AssignedFriendlyName ?? item.AssignedHostname)? Use this when Starting never advances and TUFLOW is not actually running. Local files are left alone.');">
+                                        Force clear
+                                    </button>
+                                </form>
+                            }
+                        </td>
                     </tr>
                 }
                 </tbody>

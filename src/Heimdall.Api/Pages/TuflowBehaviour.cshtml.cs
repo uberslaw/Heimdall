@@ -20,7 +20,7 @@ public class TuflowBehaviourModel(TuflowBehaviourService behaviour, FloodAccessG
 
     public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
 
         if (!OpsPartial.IsPartial(Request))

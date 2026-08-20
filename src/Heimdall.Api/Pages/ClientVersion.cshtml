@@ -109,6 +109,16 @@
             <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-deposit-pack"
                     formaction="/ClientVersion?handler=DepositClientPack"
                     title="Queue selected agents to download the Ready pack to C:\Temp\Heimdall-Client-v{version}-{timestamp} for manual Install.lnk (not silent Deploy).">Deposit pack to Temp</button>
+            <div class="d-flex flex-wrap align-items-center gap-1 ms-auto">
+                <label class="form-label small mb-0 text-secondary" for="new-api-base-url">API URL</label>
+                <input class="form-control form-control-sm" style="min-width:14rem" id="new-api-base-url"
+                       name="NewApiBaseUrl" value="@Model.NewApiBaseUrl"
+                       placeholder="http://host:5080"
+                       title="New Heimdall:ApiBaseUrl for selected agents. Only works while they can still reach this API." />
+                <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-set-api-url"
+                        formaction="/ClientVersion?handler=SetApiBaseUrl"
+                        title="Queue SetApiBaseUrl: agents rewrite Program Files appsettings and restart. Must reach this API first. Offline hosts: Set-ApiUrl.lnk in the client pack (API IP baked into Set-HeimdallAgentApiBaseUrl.cmd).">Set API URL</button>
+            </div>
         </div>
         <table class="hd-table hd-sortable">
             <thead>
@@ -204,6 +214,10 @@
                     </td>
                     <td class="small text-secondary" title="@(r.ClientUpdateProgressJson ?? "")">
                         @(ClientVersionModel.FormatUpdateProgress(r.ClientUpdateProgressJson) ?? "—")
+                        @if (!string.IsNullOrWhiteSpace(r.PendingApiBaseUrl))
+                        {
+                            <div class="small" title="Queued SetApiBaseUrl">→ @r.PendingApiBaseUrl</div>
+                        }
                     </td>
                     <td data-sort-value="@r.LastSeenUtc.ToUnixTimeSeconds()">@ClientVersionModel.FormatContact(r.LastSeenUtc)</td>
                 </tr>
@@ -256,6 +270,13 @@
             btnDeposit.title = n === 0
                 ? 'Select at least one machine to deposit the pack to Temp.'
                 : 'Queue DepositClientPack for ' + n + ' host(s) → C:\\Temp\\Heimdall-Client-v{version}-{timestamp} (manual Install.lnk).';
+        }
+        const btnSetUrl = document.getElementById('btn-set-api-url');
+        if (btnSetUrl) {
+            btnSetUrl.disabled = n === 0;
+            btnSetUrl.title = n === 0
+                ? 'Select at least one machine to set the API URL.'
+                : 'Queue SetApiBaseUrl for ' + n + ' host(s) (must still reach this API).';
         }
         if (!btnDeploy) return;
         if (!readinessDone) {
@@ -411,6 +432,23 @@
             return;
         }
         if (!confirm('Deposit client pack on ' + n + ' selected machine(s)?\n\nAgents download the Ready pack to C:\\Temp\\Heimdall-Client-v{version}-{yyyyMMdd-HHmmss} for manual Install.lnk.\nDoes NOT silent-install or replace HeimdallAgent.\nRequires pack Ready; blocked if Deploy/UpdateClient or Deposit already pending.'))
+            e.preventDefault();
+    });
+
+    document.getElementById('btn-set-api-url')?.addEventListener('click', (e) => {
+        const n = document.querySelectorAll('.host-check:checked').length;
+        const urlInput = document.getElementById('new-api-base-url');
+        const url = (urlInput && urlInput.value || '').trim();
+        if (n === 0) {
+            e.preventDefault();
+            return;
+        }
+        if (!url) {
+            e.preventDefault();
+            alert('Enter the new API URL (e.g. http://host:5080).');
+            return;
+        }
+        if (!confirm('Set API URL on ' + n + ' selected machine(s) to:\n\n' + url + '\n\nAgents rewrite Program Files appsettings and restart HeimdallAgent.\nThey must still be able to reach THIS API to pick up the command.\nOffline hosts: open the pack and run Set-ApiUrl.lnk (IP is set in Set-HeimdallAgentApiBaseUrl.cmd).'))
             e.preventDefault();
     });
 

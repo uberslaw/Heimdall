@@ -59,7 +59,14 @@
     const tbody = table.tBodies[0];
     if (!tbody) return;
     const headers = [...table.querySelectorAll('thead th[data-sort]')];
-    const rows = [...tbody.querySelectorAll('tr')].filter(r => r.children.length > 1);
+    // Primary rows only — follow rows (e.g. Flood Live charts under a machine) stay attached after sort.
+    const followByKey = new Map();
+    tbody.querySelectorAll('tr[data-follow-for]').forEach(r => {
+      followByKey.set(r.getAttribute('data-follow-for'), r);
+    });
+    const rows = [...tbody.querySelectorAll('tr')].filter(
+      r => !r.hasAttribute('data-follow-for') && r.children.length > 1
+    );
     let asc;
     if (forceDir === 'asc' || forceDir === 'desc') {
       asc = forceDir === 'asc';
@@ -80,7 +87,11 @@
       const vb = cb?.dataset.sortValue ?? cb?.textContent ?? '';
       return compareRows(type, va, vb, asc);
     });
-    rows.forEach(r => tbody.appendChild(r));
+    rows.forEach(r => {
+      tbody.appendChild(r);
+      const id = r.getAttribute('data-machine-id');
+      if (id && followByKey.has(id)) tbody.appendChild(followByKey.get(id));
+    });
     saveSort(table, colIdx, th.dataset.dir);
   }
 

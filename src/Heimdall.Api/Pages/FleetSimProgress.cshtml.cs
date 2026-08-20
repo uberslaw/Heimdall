@@ -12,6 +12,7 @@
 // TuflowRunService.QueueStartAsync, which itself already checks IsFloodEnrolledAsync before creating one).
 
 using Heimdall.Api.Services;
+using Heimdall.Shared.Contracts;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 
@@ -25,7 +26,7 @@ public class FleetSimProgressModel(TuflowRunService runs, TuflowQueueService que
 
     public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
 
         if (!OpsPartial.IsPartial(Request))
@@ -34,6 +35,36 @@ public class FleetSimProgressModel(TuflowRunService runs, TuflowQueueService que
         Rows = await runs.GetFleetProgressAsync(ct);
         (QueueWaiting, QueueActive) = await queues.CountWorkAsync(ct);
         return Page();
+    }
+
+    public async Task<IActionResult> OnPostStopGracefulAsync(string hostname, CancellationToken ct)
+    {
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
+            return denied;
+
+        if (string.IsNullOrWhiteSpace(hostname))
+            return OpsPartial.RedirectToFloodTab(Request, "sims");
+
+        var (ok, error) = await runs.QueueStopGracefulAsync(hostname.Trim(), ct);
+        TempData[ok ? "Message" : "Error"] = ok
+            ? $"Graceful stop queued for {hostname}."
+            : error;
+        return OpsPartial.RedirectToFloodTab(Request, "sims");
+    }
+
+    public async Task<IActionResult> OnPostAbandonAsync(string hostname, CancellationToken ct)
+    {
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
+            return denied;
+
+        if (string.IsNullOrWhiteSpace(hostname))
+            return OpsPartial.RedirectToFloodTab(Request, "sims");
+
+        var (ok, error) = await runs.AbandonActiveRunAsync(hostname.Trim(), ct);
+        TempData[ok ? "Message" : "Error"] = ok
+            ? $"Cleared stuck run on {hostname}. Host can take new queue work."
+            : error;
+        return OpsPartial.RedirectToFloodTab(Request, "sims");
     }
 
     public static string FormatSpan(TimeSpan span) => span.TotalHours >= 1
@@ -50,7 +81,10 @@ public class FleetSimProgressModel(TuflowRunService runs, TuflowQueueService que
 
     public static string RunStateBadgeClass(string state) => state switch
     {
-        Heimdall.Shared.Contracts.TuflowRunStates.Running => "badge-active",
+        TuflowRunStates.Running => "badge-active",
         _ => "badge-ended" // Starting / StopRequested — only active states ever reach this page, see class remarks
     };
+
+    public static bool CanStop(string state) =>
+        TuflowRunService.IsActiveRunState(state) && state != TuflowRunStates.StopRequested;
 }

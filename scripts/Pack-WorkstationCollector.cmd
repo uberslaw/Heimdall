@@ -7,13 +7,18 @@ REM Requires: .NET 10 SDK on THIS machine. Target PCs need no SDK (self-containe
 REM
 REM Output:
 REM   dist\Heimdall-Client\
-REM     Install.lnk          ← only entry clients need
+REM     Install.lnk          ← only entry clients need for install
+REM     Set-ApiUrl.lnk       ← repoint agent ApiBaseUrl (IP in .cmd)
 REM     Install.cmd / wizard scripts
 REM     payload\             (published Heimdall.Agent.exe + deps)
 REM   dist\heimdall-client.zip  (optional, if tar available)
 REM
 REM Stage markers (parsed by API Client Version pack UI):
 REM   HEIMDALL_PACK_STAGE=N/5 label
+REM
+REM Optional bake (set by Launch Control PackCollector, or manually):
+REM   HEIMDALL_PACK_API_URL=http://host:5080
+REM   HEIMDALL_PACK_FORCE_API_URL=1   (silent Deploy overwrites agent URL; default off)
 
 cd /d "%~dp0.."
 set "ROOT=%CD%"
@@ -198,6 +203,18 @@ if not exist "%OUT%\Heimdall-AgentHeal.ps1" (
   echo [ERROR] Failed to copy Heimdall-AgentHeal.ps1 into pack
   goto fail
 )
+copy /Y "%ROOT%\scripts\Set-HeimdallAgentApiBaseUrl.cmd" "%OUT%\Set-HeimdallAgentApiBaseUrl.cmd" >nul
+copy /Y "%ROOT%\scripts\Set-HeimdallAgentApiBaseUrl.ps1" "%OUT%\Set-HeimdallAgentApiBaseUrl.ps1" >nul
+if not exist "%OUT%\Set-HeimdallAgentApiBaseUrl.ps1" (
+  echo [ERROR] Failed to copy Set-HeimdallAgentApiBaseUrl.ps1 into pack
+  goto fail
+)
+echo [*] Baking optional pack API URL (Write-PackApiUrl.ps1)...
+"%PS%" -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\Write-PackApiUrl.ps1" -PackFolder "%OUT%"
+if errorlevel 1 (
+  echo [ERROR] Write-PackApiUrl.ps1 failed
+  goto fail
+)
 copy /Y "%ROOT%\scripts\Heimdall-Setup.cmd" "%OUT%\Heimdall-Setup.cmd" >nul
 copy /Y "%ROOT%\scripts\Heimdall-LaunchControl.cmd" "%OUT%\Heimdall-LaunchControl.cmd" >nul
 copy /Y "%ROOT%\scripts\Heimdall-LaunchControl.ps1" "%OUT%\Heimdall-LaunchControl.ps1" >nul
@@ -218,6 +235,10 @@ if exist "%ROOT%\assets\heimdall.ico" (
     echo [WARN] Could not create Heimdall-Setup.lnk — use Heimdall-Setup.cmd instead.
   )
   "%PS%" -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Heimdall-LaunchControl.lnk" -TargetPath "%OUT%\Heimdall-Setup.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Heimdall Setup (advanced)"
+  "%PS%" -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\New-HeimdallShortcut.ps1" -ShortcutPath "%OUT%\Set-ApiUrl.lnk" -TargetPath "%OUT%\Set-HeimdallAgentApiBaseUrl.cmd" -IconPath "%OUT%\heimdall.ico" -WorkingDirectory "%OUT%" -Description "Point HeimdallAgent at the API IP in Set-HeimdallAgentApiBaseUrl.cmd"
+  if errorlevel 1 (
+    echo [WARN] Could not create Set-ApiUrl.lnk - use Set-HeimdallAgentApiBaseUrl.cmd instead.
+  )
 ) else (
   echo [WARN] assets\heimdall.ico missing — pack will not include helmet icon shortcuts.
 )
@@ -284,6 +305,15 @@ echo   %OUT%
 echo.
 echo On each client PC, double-click:
 echo   Install.lnk
+echo.
+echo To repoint an already-installed agent at a new API IP:
+echo   Set-ApiUrl.lnk  (edit API_IP in Set-HeimdallAgentApiBaseUrl.cmd first)
+echo.
+if exist "%OUT%\pack-api.json" (
+  echo Pack API bake: see pack-api.json ^(forceOnUpdate controls silent Deploy^)
+) else (
+  echo Pack API bake: none ^(blank^) — updates keep existing agent ApiBaseUrl
+)
 echo.
 echo Pack again only when the agent changes.
 echo.

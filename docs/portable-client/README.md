@@ -38,6 +38,11 @@ scripts\Pack-WorkstationCollector.cmd
 
 Pack again when the **agent** changes (or if `dist\Heimdall-Client` is missing). Reuse the same folder on every PC until then.
 
+**API URL bake (Launch Control → Create client pack):** you are prompted for an optional API base URL.
+
+- **Blank** — same as before: no `pack-api.json`; silent Deploy keeps each agent's existing `ApiBaseUrl` (VPN-safe). `Set-ApiUrl.lnk` remains available.
+- **URL entered** — written to `pack-api.json`, and used as the default for Install.lnk / silent install; Set-ApiUrl is pre-filled. A second prompt asks whether to **force** that URL on silent Deploy (`forceOnUpdate`). Choose **No** unless you intend to overwrite VPN agents.
+
 **Push from Setup:** **Push client pack to PC…** asks for a hostname, copies the pack to `\\HOST\C$\Temp\Heimdall-Client-v{version}` (from pack `VERSION.json`), and opens that share in Explorer. On the target, run `Install.lnk` (admin). Needs your account to reach C$ on that PC.
 
 ## What is in the pack
@@ -46,6 +51,8 @@ Pack again when the **agent** changes (or if `dist\Heimdall-Client` is missing).
 |------|------|
 | `Install.lnk` | **Only entry you need on clients** |
 | `Install.cmd` / `Install-Client.ps1` | Guided wizard (launched by Install.lnk) |
+| `Set-ApiUrl.lnk` | Repoint installed agent to API IP (edit `API_IP` in `Set-HeimdallAgentApiBaseUrl.cmd`) |
+| `pack-api.json` | Optional — baked at pack time (`apiBaseUrl`, `forceOnUpdate`) |
 | `payload\` | Required agent binaries (self-contained) |
 | `payload\TuflowLauncher\` | TUFLOW start/stop helper (Flood-enrolled hosts) |
 | `Install-WorkstationCollector.cmd` | Silent/scripted install (advanced) |

@@ -90,9 +90,15 @@ public sealed record FloodLiveLicenseDto(
     int? ClassicAvailable,
     int UnmatchedHpc,
     int UnmatchedClassic,
+    /// <summary>Outside Flood seats without double-counting HPC+Classic on the same IP (sum of max per IP).</summary>
+    int UnmatchedEffective,
     double PollDurationMs,
     DateTimeOffset? QueriedAtUtc,
-    string? StatusNote);
+    string? StatusNote,
+    /// <summary>Tooltip lines for seats outside Flood (user @ host/IP).</summary>
+    string? UnmatchedDetail = null,
+    /// <summary>Configured seconds between CodeMeter poll starts (for next-poll countdown).</summary>
+    int PollIntervalSeconds = 60);
 
 public sealed record FloodLiveRowDto(
     int MachineId,
@@ -121,7 +127,13 @@ public sealed record FloodLiveRowDto(
     DateTimeOffset? DetectedRunEndedUtc,
     string? DetectedRunState,
     int HpcSeats = 0,
-    int ClassicSeats = 0);
+    int ClassicSeats = 0,
+    string? HpcSeatDetail = null,
+    string? ClassicSeatDetail = null,
+    int? TuflowInstanceCount = null,
+    int? ClaimedHpcSeats = null,
+    int? ClaimedClassicSeats = null,
+    string? TuflowClaimDetail = null);
 
 public sealed record FloodLiveChartDto(
     int MachineId,

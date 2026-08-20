@@ -17,6 +17,7 @@ public partial class App : Application
         var health = ResolveHealthUrl();
 
         // Run Setup actions without opening the full WinForms Setup shell.
+        // Progress is written to %ProgramData%\Heimdall\logs\launch-control-live.log (followed below).
         ExtraAction Mode(string title, string mode, string group, bool elevate = true) =>
             new(title, w =>
             {
@@ -26,10 +27,29 @@ public partial class App : Application
                     return;
                 }
                 w.AppendLog($"Starting {title}…", "STEP");
+                w.AppendLog("Progress streams into this console (big steps only). Approve UAC if prompted.", "IMPORTANT");
                 w.SetFollowLogs(true);
                 ProcessUtil.StartPowerShell(setupPs1, scripts, elevate, "-Mode", mode, "-ActionOnly");
-                w.AppendLog($"Launched Setup action {mode} (no full Setup window). Approve UAC if prompted.", "IMPORTANT");
             }, group);
+
+        var liveLog = Path.Combine(logs, "launch-control-live.log");
+        try
+        {
+            if (!File.Exists(liveLog))
+                File.WriteAllText(liveLog, $"# Heimdall Launch Control live console{Environment.NewLine}");
+        }
+        catch { /* ignore */ }
+
+        var logPaths = new List<string> { liveLog };
+        if (Directory.Exists(logs))
+        {
+            logPaths.AddRange(
+                Directory.GetFiles(logs, "launch-control-*.log")
+                    .OrderByDescending(File.GetLastWriteTimeUtc)
+                    .Take(2));
+            logPaths.AddRange(
+                Directory.GetFiles(logs, "republish-api-deploy.log"));
+        }
 
         LaunchControlApp.Run(this, new LaunchControlProfile
         {
@@ -39,30 +59,25 @@ public partial class App : Application
             ServiceNames = ["HeimdallApi", "HeimdallAgent"],
             CompactServiceControls = true,
             ShowRefreshButton = false,
-            ShowFollowLogsButton = false,
+            ShowFollowLogsButton = true,
             HealthUrl = health,
             BrowserUrl = health?.Replace("/api/health", "/", StringComparison.OrdinalIgnoreCase) ?? "http://localhost:5080/",
-            LogPaths = Directory.Exists(logs)
-                ? Directory.GetFiles(logs, "launch-control-*.log")
-                    .OrderByDescending(File.GetLastWriteTimeUtc)
-                    .Take(2)
-                    .Concat(Directory.GetFiles(logs, "*.log").Take(2))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Take(4)
-                    .ToArray()
-                : [],
+            LogPaths = logPaths.Distinct(StringComparer.OrdinalIgnoreCase).Take(5).ToArray(),
             CrashLogPath = Path.Combine(root, "logs", "launch-control.log"),
             DefaultColors = new Dictionary<string, string>
             {
                 ["ChromeColor"] = "#1B365D",
-                ["PrimaryActionColor"] = "#2E6DA4"
+                ["PrimaryActionColor"] = "#2E6DA4",
+                // OK / success lines in the console (StatusRunningBrush) — light green on dark console.
+                ["StatusRunningColor"] = "#8FDBA8"
             },
             MetaText = () => $"API {health ?? "(not configured)"}  Logs %ProgramData%\\Heimdall\\logs",
             StartupNotes =
             [
                 "Closing this window does not stop Heimdall services.",
-                "Republish / Setup run as actions in this window (not the old Setup shell).",
-                "Expand Diagnostics / Recovery when needed. Log colors: blue = important/steps, green = OK, amber = warn, red = failures only."
+                "Redeploy / Pack progress appears in this console (follow launch-control-live.log).",
+                "Scroll up to read history — console stays put until you scroll back to the bottom.",
+                "Expand Diagnostics / Recovery when needed. Log colors: blue = steps, green = OK, amber = warn, red = failures."
             ],
             ExtraActionLayout = new ExtraActionLayout
             {

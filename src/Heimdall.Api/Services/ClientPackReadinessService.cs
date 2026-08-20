@@ -213,9 +213,23 @@ public sealed class ClientPackReadinessService
 
         if (liveFp is not null && !string.Equals(liveFp, packFp, StringComparison.OrdinalIgnoreCase))
         {
+            var hint =
+                "Deploy locked: pack is stale (source fingerprint mismatch) — Pack client again.";
+            // Common after packing from RepoRoot while Program Files API is an older build:
+            // pack script hashes with current Write-ClientPackManifest.ps1; live hash uses the
+            // installed Heimdall.Api.dll ClientPackFingerprint — they diverge until API republish.
+            if (!string.IsNullOrEmpty(packFp) && !string.IsNullOrEmpty(liveFp)
+                && !string.Equals(packFp, liveFp, StringComparison.OrdinalIgnoreCase))
+            {
+                hint =
+                    "Deploy locked: pack fingerprint ≠ live source hash. "
+                    + "If Pack just succeeded, republish the API (so Program Files matches RepoRoot fingerprint code), "
+                    + "then Refresh from disk — or Pack client again after the API is current.";
+            }
+
             return WithLastPack(new ClientPackReadiness(
                 ClientPackStatus.Stale,
-                "Deploy locked: pack is stale (source fingerprint mismatch) — Pack client again.",
+                hint,
                 repoRoot, packFolder, liveFp, packFp, productVersion, null,
                 canPack, false, GetApiInstallNote(), now));
         }

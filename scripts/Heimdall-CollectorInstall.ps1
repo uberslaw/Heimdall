@@ -122,8 +122,32 @@ function Write-HeimdallVersionCompareInlineFallback {
 function Resolve-HeimdallDefaultCollectorApiUrl {
     param(
         [string]$LastInstallSettingsFile = $null,
+        [string]$PackFolder = $null,
         [scriptblock]$Log = $null
     )
+
+    # Pack-baked URL (Create client pack) wins for wizard / silent defaults on that pack.
+    $packRoots = @()
+    if (-not [string]::IsNullOrWhiteSpace($PackFolder)) { $packRoots += $PackFolder }
+    if ($PSScriptRoot) { $packRoots += $PSScriptRoot }
+    foreach ($root in $packRoots) {
+        $packApi = Join-Path $root "pack-api.json"
+        if (-not (Test-Path -LiteralPath $packApi)) { continue }
+        try {
+            $meta = Get-Content -LiteralPath $packApi -Raw -Encoding UTF8 | ConvertFrom-Json
+            $u = $null
+            try { $u = [string]$meta.apiBaseUrl } catch { $u = $null }
+            if (-not [string]::IsNullOrWhiteSpace($u)) {
+                $u = $u.Trim().TrimEnd("/")
+                if ($Log) { & $Log "Prefill ApiUrl from pack-api.json: $u" "INFO" }
+                return $u
+            }
+        }
+        catch {
+            if ($Log) { & $Log "Could not read pack-api.json: $($_.Exception.Message)" "WARN" }
+        }
+    }
+
     if ($LastInstallSettingsFile -and (Test-Path -LiteralPath $LastInstallSettingsFile)) {
         try {
             $raw = Get-Content -Raw -Path $LastInstallSettingsFile -Encoding UTF8

@@ -55,7 +55,8 @@ public sealed class CodeMeterQueryService(
         var opts = options.Value;
         var timeout = TimeSpan.FromSeconds(Math.Clamp(opts.QueryTimeoutSeconds, 5, 300));
         var perFqdnUsed = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var checkouts = new List<CodeMeterCheckout>();
+        // HA: keep checkouts per license-server FQDN; never sum the same client across redundant servers.
+        var perFqdnCheckouts = new Dictionary<string, List<CodeMeterCheckout>>(StringComparer.OrdinalIgnoreCase);
         var anyOk = false;
         var anyFail = false;
 
@@ -83,7 +84,13 @@ public sealed class CodeMeterQueryService(
                 perFqdnUsed[server.Fqdn] = prev + used;
             }
 
-            checkouts.AddRange(ParseCheckouts(lines));
+            if (!perFqdnCheckouts.TryGetValue(server.Fqdn, out var bucket))
+            {
+                bucket = [];
+                perFqdnCheckouts[server.Fqdn] = bucket;
+            }
+
+            bucket.AddRange(ParseCheckouts(lines));
             serverNotes.Add($"{label} {shortHost}/{server.Serial}: ok");
         }
 
@@ -92,15 +99,61 @@ public sealed class CodeMeterQueryService(
         var total = Math.Max(0, product.TotalLicenses);
         int? available = poolUsed is null ? null : Math.Max(0, total - poolUsed.Value);
 
-        var distinct = DedupCheckouts(checkouts);
+        // Per FQDN: dedupe handles, then for each client IP take MAX seat count across FQDNs
+        // (same client mirrored on az + bne must not become 2 seats).
+        var perFqdnDeduped = perFqdnCheckouts.ToDictionary(
+            kv => kv.Key,
+            kv => DedupCheckouts(kv.Value).ToList(),
+            StringComparer.OrdinalIgnoreCase);
+        var (canonical, seatsByIp) = MergeHaCheckouts(perFqdnDeduped);
+
         return new CodeMeterProductSnapshot(
             product.ProductCode,
             total,
             poolUsed,
             available,
-            distinct,
+            canonical,
+            seatsByIp,
             Partial: anyFail && anyOk,
             anyOk);
+    }
+
+    /// <summary>
+    /// For each client IP, seat count = max(count on any single FQDN). Evidence rows come from that FQDN.
+    /// Checkouts with no client IP are taken from the FQDN with the most such rows (rare).
+    /// </summary>
+    internal static (IReadOnlyList<CodeMeterCheckout> Canonical, IReadOnlyDictionary<string, int> SeatsByIp)
+        MergeHaCheckouts(IReadOnlyDictionary<string, List<CodeMeterCheckout>> perFqdn)
+    {
+        var seatsByIp = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var evidenceByIp = new Dictionary<string, List<CodeMeterCheckout>>(StringComparer.OrdinalIgnoreCase);
+        List<CodeMeterCheckout>? bestNoIp = null;
+
+        foreach (var list in perFqdn.Values)
+        {
+            var withIp = list.Where(c => !string.IsNullOrWhiteSpace(c.ClientAddress))
+                .GroupBy(c => c.ClientAddress!, StringComparer.OrdinalIgnoreCase);
+            foreach (var g in withIp)
+            {
+                var rows = g.ToList();
+                var n = rows.Count;
+                if (!seatsByIp.TryGetValue(g.Key, out var cur) || n > cur)
+                {
+                    seatsByIp[g.Key] = n;
+                    evidenceByIp[g.Key] = rows;
+                }
+            }
+
+            var noIp = list.Where(c => string.IsNullOrWhiteSpace(c.ClientAddress)).ToList();
+            if (noIp.Count > 0 && (bestNoIp is null || noIp.Count > bestNoIp.Count))
+                bestNoIp = noIp;
+        }
+
+        var canonical = evidenceByIp.Values.SelectMany(x => x).ToList();
+        if (bestNoIp is { Count: > 0 })
+            canonical.AddRange(bestNoIp);
+
+        return (canonical, seatsByIp);
     }
 
     private async Task<(bool Ok, string[]? Lines, string? Error)> RunCmuAsync(
@@ -280,11 +333,12 @@ public sealed record CodeMeterProductSnapshot(
     int? PoolUsed,
     int? PoolAvailable,
     IReadOnlyList<CodeMeterCheckout> Checkouts,
+    IReadOnlyDictionary<string, int> SeatsByClientIp,
     bool Partial,
     bool Ok)
 {
     public static CodeMeterProductSnapshot Empty(int productCode, int total) =>
-        new(productCode, total, null, null, [], false, false);
+        new(productCode, total, null, null, [], new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase), false, false);
 }
 
 public sealed record CodeMeterLicenseSnapshot(
@@ -305,16 +359,161 @@ public sealed record CodeMeterLicenseSnapshot(
         false,
         false);
 
+    /// <summary>Seats for a machine LastIp only — never by username. Count is HA-safe (max across servers).</summary>
     public (int HpcSeats, int ClassicSeats) SeatsForIp(string? lastIp)
     {
         var ip = CodeMeterQueryService.NormalizeIp(lastIp);
         if (ip is null) return (0, 0);
-        var hpc = Hpc.Checkouts.Count(c => IpsMatch(c.ClientAddress, ip));
-        var classic = Classic.Checkouts.Count(c => IpsMatch(c.ClientAddress, ip));
+        Hpc.SeatsByClientIp.TryGetValue(ip, out var hpc);
+        Classic.SeatsByClientIp.TryGetValue(ip, out var classic);
         return (hpc, classic);
     }
 
+    /// <summary>
+    /// Display seats for one client IP: max(HPC, Classic).
+    /// TUFLOW GPU/HPC checkouts typically hold both products; summing would double-count the same run.
+    /// </summary>
+    public int EffectiveSeatsForIp(string? lastIp)
+    {
+        var (hpc, classic) = SeatsForIp(lastIp);
+        return Math.Max(hpc, classic);
+    }
+
+    /// <summary>CodeMeter User @ Client address lines for tooltips (proof of attribution).</summary>
+    public string SeatDetailForIp(string? lastIp, bool hpc)
+    {
+        var ip = CodeMeterQueryService.NormalizeIp(lastIp);
+        if (ip is null) return "";
+        var list = (hpc ? Hpc.Checkouts : Classic.Checkouts)
+            .Where(c => IpsMatch(c.ClientAddress, ip))
+            .ToList();
+        if (list.Count == 0) return "";
+        return string.Join("; ",
+            list.Select(c =>
+            {
+                var user = string.IsNullOrWhiteSpace(c.User) ? "?" : c.User;
+                return $"{user} @ {c.ClientAddress}";
+            }).Distinct(StringComparer.OrdinalIgnoreCase));
+    }
+
     public (int Hpc, int Classic) UnmatchedSeats(IEnumerable<string?> knownIps)
+    {
+        var set = FloodIpSet(knownIps);
+
+        var hpc = Hpc.SeatsByClientIp
+            .Where(kv => !set.Contains(kv.Key))
+            .Sum(kv => kv.Value);
+        var classic = Classic.SeatsByClientIp
+            .Where(kv => !set.Contains(kv.Key))
+            .Sum(kv => kv.Value);
+        // Checkouts with no client IP cannot be attributed to a Flood machine.
+        hpc += Hpc.Checkouts.Count(c => string.IsNullOrWhiteSpace(c.ClientAddress));
+        classic += Classic.Checkouts.Count(c => string.IsNullOrWhiteSpace(c.ClientAddress));
+        return (hpc, classic);
+    }
+
+    /// <summary>
+    /// Outside-Flood seat count without double-counting HPC+Classic on the same client IP.
+    /// Per unmatched IP (and for orphan checkouts with no IP): max(HPC, Classic), then sum.
+    /// </summary>
+    public int UnmatchedEffectiveSeats(IEnumerable<string?> knownIps)
+    {
+        var set = FloodIpSet(knownIps);
+        var ips = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in Hpc.SeatsByClientIp)
+        {
+            if (!set.Contains(kv.Key)) ips.Add(kv.Key);
+        }
+
+        foreach (var kv in Classic.SeatsByClientIp)
+        {
+            if (!set.Contains(kv.Key)) ips.Add(kv.Key);
+        }
+
+        var n = 0;
+        foreach (var ip in ips)
+        {
+            Hpc.SeatsByClientIp.TryGetValue(ip, out var h);
+            Classic.SeatsByClientIp.TryGetValue(ip, out var c);
+            n += Math.Max(h, c);
+        }
+
+        var orphanH = Hpc.Checkouts.Count(c => string.IsNullOrWhiteSpace(c.ClientAddress));
+        var orphanC = Classic.Checkouts.Count(c => string.IsNullOrWhiteSpace(c.ClientAddress));
+        return n + Math.Max(orphanH, orphanC);
+    }
+
+    /// <summary>
+    /// Tooltip for seats checked out outside Flood enrollment.
+    /// Uses CodeMeter User + Client address; enriches with Heimdall hostname/office when LastIp matches.
+    /// Lines include seat counts (e.g. "HPC ×3: user @ host").
+    /// </summary>
+    public string? UnmatchedSeatDetail(
+        IEnumerable<string?> floodIps,
+        IReadOnlyDictionary<string, CodeMeterIpHint> ipHints,
+        int maxLines = 24)
+    {
+        var set = FloodIpSet(floodIps);
+        var lines = new List<string>();
+
+        void AddProduct(string product, CodeMeterProductSnapshot snap)
+        {
+            var unmatched = snap.Checkouts
+                .Where(c =>
+                {
+                    var ip = CodeMeterQueryService.NormalizeIp(c.ClientAddress);
+                    return ip is null || !set.Contains(ip);
+                })
+                .GroupBy(
+                    c => FormatUnmatchedKey(product, c, ipHints),
+                    StringComparer.OrdinalIgnoreCase)
+                .Select(g =>
+                {
+                    var n = g.Count();
+                    return n <= 1 ? g.Key : $"{product} ×{n}: {StripProductPrefix(g.Key, product)}";
+                })
+                .OrderByDescending(s =>
+                {
+                    var m = System.Text.RegularExpressions.Regex.Match(s, @"×(\d+)");
+                    return m.Success && int.TryParse(m.Groups[1].Value, out var n) ? n : 1;
+                })
+                .ThenBy(s => s, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            lines.AddRange(unmatched);
+        }
+
+        AddProduct("HPC", Hpc);
+        AddProduct("Classic", Classic);
+        if (lines.Count == 0) return null;
+
+        var (unHpc, unClassic) = UnmatchedSeats(floodIps);
+        var effective = UnmatchedEffectiveSeats(floodIps);
+        lines.Insert(0,
+            $"Outside Flood — {effective} seats (max HPC/Classic per IP; not additive). CodeMeter products: HPC {unHpc}, Classic {unClassic}");
+
+        if (lines.Count <= maxLines + 1)
+            return string.Join("\n", lines);
+
+        var keep = lines.Take(maxLines + 1).ToList();
+        var extra = lines.Count - keep.Count;
+        return string.Join("\n", keep) + $"\n…and {extra} more";
+    }
+
+    private static string StripProductPrefix(string key, string product)
+    {
+        var prefix = product + ": ";
+        return key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? key[prefix.Length..]
+            : key;
+    }
+
+    private static string FormatUnmatchedKey(
+        string product,
+        CodeMeterCheckout c,
+        IReadOnlyDictionary<string, CodeMeterIpHint> ipHints) =>
+        $"{product}: {FormatUnmatchedWhoWhere(c, ipHints)}";
+
+    private static HashSet<string> FloodIpSet(IEnumerable<string?> knownIps)
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var ip in knownIps)
@@ -322,12 +521,46 @@ public sealed record CodeMeterLicenseSnapshot(
             var n = CodeMeterQueryService.NormalizeIp(ip);
             if (n is not null) set.Add(n);
         }
-
-        var hpc = Hpc.Checkouts.Count(c => c.ClientAddress is null || !set.Contains(c.ClientAddress));
-        var classic = Classic.Checkouts.Count(c => c.ClientAddress is null || !set.Contains(c.ClientAddress));
-        return (hpc, classic);
+        return set;
     }
+
+    private static string FormatUnmatchedWhoWhere(
+        CodeMeterCheckout c,
+        IReadOnlyDictionary<string, CodeMeterIpHint> ipHints)
+    {
+        var cmUser = string.IsNullOrWhiteSpace(c.User) ? "?" : c.User.Trim();
+        var bare = cmUser.Contains('\\') ? cmUser[(cmUser.LastIndexOf('\\') + 1)..] : cmUser;
+        var ip = CodeMeterQueryService.NormalizeIp(c.ClientAddress);
+
+        string hostPart;
+        if (ip is null)
+        {
+            hostPart = "(no client IP)";
+        }
+        else if (ipHints.TryGetValue(ip, out var hint))
+        {
+            var name = string.IsNullOrWhiteSpace(hint.FriendlyName) ? hint.Hostname : hint.FriendlyName!;
+            hostPart = string.IsNullOrWhiteSpace(hint.Office)
+                ? $"{name} ({ip})"
+                : $"{name} ({ip}, {hint.Office})";
+        }
+        else
+        {
+            hostPart = ip;
+        }
+
+        return $"{bare} @ {hostPart}";
+    }
+
+    private static string FormatUnmatchedLine(
+        string product,
+        CodeMeterCheckout c,
+        IReadOnlyDictionary<string, CodeMeterIpHint> ipHints) =>
+        $"{product}: {FormatUnmatchedWhoWhere(c, ipHints)}";
 
     private static bool IpsMatch(string? a, string b) =>
         a is not null && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 }
+
+/// <summary>Heimdall estate hint for a CodeMeter client IP (hostname enrichment).</summary>
+public sealed record CodeMeterIpHint(string Hostname, string? FriendlyName, string? Office);

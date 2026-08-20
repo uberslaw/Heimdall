@@ -5,13 +5,15 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Heimdall.Api.Pages;
 
-public class TuflowQueueModel(TuflowQueueService queues, FloodAccessGuard flood) : PageModel
+public class TuflowQueueModel(TuflowQueueService queues, TuflowRunService runs, FloodAccessGuard flood) : PageModel
 {
-    public TuflowQueuePage Data { get; private set; } = new([], null, null, null, 1, null, null, null, "Queue", [], [], [], []);
+    public TuflowQueuePage Data { get; private set; } = new(
+        [], null, null, null, 1, null, null, null, "Queue", [], [], [], [],
+        TuflowScratchSettingsService.DefaultArchiveShareTemplate, true);
 
     public async Task<IActionResult> OnGetAsync(int? machineId, CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
 
         if (!OpsPartial.IsPartial(Request))
@@ -43,9 +45,12 @@ public class TuflowQueueModel(TuflowQueueService queues, FloodAccessGuard flood)
         string? e2,
         string? e3,
         string? e4,
+        string? useLocalScratch,
+        string? archiveShare,
+        string? autoCleanAfterVerify,
         CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
 
         var fleet = !string.Equals(target, "machine", StringComparison.OrdinalIgnoreCase);
@@ -57,6 +62,9 @@ public class TuflowQueueModel(TuflowQueueService queues, FloodAccessGuard flood)
             .Select(TuflowQueueService.ParseTokenList)
             .Cast<IReadOnlyList<string>>()
             .ToList();
+
+        var scratch = IsTruthy(useLocalScratch);
+        var autoClean = IsTruthy(autoCleanAfterVerify);
 
         var (ok, error, added) = await queues.AddMatrixAsync(
             machineId,
@@ -71,6 +79,9 @@ public class TuflowQueueModel(TuflowQueueService queues, FloodAccessGuard flood)
             resultsFolder,
             scenarioGroups,
             eventGroups,
+            scratch,
+            archiveShare,
+            autoClean,
             ct);
 
         TempData[ok ? "Message" : "Error"] = ok
@@ -79,9 +90,15 @@ public class TuflowQueueModel(TuflowQueueService queues, FloodAccessGuard flood)
         return Back(fleet ? null : machineId);
     }
 
+    static bool IsTruthy(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && (string.Equals(value, "on", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+            || value == "1");
+
     public async Task<IActionResult> OnPostCancelAsync(int itemId, int? machineId, CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
         var (ok, error) = await queues.CancelItemAsync(itemId, ct);
         TempData[ok ? "Message" : "Error"] = ok ? "Cancelled." : error;
@@ -90,7 +107,7 @@ public class TuflowQueueModel(TuflowQueueService queues, FloodAccessGuard flood)
 
     public async Task<IActionResult> OnPostMoveAsync(int itemId, int delta, int? machineId, CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
         var (ok, error) = await queues.MoveAsync(itemId, delta, ct);
         if (!ok)
@@ -100,7 +117,7 @@ public class TuflowQueueModel(TuflowQueueService queues, FloodAccessGuard flood)
 
     public async Task<IActionResult> OnPostAssignAsync(int itemId, int? assignMachineId, int? machineId, CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
         var (ok, error) = await queues.AssignItemAsync(itemId, assignMachineId, ct);
         TempData[ok ? "Message" : "Error"] = ok
@@ -111,10 +128,36 @@ public class TuflowQueueModel(TuflowQueueService queues, FloodAccessGuard flood)
 
     public async Task<IActionResult> OnPostRerunAsync(int itemId, int? machineId, CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
         var (ok, error) = await queues.RerunItemAsync(itemId, ct);
         TempData[ok ? "Message" : "Error"] = ok ? "Re-queued a copy at the end of the queue." : error;
+        return Back(machineId);
+    }
+
+    public async Task<IActionResult> OnPostStopGracefulAsync(string hostname, int? machineId, CancellationToken ct)
+    {
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
+            return denied;
+        if (string.IsNullOrWhiteSpace(hostname))
+            return Back(machineId);
+        var (ok, error) = await runs.QueueStopGracefulAsync(hostname.Trim(), ct);
+        TempData[ok ? "Message" : "Error"] = ok
+            ? $"Graceful stop queued for {hostname}."
+            : error;
+        return Back(machineId);
+    }
+
+    public async Task<IActionResult> OnPostAbandonAsync(string hostname, int? machineId, CancellationToken ct)
+    {
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
+            return denied;
+        if (string.IsNullOrWhiteSpace(hostname))
+            return Back(machineId);
+        var (ok, error) = await runs.AbandonActiveRunAsync(hostname.Trim(), ct);
+        TempData[ok ? "Message" : "Error"] = ok
+            ? $"Cleared stuck run on {hostname}. Host can take new queue work."
+            : error;
         return Back(machineId);
     }
 }

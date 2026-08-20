@@ -51,6 +51,7 @@
                         <th colspan="4" class="text-secondary small">TUFLOW process (avg)</th>
                         <th colspan="6" class="text-secondary small">Whole machine (avg)</th>
                         <th rowspan="2" data-sort="num" data-sort-col="17">Samples</th>
+                        <th rowspan="2">Actions</th>
                     </tr>
                     <tr>
                         <th class="text-secondary small" data-sort="num" data-sort-col="7">CPU</th>
@@ -70,7 +71,17 @@
                 {
                     <tr>
                         <td>@row.RunName</td>
-                        <td>@(row.FriendlyName ?? row.Hostname)</td>
+                        <td>
+                            @if (!string.IsNullOrWhiteSpace(row.FriendlyName))
+                            {
+                                <div>@row.FriendlyName</div>
+                                <div class="text-secondary small"><code>@row.Hostname</code></div>
+                            }
+                            else
+                            {
+                                <code>@row.Hostname</code>
+                            }
+                        </td>
                         <td class="text-secondary small">@UsernameDisplay.FormatOrDash(row.RequestedBy)</td>
                         <td><span class="badge-pill @FleetSimProgressModel.RunStateBadgeClass(row.State)">@row.State</span></td>
                         <td data-sort-value="@(row.PercentComplete ?? -1)">@(row.PercentComplete is double pct ? $"{pct:0.#}%" : "—")</td>
@@ -87,6 +98,25 @@
                         <td class="text-secondary small" data-sort-value="@(row.MachineNetworkInMBpsAvg ?? -1)">@FleetSimProgressModel.FormatRate(row.MachineNetworkInMBpsAvg)</td>
                         <td class="text-secondary small" data-sort-value="@(row.MachineNetworkOutMBpsAvg ?? -1)">@FleetSimProgressModel.FormatRate(row.MachineNetworkOutMBpsAvg)</td>
                         <td class="text-secondary small" data-sort-value="@row.SampleCount">@row.SampleCount</td>
+                        <td class="text-nowrap">
+                            @if (FleetSimProgressModel.CanStop(row.State))
+                            {
+                                <form method="post" asp-page="/FleetSimProgress" asp-page-handler="StopGraceful" class="d-inline">
+                                    <input type="hidden" name="hostname" value="@row.Hostname" />
+                                    <button type="submit" class="btn btn-ghost btn-sm"
+                                            onclick="return confirm('Send a graceful stop to TUFLOW on @(row.FriendlyName ?? row.Hostname)?');">
+                                        Stop
+                                    </button>
+                                </form>
+                            }
+                            <form method="post" asp-page="/FleetSimProgress" asp-page-handler="Abandon" class="d-inline">
+                                <input type="hidden" name="hostname" value="@row.Hostname" />
+                                <button type="submit" class="btn btn-ghost btn-sm"
+                                        onclick="return confirm('Force-clear the stuck run on @(row.FriendlyName ?? row.Hostname)? Use when Starting never advances and TUFLOW is not actually running.');">
+                                    Force clear
+                                </button>
+                            </form>
+                        </td>
                     </tr>
                 }
                 </tbody>

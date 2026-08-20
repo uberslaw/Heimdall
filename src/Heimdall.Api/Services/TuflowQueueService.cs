@@ -11,16 +11,36 @@ namespace Heimdall.Api.Services;
 /// priority, cancel/rerun, import/export. Dispatch into PendingTuflowStartJson happens in
 /// <see cref="TuflowRunService.GetPendingAsync"/>.
 /// </summary>
-public class TuflowQueueService(HeimdallDbContext db, FleetDashboardService fleetDashboard)
+public class TuflowQueueService(
+    HeimdallDbContext db,
+    FleetDashboardService fleetDashboard,
+    TuflowScratchSettingsService scratchSettings)
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public async Task<TuflowQueuePage> GetPageAsync(int? machineId, CancellationToken ct)
     {
         var live = await fleetDashboard.GetLiveFleetAsync(ct);
+        var machineIds = live.Select(l => l.MachineId).ToList();
+        var volumeRows = await db.Machines.AsNoTracking()
+            .Where(m => machineIds.Contains(m.Id))
+            .Select(m => new { m.Id, m.DiskVolumesJson, m.TuflowPreferLocalScratch })
+            .ToListAsync(ct);
+        var volumesById = volumeRows.ToDictionary(r => r.Id);
+
         var hosts = live
             .OrderBy(l => l.Hostname, StringComparer.OrdinalIgnoreCase)
-            .Select(l => new TuflowQueueHostOption(l.MachineId, l.Hostname, l.FriendlyName, l.TuflowRunning, l.Status.ToString()))
+            .Select(l =>
+            {
+                volumesById.TryGetValue(l.MachineId, out var vol);
+                return new TuflowQueueHostOption(
+                    l.MachineId,
+                    l.Hostname,
+                    l.FriendlyName,
+                    l.TuflowRunning,
+                    l.Status.ToString(),
+                    FormatDriveFreeHint(vol?.DiskVolumesJson));
+            })
             .ToList();
 
         var templates = await db.TuflowQueues.AsNoTracking()
@@ -47,6 +67,7 @@ public class TuflowQueueService(HeimdallDbContext db, FleetDashboardService flee
                     i.State,
                     i.AssignedMachineId,
                     i.AssignedMachine != null ? i.AssignedMachine.Hostname : null,
+                    i.AssignedMachine != null ? i.AssignedMachine.FriendlyName : null,
                     i.LaunchMode,
                     i.ExePath,
                     i.TcfPath,
@@ -61,7 +82,10 @@ public class TuflowQueueService(HeimdallDbContext db, FleetDashboardService flee
                     i.CreatedUtc,
                     i.StartedUtc,
                     i.EndedUtc,
-                    i.ErrorSummary))
+                    i.ErrorSummary,
+                    i.UseLocalScratch,
+                    i.ArchiveShare,
+                    i.AutoCleanAfterVerify))
                 .ToListAsync(ct);
         }
 
@@ -72,9 +96,10 @@ public class TuflowQueueService(HeimdallDbContext db, FleetDashboardService flee
             .Take(80)
             .Select(i => new TuflowQueueItemView(
                 i.Id, i.Priority, i.State, i.AssignedMachineId,
-                null, i.LaunchMode, i.ExePath, i.TcfPath, i.CmdPath, i.WorkingDirectory,
+                null, null, i.LaunchMode, i.ExePath, i.TcfPath, i.CmdPath, i.WorkingDirectory,
                 i.ScenariosJson, i.EventsJson, i.ResultsFolder, i.RunName, i.RequestedBy,
-                i.RunId, i.CreatedUtc, i.StartedUtc, i.EndedUtc, i.ErrorSummary))
+                i.RunId, i.CreatedUtc, i.StartedUtc, i.EndedUtc, i.ErrorSummary,
+                i.UseLocalScratch, i.ArchiveShare, i.AutoCleanAfterVerify))
             .ToListAsync(ct);
 
         var activeItems = await db.TuflowQueueItems.AsNoTracking()
@@ -84,10 +109,15 @@ public class TuflowQueueService(HeimdallDbContext db, FleetDashboardService flee
             .Select(i => new TuflowQueueItemView(
                 i.Id, i.Priority, i.State, i.AssignedMachineId,
                 i.AssignedMachine != null ? i.AssignedMachine.Hostname : null,
+                i.AssignedMachine != null ? i.AssignedMachine.FriendlyName : null,
                 i.LaunchMode, i.ExePath, i.TcfPath, i.CmdPath, i.WorkingDirectory,
                 i.ScenariosJson, i.EventsJson, i.ResultsFolder, i.RunName, i.RequestedBy,
-                i.RunId, i.CreatedUtc, i.StartedUtc, i.EndedUtc, i.ErrorSummary))
+                i.RunId, i.CreatedUtc, i.StartedUtc, i.EndedUtc, i.ErrorSummary,
+                i.UseLocalScratch, i.ArchiveShare, i.AutoCleanAfterVerify))
             .ToListAsync(ct);
+
+        var archiveTemplate = await scratchSettings.GetArchiveShareTemplateAsync(ct);
+        var preferScratch = machine?.TuflowPreferLocalScratch ?? true;
 
         return new TuflowQueuePage(
             hosts,
@@ -102,7 +132,27 @@ public class TuflowQueueService(HeimdallDbContext db, FleetDashboardService flee
             items,
             fleetQueued,
             activeItems,
-            templates);
+            templates,
+            archiveTemplate,
+            preferScratch);
+    }
+
+    private static string? FormatDriveFreeHint(string? diskVolumesJson)
+    {
+        if (string.IsNullOrWhiteSpace(diskVolumesJson))
+            return null;
+        try
+        {
+            var vols = JsonSerializer.Deserialize<List<DiskVolumeDto>>(diskVolumesJson, JsonOptions);
+            if (vols is null || vols.Count == 0) return null;
+            return string.Join(" · ", vols
+                .OrderBy(v => v.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(v => $"{v.Name} {v.FreeGb:0} GB free"));
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     public async Task<(bool Ok, string? Error)> SaveHostSettingsAsync(
@@ -134,6 +184,9 @@ public class TuflowQueueService(HeimdallDbContext db, FleetDashboardService flee
         string? resultsFolder,
         IReadOnlyList<IReadOnlyList<string>> scenarioGroups,
         IReadOnlyList<IReadOnlyList<string>> eventGroups,
+        bool useLocalScratch,
+        string? archiveShare,
+        bool autoCleanAfterVerify,
         CancellationToken ct)
     {
         if (!fleetUnassigned)
@@ -190,6 +243,9 @@ public class TuflowQueueService(HeimdallDbContext db, FleetDashboardService flee
                     ResultsFolder = string.IsNullOrWhiteSpace(resultsFolder) ? null : resultsFolder.Trim(),
                     RunName = itemName,
                     RequestedBy = requestedBy,
+                    UseLocalScratch = useLocalScratch,
+                    ArchiveShare = string.IsNullOrWhiteSpace(archiveShare) ? null : archiveShare.Trim(),
+                    AutoCleanAfterVerify = autoCleanAfterVerify,
                     CreatedUtc = now
                 });
                 added++;
@@ -284,6 +340,9 @@ public class TuflowQueueService(HeimdallDbContext db, FleetDashboardService flee
             ResultsFolder = item.ResultsFolder,
             RunName = item.RunName,
             RequestedBy = item.RequestedBy,
+            UseLocalScratch = item.UseLocalScratch,
+            ArchiveShare = item.ArchiveShare,
+            AutoCleanAfterVerify = item.AutoCleanAfterVerify,
             CreatedUtc = DateTimeOffset.UtcNow
         };
         db.TuflowQueueItems.Add(clone);
@@ -509,7 +568,15 @@ public class TuflowQueueService(HeimdallDbContext db, FleetDashboardService flee
         if (item is null)
             return;
 
-        if (TuflowRunService.IsActiveRunState(state) || state == TuflowQueueItemStates.Dispatching)
+        // Keep Starting as Dispatching so the queue doesn't look "Running" before TUFLOW actually starts.
+        if (state == TuflowRunStates.Starting || state == TuflowQueueItemStates.Dispatching)
+        {
+            item.State = TuflowQueueItemStates.Dispatching;
+            item.StartedUtc ??= DateTimeOffset.UtcNow;
+            return;
+        }
+
+        if (TuflowRunService.IsActiveRunState(state))
         {
             item.State = TuflowQueueItemStates.Running;
             item.StartedUtc ??= DateTimeOffset.UtcNow;
@@ -565,6 +632,18 @@ public class TuflowQueueService(HeimdallDbContext db, FleetDashboardService flee
             i => i.State == TuflowQueueItemStates.Running || i.State == TuflowQueueItemStates.Dispatching, ct);
         return (waiting, active);
     }
+
+    /// <summary>Queued items this host could claim (pinned to it, or unassigned fleet).</summary>
+    public Task<int> CountQueuedForHostAsync(int machineId, CancellationToken ct) =>
+        db.TuflowQueueItems.CountAsync(
+            i => i.State == TuflowQueueItemStates.Queued
+                 && (i.AssignedMachineId == null || i.AssignedMachineId == machineId),
+            ct);
+
+    public Task<int> CountDispatchingOrRunningAsync(CancellationToken ct) =>
+        db.TuflowQueueItems.CountAsync(
+            i => i.State == TuflowQueueItemStates.Running || i.State == TuflowQueueItemStates.Dispatching,
+            ct);
 
     public static List<string> DeserializeStringList(string? json)
     {
@@ -696,9 +775,17 @@ public sealed record TuflowQueuePage(
     IReadOnlyList<TuflowQueueItemView> Items,
     IReadOnlyList<TuflowQueueItemView> FleetUnassigned,
     IReadOnlyList<TuflowQueueItemView> FleetActive,
-    IReadOnlyList<TuflowQueueTemplateRow> Templates);
+    IReadOnlyList<TuflowQueueTemplateRow> Templates,
+    string ArchiveShareTemplate,
+    bool PreferLocalScratchDefault);
 
-public sealed record TuflowQueueHostOption(int MachineId, string Hostname, string? FriendlyName, bool TuflowRunning, string? Status);
+public sealed record TuflowQueueHostOption(
+    int MachineId,
+    string Hostname,
+    string? FriendlyName,
+    bool TuflowRunning,
+    string? Status,
+    string? DriveFreeHint);
 
 public sealed record TuflowQueueTemplateRow(int Id, string Name, int ItemCount, DateTimeOffset UpdatedUtc);
 
@@ -708,6 +795,7 @@ public sealed record TuflowQueueItemView(
     string State,
     int? AssignedMachineId,
     string? AssignedHostname,
+    string? AssignedFriendlyName,
     string LaunchMode,
     string ExePath,
     string TcfPath,
@@ -722,4 +810,7 @@ public sealed record TuflowQueueItemView(
     DateTimeOffset CreatedUtc,
     DateTimeOffset? StartedUtc,
     DateTimeOffset? EndedUtc,
-    string? ErrorSummary);
+    string? ErrorSummary,
+    bool UseLocalScratch,
+    string? ArchiveShare,
+    bool AutoCleanAfterVerify);

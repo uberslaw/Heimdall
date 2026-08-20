@@ -117,7 +117,12 @@ public sealed class FloodLiveBroadcastService(
             }
         }
 
-        var licenses = BuildLicenseDto(cmEnabled, licenseSnap, rows.Select(r => r.LastIp));
+        var licenses = BuildLicenseDto(
+            cmEnabled,
+            licenseSnap,
+            rows.Select(r => r.LastIp),
+            await LoadCodeMeterIpHintsAsync(db, ct),
+            codeMeterOptions.Value.PollSeconds);
         var version = Interlocked.Increment(ref _version);
         hub.Publish(new FloodLivePayload(version, now, enrolledCount, rowDtos, charts, licenses));
         logger.LogDebug(
@@ -125,23 +130,52 @@ public sealed class FloodLiveBroadcastService(
             version, rowDtos.Count, charts.Count);
     }
 
+    internal static async Task<IReadOnlyDictionary<string, CodeMeterIpHint>> LoadCodeMeterIpHintsAsync(
+        HeimdallDbContext db,
+        CancellationToken ct)
+    {
+        var rows = await db.Machines.AsNoTracking()
+            .Where(m => m.LastIp != null && m.LastIp != "")
+            .Select(m => new { m.LastIp, m.Hostname, m.FriendlyName, m.Office })
+            .ToListAsync(ct);
+        var map = new Dictionary<string, CodeMeterIpHint>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in rows)
+        {
+            var ip = CodeMeterQueryService.NormalizeIp(r.LastIp);
+            if (ip is null || map.ContainsKey(ip)) continue;
+            map[ip] = new CodeMeterIpHint(r.Hostname, r.FriendlyName, r.Office);
+        }
+        return map;
+    }
+
     internal static FloodLiveLicenseDto BuildLicenseDto(
         bool enabled,
         CodeMeterLicenseSnapshot snap,
-        IEnumerable<string?> knownIps)
+        IEnumerable<string?> knownFloodIps,
+        IReadOnlyDictionary<string, CodeMeterIpHint>? ipHints = null,
+        int pollIntervalSeconds = 60)
     {
+        ipHints ??= new Dictionary<string, CodeMeterIpHint>(StringComparer.OrdinalIgnoreCase);
+        var interval = Math.Clamp(pollIntervalSeconds, 15, 600);
         if (!enabled)
         {
             return new FloodLiveLicenseDto(
                 false, false, false,
                 null, snap.Hpc.TotalLicenses, null,
                 null, snap.Classic.TotalLicenses, null,
-                0, 0, 0, null, "CodeMeter poller disabled");
+                0, 0, 0, 0, null, "CodeMeter poller disabled", null, interval);
         }
 
+        var floodIps = knownFloodIps as IList<string?> ?? knownFloodIps.ToList();
         var (unHpc, unClassic) = snap.Available
-            ? snap.UnmatchedSeats(knownIps)
+            ? snap.UnmatchedSeats(floodIps)
             : (0, 0);
+        var unEffective = snap.Available
+            ? snap.UnmatchedEffectiveSeats(floodIps)
+            : 0;
+        var unmatchedDetail = snap.Available && unEffective > 0
+            ? snap.UnmatchedSeatDetail(floodIps, ipHints)
+            : null;
         var note = snap.ServerNotes.Count == 0
             ? null
             : string.Join(" · ", snap.ServerNotes.Take(6));
@@ -160,14 +194,20 @@ public sealed class FloodLiveBroadcastService(
             snap.Classic.PoolAvailable,
             unHpc,
             unClassic,
+            unEffective,
             snap.PollDurationMs,
             snap.Available ? snap.QueriedAtUtc : null,
-            note);
+            note,
+            unmatchedDetail,
+            interval);
     }
 
     private static FloodLiveRowDto MapRow(FleetDashboardService.LiveFleetRow r, CodeMeterLicenseSnapshot licenses)
     {
+        // CodeMeter seats stay LastIp-only + HA-safe (SeatsForIp / MergeHaCheckouts). Claims are agent estimates.
         var (hpc, classic) = licenses.Available ? licenses.SeatsForIp(r.LastIp) : (0, 0);
+        var hpcDetail = licenses.Available && hpc > 0 ? licenses.SeatDetailForIp(r.LastIp, hpc: true) : null;
+        var classicDetail = licenses.Available && classic > 0 ? licenses.SeatDetailForIp(r.LastIp, hpc: false) : null;
         return new(
             r.MachineId,
             r.Hostname,
@@ -195,7 +235,13 @@ public sealed class FloodLiveBroadcastService(
             r.DetectedRunEndedUtc,
             r.DetectedRunState,
             hpc,
-            classic);
+            classic,
+            hpcDetail,
+            classicDetail,
+            r.TuflowInstanceCount,
+            r.ClaimedHpcSeats,
+            r.ClaimedClassicSeats,
+            r.TuflowClaimDetail);
     }
 
     private static IReadOnlyList<FloodLiveMetricPointDto> BuildSeries(

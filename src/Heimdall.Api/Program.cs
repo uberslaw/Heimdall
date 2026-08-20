@@ -74,6 +74,7 @@ builder.Services.AddScoped<CodeMeterQueryService>();
 builder.Services.AddHostedService<CodeMeterPollHostedService>();
 builder.Services.AddSingleton<ApiBuildStamp>();
 builder.Services.AddScoped<TuflowRunService>();
+builder.Services.AddScoped<TuflowScratchSettingsService>();
 builder.Services.AddScoped<TuflowQueueService>();
 builder.Services.Configure<TuflowBehaviourOptions>(
     builder.Configuration.GetSection(TuflowBehaviourOptions.SectionName));
@@ -473,9 +474,12 @@ app.MapPost("/api/fleet/snapshot", async (FleetSnapshotDto dto, FleetDashboardSe
 app.MapGet("/api/flood/live/stream", async (
     HttpContext ctx,
     FloodAccessGuard flood,
+    StaffAccessGuard staff,
     FloodLiveHub hub,
     CancellationToken ct) =>
 {
+    if (!await staff.EnsureWindowsAuthAsync(ctx))
+        return Results.Empty;
     if (flood.ForbidIfLiveDenied(ctx) is not null)
         return Results.StatusCode(StatusCodes.Status403Forbidden);
 

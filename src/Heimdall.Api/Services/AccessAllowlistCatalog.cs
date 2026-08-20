@@ -15,19 +15,19 @@ public static class AccessAllowlistCatalog
         new(
             Admin,
             "Site admins",
-            "Admin-gated actions that already use StaffAccess:AdminEmails — Site usage, software tags, Remote Access Groups preview, and this Access lists page. Edit via appsettings (not the UI).",
+            "Not a global superuser. Gates Admin-only tools (Site usage, software tags, Remote Access Groups preview, this page). Also unlocks Full Flood automatically. Edit via appsettings only — this panel is read-only.",
             ConfigPath: "Heimdall:StaffAccess:AdminEmails",
             Editable: false),
         new(
             FloodFull,
             "Full Flood",
-            "Full Flood hub access: Live, Historical, Enrollment, Run Queue, Fleet Sims, Run behaviour, Flood machine detail, TUFLOW Runs, and the Machine TUFLOW panel. Site admins are always included automatically.",
+            "Full Flood hub for non-admin teammates: Live, Historical, Enrollment, Run Queue, Fleet Sims, Run behaviour, Flood machine detail, TUFLOW Runs, and the Machine TUFLOW panel. Site admins are included automatically (see panel above) — add only additional team emails here. Same admin editors as Flood Live.",
             ConfigPath: "Heimdall:FloodTeamEmails",
             Editable: true),
         new(
             FloodLive,
             "Flood Live only",
-            "Flood → Live tab and the shared Live SSE stream only. Does not unlock Historical, Enrollment, Run Queue, Sims, Run behaviour, or TUFLOW Runs. Full Flood emails already include Live.",
+            "Flood → Live tab and the shared Live SSE stream only. Does not unlock Historical, Enrollment, Run Queue, Sims, Run behaviour, or TUFLOW Runs. Full Flood (and site admins) already include Live.",
             ConfigPath: "Heimdall:FloodLiveEmails",
             Editable: true)
     ];

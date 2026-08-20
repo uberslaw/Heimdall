@@ -1,15 +1,5 @@
-// NEW FILE — drop in as-is at:
-//   Heimdall.Agent/Collectors/TuflowRunHelper.cs
-//
-// Mirrors TermServiceHelper's static-class, TryExecuteCommand(command, logger, out detail) shape (see
-// that file) so Worker.ProcessPendingCommands can try both helpers for an unrecognised command without
-// a bigger dispatch rewrite. Also owns starting new runs (TryStartIfRequested, called from the
-// config-refresh block, not from ProcessPendingCommands, since a start needs a payload that
-// PendingCommands' bare string list can't carry — see AgentConfigDto.PendingTuflowStart instead).
-//
-// State: this agent tracks at most one TUFLOW run at a time via a small pointer file
-// (%ProgramData%\Heimdall\tuflow-runs\current-run.json). The API Run Queue spreads load across
-// Flood hosts by dispatching the next combo only when this pointer is clear (one sim per host).
+// Mirrors TermServiceHelper's static-class shape. Also owns starting new runs and
+// post-run verified archive offload (local scratch → UNC).
 
 using System.Diagnostics;
 using System.Runtime.Versioning;
@@ -30,16 +20,10 @@ internal static class TuflowRunHelper
 
     private static string PointerFile => Path.Combine(StateDir, "current-run.json");
 
-    /// <summary>
-    /// Path to TuflowLauncher.exe on this machine. Override via HEIMDALL_TUFLOW_LAUNCHER_EXE.
-    /// Default matches the agent install layout under Program Files.
-    /// </summary>
     private static string LauncherExePath =>
         Environment.GetEnvironmentVariable("HEIMDALL_TUFLOW_LAUNCHER_EXE")
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Heimdall", "Agent", "TuflowLauncher", "TuflowLauncher.exe");
 
-    /// <summary>Called once per config-refresh cycle from Worker.ExecuteAsync. No-ops unless a start is
-    /// requested and no run is currently tracked (or the tracked run is the same RunId, already started).</summary>
     public static void TryStartIfRequested(TuflowStartRequestDto? request, ILogger logger)
     {
         if (request is null)
@@ -60,12 +44,10 @@ internal static class TuflowRunHelper
         if (current is not null)
         {
             if (string.Equals(current.RunId, request.RunId, StringComparison.OrdinalIgnoreCase))
-                return; // already started this exact run — config refresh just saw it again before the ack landed
+                return;
 
             logger.LogWarning(
-                "Ignoring TUFLOW start request {NewRunId}: already tracking {CurrentRunId} on this agent. " +
-                "The Api side should prevent double-queueing (TuflowRunService.QueueStartAsync checks " +
-                "IsActiveRunState first) — seeing this warning means that check was bypassed or stale.",
+                "Ignoring TUFLOW start request {NewRunId}: already tracking {CurrentRunId} on this agent.",
                 request.RunId, current.RunId);
             return;
         }
@@ -85,16 +67,43 @@ internal static class TuflowRunHelper
             var isCmdMode = string.Equals(request.LaunchMode, TuflowLaunchModes.Cmd, StringComparison.OrdinalIgnoreCase)
                 || !string.IsNullOrWhiteSpace(request.CmdPath);
 
+            string? scratchDrive = null;
+            double? scratchFreeGb = null;
             var workingDirectory = !string.IsNullOrWhiteSpace(request.WorkingDirectory)
                 ? request.WorkingDirectory
-                : isCmdMode
-                    ? Path.GetDirectoryName(request.CmdPath) ?? runDir
-                    : Path.GetDirectoryName(request.TcfPath) ?? runDir;
+                : null;
 
-            // Field names here are camelCase to match TuflowLauncher's LauncherJsonContext
-            // (JsonKnownNamingPolicy.CamelCase) — see TuflowLauncher/RunModels.cs. Using an anonymous
-            // object rather than a shared RunSpec type since RunSpec lives in the launcher project,
-            // which the agent doesn't reference (kept as a separate deployable exe, not a shared DLL).
+            if (string.IsNullOrWhiteSpace(workingDirectory) && request.UseLocalScratch)
+            {
+                var pick = TuflowScratchPicker.TryPick(
+                    request.RunId,
+                    request.ScratchMinFreeGb > 0 ? request.ScratchMinFreeGb : 50,
+                    request.AllowScratchOnC);
+                if (pick is not null)
+                {
+                    workingDirectory = pick.FolderPath;
+                    scratchDrive = pick.Drive;
+                    scratchFreeGb = pick.FreeGb;
+                    logger.LogWarning(
+                        "TUFLOW scratch for {RunId}: {Drive} ({Free:0.0} GB free) → {Folder}",
+                        request.RunId, pick.Drive, pick.FreeGb, pick.FolderPath);
+                }
+                else
+                {
+                    logger.LogWarning(
+                        "TUFLOW scratch requested for {RunId} but no suitable local drive found; falling back to tcf/cmd folder.",
+                        request.RunId);
+                }
+            }
+
+            workingDirectory ??= isCmdMode
+                ? Path.GetDirectoryName(request.CmdPath) ?? runDir
+                : Path.GetDirectoryName(request.TcfPath) ?? runDir;
+
+            var archivePath = string.IsNullOrWhiteSpace(request.ArchiveShare)
+                ? null
+                : CombineRunArchive(request.ArchiveShare!, request.RunName, request.RunId);
+
             var runSpecJson = JsonSerializer.Serialize(new
             {
                 runId = request.RunId,
@@ -107,7 +116,7 @@ internal static class TuflowRunHelper
                 scenarios = request.Scenarios,
                 events = request.Events,
                 runDir,
-                resultsFolder = request.ResultsFolder
+                resultsFolder = request.ResultsFolder ?? workingDirectory
             });
             var runSpecPath = Path.Combine(runDir, "run-spec.json");
             File.WriteAllText(runSpecPath, runSpecJson);
@@ -122,7 +131,30 @@ internal static class TuflowRunHelper
             };
             Process.Start(psi);
 
-            WritePointer(new RunPointer(request.RunId, runDir));
+            var offload = new TuflowResultsOffload.OffloadState
+            {
+                LocalResultsPath = workingDirectory,
+                ArchivePath = archivePath,
+                ScratchDrive = scratchDrive,
+                AutoCleanAfterVerify = request.AutoCleanAfterVerify,
+                TransferState = string.IsNullOrWhiteSpace(archivePath)
+                    ? TuflowTransferStates.Skipped
+                    : TuflowTransferStates.Pending,
+                TransferDetail = string.IsNullOrWhiteSpace(archivePath)
+                    ? "No archive share configured."
+                    : "Waiting for run to finish before offload."
+            };
+
+            WritePointer(new RunPointer(
+                request.RunId,
+                runDir,
+                scratchDrive,
+                scratchFreeGb,
+                workingDirectory,
+                archivePath,
+                request.AutoCleanAfterVerify,
+                TuflowResultsOffload.Serialize(offload)));
+
             logger.LogWarning(
                 "Started TUFLOW run {RunId} via launcher: {Target}",
                 request.RunId,
@@ -134,7 +166,6 @@ internal static class TuflowRunHelper
         }
     }
 
-    /// <summary>Same signature as TermServiceHelper.TryExecuteCommand so Worker can try both helpers uniformly.</summary>
     public static bool TryExecuteCommand(string command, ILogger logger, out string detail)
     {
         if (!string.Equals(command, RemoteMachineCommands.TuflowStopGraceful, StringComparison.OrdinalIgnoreCase))
@@ -152,9 +183,6 @@ internal static class TuflowRunHelper
 
         try
         {
-            // TuflowLauncher polls for this file and sends CTRL_BREAK_EVENT to the TUFLOW process group
-            // when it appears — see TuflowLauncher/Program.cs. This does not touch the launcher or
-            // TUFLOW process directly; the launcher owns the actual stop signal.
             File.WriteAllText(Path.Combine(current.RunDir, "stop.request"), DateTimeOffset.UtcNow.ToString("O"));
             detail = $"Stop signal written for run {current.RunId}";
             logger.LogWarning("Wrote graceful stop.request for TUFLOW run {RunId}", current.RunId);
@@ -168,11 +196,7 @@ internal static class TuflowRunHelper
         }
     }
 
-    /// <summary>
-    /// Reads TuflowLauncher's status.json (if any) and passes it straight through as the DTO included in
-    /// each heartbeat. Called from Worker.FlushAsync, same cadence as TermServiceHelper.GetStatus().
-    /// </summary>
-    public static TuflowRunStatusDto? ReadCurrentStatus()
+    public static TuflowRunStatusDto? ReadCurrentStatus(ILogger logger)
     {
         var current = ReadPointer();
         if (current is null)
@@ -181,47 +205,114 @@ internal static class TuflowRunHelper
         var statusPath = Path.Combine(current.RunDir, "status.json");
         if (!File.Exists(statusPath))
         {
-            // run-spec.json was written and the launcher was spawned, but it hasn't written its first
-            // status.json yet (process still starting up) — report a synthetic Starting status rather
-            // than nothing, so the Api side doesn't show a stale "no run" state in between.
-            return new TuflowRunStatusDto
+            return Enrich(new TuflowRunStatusDto
             {
                 RunId = current.RunId,
                 State = TuflowRunStates.Starting,
                 UpdatedUtc = DateTimeOffset.UtcNow
-            };
+            }, current, offload: null);
         }
 
         try
         {
             var raw = File.ReadAllText(statusPath);
-            // TuflowLauncher's RunStatus.State is already one of the TuflowRunStates.* strings (see
-            // RunStateWire.ToWireState in TuflowLauncher/RunModels.cs) — deserializing straight into
-            // TuflowRunStatusDto works because both types have the same shape; no re-mapping needed.
             var dto = JsonSerializer.Deserialize<TuflowRunStatusDto>(raw, JsonOptions);
             if (dto is null)
                 return null;
 
-            // Terminal states release the pointer so a future start isn't blocked by a finished run.
-            // The Api side keeps the last-reported status around (TuflowRunStatusJson isn't cleared),
-            // it's only this agent's "what am I actively tracking" pointer that resets.
-            if (dto.State is TuflowRunStates.Stopped or TuflowRunStates.Completed or TuflowRunStates.Failed)
-                ClearPointer();
+            var offload = TuflowResultsOffload.Deserialize(current.OffloadJson)
+                          ?? new TuflowResultsOffload.OffloadState
+                          {
+                              LocalResultsPath = current.LocalResultsPath,
+                              ArchivePath = current.ArchivePath,
+                              ScratchDrive = current.ScratchDrive,
+                              AutoCleanAfterVerify = current.AutoCleanAfterVerify,
+                              TransferState = string.IsNullOrWhiteSpace(current.ArchivePath)
+                                  ? TuflowTransferStates.Skipped
+                                  : TuflowTransferStates.Pending
+                          };
 
-            return dto;
+            if (dto.State is TuflowRunStates.Completed or TuflowRunStates.Stopped)
+            {
+                var done = TuflowResultsOffload.Tick(offload, logger);
+                current = current with { OffloadJson = TuflowResultsOffload.Serialize(offload) };
+                WritePointer(current);
+                if (done)
+                    ClearPointer();
+            }
+            else if (dto.State is TuflowRunStates.Failed)
+            {
+                offload.TransferState = TuflowTransferStates.Skipped;
+                offload.TransferDetail = "Run failed — archive offload skipped; local left in place.";
+                ClearPointer();
+            }
+
+            return Enrich(dto, current, offload);
         }
         catch (Exception)
         {
-            // status.json mid-write (launcher writes via temp-file-then-copy specifically to avoid this,
-            // but a transient read race is still cheaper to shrug off than to crash the agent's upload cycle).
-            return new TuflowRunStatusDto
+            return Enrich(new TuflowRunStatusDto
             {
                 RunId = current.RunId,
                 State = TuflowRunStates.Running,
                 Message = "status.json unreadable this cycle",
                 UpdatedUtc = DateTimeOffset.UtcNow
-            };
+            }, current, null);
         }
+    }
+
+    private static TuflowRunStatusDto Enrich(
+        TuflowRunStatusDto dto,
+        RunPointer current,
+        TuflowResultsOffload.OffloadState? offload)
+    {
+        return new TuflowRunStatusDto
+        {
+            RunId = dto.RunId,
+            RunName = dto.RunName,
+            State = dto.State,
+            ProcessId = dto.ProcessId,
+            TcfPath = dto.TcfPath,
+            CmdPath = dto.CmdPath,
+            StartedUtc = dto.StartedUtc,
+            StopRequestedUtc = dto.StopRequestedUtc,
+            LastCheckpointUtc = dto.LastCheckpointUtc,
+            LastCheckpointFile = dto.LastCheckpointFile,
+            ExitCode = dto.ExitCode,
+            Message = dto.Message,
+            UpdatedUtc = dto.UpdatedUtc,
+            PercentComplete = dto.PercentComplete,
+            SimulationTimeHours = dto.SimulationTimeHours,
+            SimulationEndTimeHours = dto.SimulationEndTimeHours,
+            ClockTimeRemainingHours = dto.ClockTimeRemainingHours,
+            WarningCount = dto.WarningCount,
+            MassErrorPercent = dto.MassErrorPercent,
+            ErrorSummary = dto.ErrorSummary,
+            ScratchDrive = offload?.ScratchDrive ?? current.ScratchDrive,
+            LocalResultsPath = offload?.LocalResultsPath ?? current.LocalResultsPath,
+            ArchivePath = offload?.ArchivePath ?? current.ArchivePath,
+            TransferState = offload?.TransferState,
+            TransferDetail = offload?.TransferDetail,
+            TransferLocalFileCount = offload?.LocalFileCount,
+            TransferDestFileCount = offload?.DestFileCount,
+            TransferLocalBytes = offload?.LocalBytes,
+            TransferDestBytes = offload?.DestBytes
+        };
+    }
+
+    private static string CombineRunArchive(string archiveRootOrTemplate, string? runName, string runId)
+    {
+        var root = archiveRootOrTemplate.Trim().TrimEnd('\\', '/');
+        var folder = TuflowScratchSettingsSanitize(runName, runId);
+        return $"{root}\\{folder}";
+    }
+
+    private static string TuflowScratchSettingsSanitize(string? runName, string runId)
+    {
+        var s = string.IsNullOrWhiteSpace(runName) ? runId : runName.Trim();
+        foreach (var c in Path.GetInvalidFileNameChars())
+            s = s.Replace(c, '_');
+        return s.Length == 0 ? runId : s;
     }
 
     private static RunPointer? ReadPointer()
@@ -253,10 +344,16 @@ internal static class TuflowRunHelper
         }
         catch
         {
-            // best effort — a stale pointer just means the next start attempt gets a warning and no-op
-            // (see TryStartIfRequested) until this is cleaned up manually or the file becomes deletable.
         }
     }
 
-    private sealed record RunPointer(string RunId, string RunDir);
+    private sealed record RunPointer(
+        string RunId,
+        string RunDir,
+        string? ScratchDrive = null,
+        double? ScratchFreeGb = null,
+        string? LocalResultsPath = null,
+        string? ArchivePath = null,
+        bool AutoCleanAfterVerify = false,
+        string? OffloadJson = null);
 }

@@ -237,9 +237,14 @@
         <li>Open <a asp-page="/Flood" asp-route-tab="queue">Flood → Run Queue</a>. Choose <strong>Fleet</strong> (any idle host) or pin to one machine.</li>
         <li>Enter a local or UNC TUFLOW <code>.exe</code> and a UNC <code>.tcf</code> (mapped <code>P:\</code> is rejected — the agent service cannot see it when logged off).</li>
         <li>Fill <code>-s1…-s4</code> and <code>-e1…-e4</code> groups (space/comma separated within a group). Heimdall builds the cartesian product (same as many batch files). Cap 500 sims per add.</li>
-        <li>Each Flood host runs <strong>one Heimdall-launched sim at a time</strong>. When it finishes, the ~20s TUFLOW poll claims the next waiting item (pinned first, then unassigned fleet).</li>
-        <li>Watch progress on <a asp-page="/Flood" asp-route-tab="sims">Fleet Sims</a>. Graceful stop remains on <a asp-page="/TuflowRuns">TUFLOW Runs</a>.</li>
+        <li>Each Flood host runs <strong>one Heimdall-launched sim at a time</strong>. When free, its agent’s ~20s TUFLOW poll asks the API for work (pinned queue first, then unassigned fleet). The API does not push jobs to idle-looking Live rows — the <em>agent</em> must be online to this API.</li>
+        <li><strong>Idle for dispatch</strong> means: Flood-enrolled, no pending start, no Heimdall run in Starting/Running/StopRequested, and latest fleet sample <code>TuflowRunning=false</code>. CodeMeter seats and low GPU/CPU alone do not qualify a host. Skip reasons are logged on the API when Queued work exists (<code>Queue dispatch skip …</code>).</li>
+        <li>Items already <strong>Dispatching/Running</strong> are claimed — they will not appear under Waiting and other hosts cannot steal them until they finish or you cancel/re-queue.</li>
+        <li>Watch progress on <a asp-page="/Flood" asp-route-tab="sims">Fleet Sims</a>. From Fleet Sims or Run Queue’s active list you can <strong>Stop</strong> (graceful) or <strong>Force clear</strong> a stuck Starting slot; TUFLOW Runs still has the same stop control.</li>
         <li>Do not paste a batch that uses <code>start …</code> and mapped drives. Prefer exe+.tcf matrix here so Heimdall can track and stop the process.</li>
+        <li><strong>Local scratch</strong> (default on): leave Working directory blank and keep “Use local scratch”. The agent picks D/E/F by free space (<code>D:\Heimdall\tuflow-scratch\{runId}</code>), never C unless no other drive qualifies and host policy allows. Inputs stay on the UNC <code>.tcf</code>.</li>
+        <li><strong>Archive share</strong> defaults to <code>\\global\australasia\bne\analysis\{hostname}</code> (editable per add). After Completed/Stopped, the agent robocopies local results there and verifies <em>file count + total bytes</em> before any cleanup.</li>
+        <li><strong>Auto-clean after verify</strong> is off by default. Failed verify never deletes local results.</li>
     </ol>
 </section>
 
@@ -248,8 +253,10 @@
     <p class="text-secondary small mb-2"><strong>Purpose:</strong> live progress table for TUFLOW runs currently active on Flood-enrolled machines — complements <a href="#tuflow-runs">TUFLOW Runs</a> and <a href="#tuflow-queue">Run Queue</a>.</p>
     <ol class="small mb-0">
         <li>Open <a asp-page="/Flood" asp-route-tab="sims">Flood → Fleet Sims</a>. Empty when no run is active.</li>
+        <li>Machine shows friendly name (e.g. Matilda) with the Windows hostname underneath.</li>
         <li>Columns include run name, machine, started-by, state, progress %, elapsed, estimated remaining, and resource averages since run start.</li>
         <li><strong>TUFLOW process averages</strong> (CPU/GPU/disk R/W) come from 30s fleet snapshots scoped to the TUFLOW process. <strong>Whole-machine</strong> averages include network (no per-process network counter).</li>
+        <li><strong>Stop</strong> queues a graceful checkpoint exit. <strong>Force clear</strong> immediately frees the host slot when a run is stuck in Starting with no real TUFLOW process (does not delete local files).</li>
         <li>Queue waiting/dispatching counts link to <a href="#tuflow-queue">Run Queue</a>. Start one-offs from <a asp-page="/TuflowRuns">TUFLOW Runs</a>.</li>
     </ol>
 </section>
@@ -261,17 +268,25 @@
         Open <a asp-page="/Flood">Flood</a>.
         <strong>Full Flood</strong> = site admins (<code>Heimdall:StaffAccess:AdminEmails</code>) ∪ Full Flood list
         (appsettings <code>FloodTeamEmails</code>, or Admin → <a asp-page="/AccessLists">Access lists</a> DB override).
+        Site admin is <em>not</em> a global superuser for the whole site — it unlocks Admin tools and Full Flood; most Ops pages are open; Staff live metrics still need group membership (or admin preview).
         <strong>Live-only</strong> = also the Flood Live list (<code>FloodLiveEmails</code> / Access lists).
-        Manage team emails under <a asp-page="/AccessLists">Admin → Access lists</a> (applies immediately; no restart).
+        Manage team emails under <a asp-page="/AccessLists">Admin → Access lists</a> (Full Flood and Flood Live use the same admin editors; applies immediately; no restart).
         Legacy <code>/HistoricalDashboard</code>, <code>/FleetSimProgress</code>, and <code>/TuflowBehaviour</code> URLs redirect into this hub.
         Estate-wide live util (all clients) lives under <a asp-page="/Fleet" asp-route-tab="live">Fleet → Live</a>.
     </p>
     <ol class="small">
         <li><strong>Enrollment</strong> — Flood allowlist for TUFLOW Runs / sims / Flood-scoped analytics. Search by hostname or last-known IP. <em>Util sampling does not require enrollment</em> — every heartbeating client gets 30s fleet snapshots. Full Flood only.</li>
         <li><strong>Live</strong> — latest snapshot on enrolled Flood machines: gauges, TUFLOW status (Active / Idle / Not Running), today’s runtime/active/GPU hours,
-            plus optional <strong>CodeMeter HPC/Classic</strong> seats (when <code>Heimdall:CodeMeter:Enabled</code> is on the API host with CodeMeter Runtime).
-            Updates via a <strong>shared server stream</strong> (SSE ≈ every 30s): many browsers share one rebuild — they do not each re-query Live.
-            Active machines also get a live multi-metric chart (GPU/CPU/RAM% and Disk W / Net Tx; process metrics when present). Open Live to the team via Access lists (Flood Live only).</li>
+            plus optional <strong>CodeMeter seats</strong> (when <code>Heimdall:CodeMeter:Enabled</code> is on the API host with CodeMeter Runtime).
+            The strip still shows separate HPC (926) and Classic (920) pool Used=/Total from CodeMeter.
+            Per-machine <strong>Seats</strong> and <strong>In use by other offices</strong> use <code>max(HPC, Classic)</code> per client IP — TUFLOW GPU/HPC typically holds both products, so summing would double-count.
+            Tooltips show the HPC/Classic product breakdown. Matching is by machine <code>LastIp</code> only (HA servers de-duplicated — max per IP, never summed).
+            Cells show <code>CodeMeter/claim</code> when the agent reports process <code>-nt</code>/GPU estimates; CodeMeter remains source of truth.
+            Updates via a <strong>shared live stream</strong> (one server rebuild ≈ every 30s for all viewers — browsers share one rebuild; they do not each re-query Live).
+            <strong>Active</strong> machines show a multi-metric chart in the row under that machine’s name and stats (GPU / CPU / RAM% on the left axis; Disk W / Net Tx MB/s on the right).
+            Use the chart checkboxes to hide series; RAM% needs known hardware RAM on the machine.
+            Use <strong>Show GPU / Hide GPU</strong> on the machine row to expand or collapse that chart (charts start collapsed; Show GPU pulses while a run is Active).
+            Open Live to the team via Access lists (Flood Live only).</li>
         <li><strong>Active vs Idle</strong> — while TUFLOW is running: Active if <em>TUFLOW process</em> GPU &gt; 5%, CPU &gt; 10%, or disk read/write &gt; 5 MB/s; otherwise Idle. Not Running when TUFLOW is not detected.</li>
         <li><strong>Historical</strong> — fleet summary cards for enrolled machines, Totals (today / week / month / 30d / 3m / 6m / year) or Averages (daily / 7-day / monthly / all-time), plus rankings (GPU, CPU, RAM, disk I/O, most active). Full Flood only.</li>
         <li><strong>Run Queue</strong> — see <a href="#tuflow-queue">Run Queue</a>. Full Flood only.</li>
@@ -466,6 +481,7 @@
         <li>Deploy queues a silent agent self-update (download + service restart only). Updates defer while any interactive session is Active — no logoff or reboot. Agents below version <code>3</code> do not support <code>UpdateClient</code> — Deploy marks them Failed with bootstrap guidance.</li>
         <li><strong>Restart agent</strong> — queues <code>RestartAgent</code> (detached <code>sc stop/start HeimdallAgent</code>). <strong>Cleanup staging</strong> — deletes deposit folders only: <code>%ProgramData%\Heimdall\update\</code> (portal Deploy extract under <code>extracted-v{version}-{yyyyMMdd-HHmmss}</code>, plus legacy <code>extracted</code> / <code>extracted-{guid}</code>) and under <code>C:\Temp\</code> any folder named exactly <code>Heimdall-Client</code> or <code>Heimdall-Client-*</code>. Does not touch other Temp content, Program Files Agent, queue, secrets, or logs. Both are blocked while Deploy/UpdateClient is pending; use Cleanup then re-Deploy on hosts stuck with a locked extract folder.</li>
         <li><strong>Deposit pack to Temp</strong> — queues <code>DepositClientPack</code>: the agent downloads the Ready pack from the API into <code>C:\Temp\Heimdall-Client-v{version}-{yyyyMMdd-HHmmss}</code> for manual <code>Install.lnk</code> (does not replace the running agent). Version comes from the Ready pack (<code>PendingClientDeposit</code> / <code>VERSION.json</code>). Pack must be Ready; skipped if Deploy/UpdateClient or Deposit already pending. Launch Control → <strong>Deposit pack via API</strong> uses the same queue (not SMB/robocopy).</li>
+        <li><strong>Set API URL</strong> — queues <code>SetApiBaseUrl</code> with a new <code>Heimdall:ApiBaseUrl</code>. Agents that can still reach this API rewrite Program Files <code>appsettings.json</code> and restart. Only works while online to the current URL; for offline hosts open the deposited pack and run <code>Set-ApiUrl.lnk</code> / <code>Set-HeimdallAgentApiBaseUrl.cmd</code> (API IP is set at the top of the <code>.cmd</code>). Agents do not auto-install from <code>C:\Temp</code>.</li>
         <li><strong>Bootstrap once:</strong> first upgrade from pre-3 / legacy clients needs Heimdall Setup push or <code>Install.lnk</code> from the pack. After that, silent Deploy works for subsequent versions.</li>
         <li>Old <code>/Clients</code> URLs redirect here. Full agent architecture: see <a href="#client-agent">Client / agent</a> or repo doc <code>docs/CLIENT.md</code>.</li>
     </ol>

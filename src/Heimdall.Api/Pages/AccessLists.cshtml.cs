@@ -11,19 +11,14 @@ namespace Heimdall.Api.Pages;
 public class AccessListsModel(
     AccessAllowlistService allowlists,
     StaffAccessGuard guard,
-    WindowsStaffIdentityService identity) : PageModel
+    WindowsStaffIdentityService identity,
+    ILogger<AccessListsModel> logger) : PageModel
 {
     public bool Allowed { get; private set; }
     public string? WindowsPrincipal { get; private set; }
     public IReadOnlyList<string> CandidateEmails { get; private set; } = [];
     public IReadOnlyList<string> ConfiguredAdminEmails { get; private set; } = [];
     public IReadOnlyList<AccessListPanelVm> Panels { get; private set; } = [];
-
-    [BindProperty]
-    public string ListId { get; set; } = "";
-
-    [BindProperty]
-    public string? EmailsInput { get; set; }
 
     public async Task<IActionResult> OnGetAsync()
     {
@@ -38,7 +33,15 @@ public class AccessListsModel(
         return Page();
     }
 
-    public async Task<IActionResult> OnPostSaveAsync(CancellationToken ct)
+    /// <summary>Save Full Flood team list (same admin bar as Flood Live).</summary>
+    public Task<IActionResult> OnPostSaveFloodFullAsync(string? emailsInput, CancellationToken ct) =>
+        SaveEditableListAsync(AccessAllowlistCatalog.FloodFull, emailsInput, ct);
+
+    /// <summary>Save Flood Live-only list.</summary>
+    public Task<IActionResult> OnPostSaveFloodLiveAsync(string? emailsInput, CancellationToken ct) =>
+        SaveEditableListAsync(AccessAllowlistCatalog.FloodLive, emailsInput, ct);
+
+    private async Task<IActionResult> SaveEditableListAsync(string listId, string? emailsInput, CancellationToken ct)
     {
         if (!await guard.EnsureWindowsAuthAsync(HttpContext))
             return new EmptyResult();
@@ -46,7 +49,7 @@ public class AccessListsModel(
         if (!EnsureAdmin())
             return Page();
 
-        var def = AccessAllowlistCatalog.TryGet(ListId);
+        var def = AccessAllowlistCatalog.TryGet(listId);
         if (def is null || !def.Editable)
         {
             TempData["Error"] = "That access list cannot be edited here.";
@@ -54,10 +57,21 @@ public class AccessListsModel(
             return Page();
         }
 
-        var emails = AccessAllowlistService.ParseEmailLines(EmailsInput);
-        await allowlists.SaveEmailsAsync(def.Id, emails, ct);
-        TempData["Message"] = $"{def.Title} list saved ({emails.Count} email{(emails.Count == 1 ? "" : "s")}). Takes effect immediately.";
-        return RedirectToPage();
+        try
+        {
+            var emails = AccessAllowlistService.ParseEmailLines(emailsInput);
+            await allowlists.SaveEmailsAsync(def.Id, emails, ct);
+            TempData["Message"] =
+                $"{def.Title} list saved ({emails.Count} email{(emails.Count == 1 ? "" : "s")}). Takes effect immediately.";
+            return RedirectToPage();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to save access list {ListId}", def.Id);
+            TempData["Error"] = $"Could not save {def.Title}: {ex.Message}";
+            LoadPanels();
+            return Page();
+        }
     }
 
     private bool EnsureAdmin()
@@ -92,6 +106,12 @@ public class AccessListsModel(
             .Select(d =>
             {
                 var emails = allowlists.GetEmails(d.Id);
+                var saveHandler = d.Id switch
+                {
+                    AccessAllowlistCatalog.FloodFull => "SaveFloodFull",
+                    AccessAllowlistCatalog.FloodLive => "SaveFloodLive",
+                    _ => null
+                };
                 return new AccessListPanelVm(
                     d.Id,
                     d.Title,
@@ -100,7 +120,8 @@ public class AccessListsModel(
                     d.ConfigPath,
                     string.Join(Environment.NewLine, emails),
                     emails.Count,
-                    allowlists.HasDbOverride(d.Id));
+                    allowlists.HasDbOverride(d.Id),
+                    saveHandler);
             })
             .ToList();
     }
@@ -113,5 +134,6 @@ public class AccessListsModel(
         string ConfigPath,
         string EmailsText,
         int EmailCount,
-        bool FromDatabase);
+        bool FromDatabase,
+        string? SaveHandler);
 }

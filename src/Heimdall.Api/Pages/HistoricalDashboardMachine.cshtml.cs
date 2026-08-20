@@ -26,7 +26,7 @@ public class HistoricalDashboardMachineModel(FleetDashboardService fleet, Heimda
 
     public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
 
         var machine = await db.Machines.AsNoTracking().FirstOrDefaultAsync(m => m.Id == Id, ct);

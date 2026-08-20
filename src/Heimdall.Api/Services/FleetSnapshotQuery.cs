@@ -51,7 +51,8 @@ public static class FleetSnapshotQuery
                        ProcessCpuPercent, ProcessGpuPercent, ProcessDiskReadMBps, ProcessDiskWriteMBps,
                        IsActive,
                        TopCpuProcessesJson, TopGpuProcessesJson,
-                       TopDiskReadProcessesJson, TopDiskWriteProcessesJson
+                       TopDiskReadProcessesJson, TopDiskWriteProcessesJson,
+                       TuflowInstanceCount, ClaimedHpcSeats, ClaimedClassicSeats, TuflowClaimDetail
                 FROM FleetMetricSnapshots
                 WHERE MachineId IN (
                 """);
@@ -109,11 +110,21 @@ public static class FleetSnapshotQuery
 
     private static FleetMetricSnapshot ReadSnapshot(System.Data.Common.DbDataReader reader)
     {
-        // Older DBs may lack top-process columns until schema patch; ordinals 18–21 optional.
+        // Older DBs may lack top-process / claim columns until schema patch; ordinals optional.
         string ReadJson(int ordinal) =>
             reader.FieldCount > ordinal && !reader.IsDBNull(ordinal)
                 ? reader.GetString(ordinal)
                 : "[]";
+
+        int? ReadInt(int ordinal) =>
+            reader.FieldCount > ordinal && !reader.IsDBNull(ordinal)
+                ? Convert.ToInt32(reader.GetValue(ordinal))
+                : null;
+
+        string? ReadString(int ordinal) =>
+            reader.FieldCount > ordinal && !reader.IsDBNull(ordinal)
+                ? reader.GetString(ordinal)
+                : null;
 
         return new FleetMetricSnapshot
         {
@@ -138,7 +149,11 @@ public static class FleetSnapshotQuery
             TopCpuProcessesJson = ReadJson(18),
             TopGpuProcessesJson = ReadJson(19),
             TopDiskReadProcessesJson = ReadJson(20),
-            TopDiskWriteProcessesJson = ReadJson(21)
+            TopDiskWriteProcessesJson = ReadJson(21),
+            TuflowInstanceCount = ReadInt(22),
+            ClaimedHpcSeats = ReadInt(23),
+            ClaimedClassicSeats = ReadInt(24),
+            TuflowClaimDetail = ReadString(25)
         };
     }
 

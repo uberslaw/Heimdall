@@ -9,7 +9,8 @@ public class HistoricalDashboardModel(
     FleetDashboardService fleet,
     FloodAccessGuard flood,
     CodeMeterLicenseHub codeMeterHub,
-    Microsoft.Extensions.Options.IOptions<CodeMeterOptions> codeMeterOptions) : PageModel
+    Microsoft.Extensions.Options.IOptions<CodeMeterOptions> codeMeterOptions,
+    Heimdall.Api.Data.HeimdallDbContext db) : PageModel
 {
     [BindProperty(SupportsGet = true)]
     public string Tab { get; set; } = "live";
@@ -55,7 +56,7 @@ public class HistoricalDashboardModel(
     public bool LiveOnly { get; private set; }
 
     public FloodLiveLicenseDto LicenseStrip { get; private set; } =
-        new(false, false, false, null, 32, null, null, 32, null, 0, 0, 0, null, null);
+        new(false, false, false, null, 32, null, null, 32, null, 0, 0, 0, 0, null, null);
 
     public (int Hpc, int Classic) LicenseSeatsFor(FleetDashboardService.LiveFleetRow row)
     {
@@ -65,19 +66,81 @@ public class HistoricalDashboardModel(
         return snap.SeatsForIp(row.LastIp);
     }
 
+    public string LicenseSeatDetailFor(FleetDashboardService.LiveFleetRow row, bool hpc)
+    {
+        var snap = codeMeterHub.Latest;
+        if (!codeMeterOptions.Value.Enabled || !snap.Available)
+            return "";
+        return snap.SeatDetailForIp(row.LastIp, hpc);
+    }
+
+    /// <summary>Agent claim without double-counting HPC+Classic (max of the two when both reported).</summary>
+    public static int? EffectiveClaimedSeats(int? claimedHpc, int? claimedClassic)
+    {
+        if (claimedHpc is null && claimedClassic is null) return null;
+        return Math.Max(claimedHpc ?? 0, claimedClassic ?? 0);
+    }
+
+    /// <summary>CodeMeter count is authoritative (LastIp). Claim is agent estimate; mismatch is advisory only.</summary>
+    public static string FormatLicenseCellHtml(int codeMeterSeats, int? claimedSeats, bool mismatch)
+    {
+        if (claimedSeats is null)
+            return System.Net.WebUtility.HtmlEncode(codeMeterSeats.ToString());
+        var cm = System.Net.WebUtility.HtmlEncode(codeMeterSeats.ToString());
+        var claim = System.Net.WebUtility.HtmlEncode(claimedSeats.Value.ToString());
+        var warn = mismatch ? " hd-lic-mismatch" : "";
+        return $"<span class=\"hd-lic-cm\">{cm}</span><span class=\"hd-lic-claim{warn}\" title=\"Agent claim (estimate)\">/{claim}</span>";
+    }
+
+    public static string FormatLicenseCellTitle(
+        int hpcSeats,
+        int classicSeats,
+        string? hpcDetail,
+        string? classicDetail,
+        int? claimedHpc,
+        int? claimedClassic,
+        string? claimDetail)
+    {
+        var effective = Math.Max(hpcSeats, classicSeats);
+        var parts = new List<string>
+        {
+            $"Seats in use: {effective} = max(HPC {hpcSeats}, Classic {classicSeats}). TUFLOW GPU/HPC typically holds both products — do not add them."
+        };
+        if (!string.IsNullOrWhiteSpace(hpcDetail))
+            parts.Add($"HPC: {hpcDetail}");
+        else if (hpcSeats == 0)
+            parts.Add("No HPC checkout at this machine LastIp");
+        if (!string.IsNullOrWhiteSpace(classicDetail))
+            parts.Add($"Classic: {classicDetail}");
+        else if (classicSeats == 0)
+            parts.Add("No Classic checkout at this machine LastIp");
+
+        var claimed = EffectiveClaimedSeats(claimedHpc, claimedClassic);
+        if (claimed is not null)
+        {
+            var ev = string.IsNullOrWhiteSpace(claimDetail) ? "" : $" — {claimDetail}";
+            parts.Add($"Agent claim: {claimed} (max HPC {claimedHpc?.ToString() ?? "—"} / Classic {claimedClassic?.ToString() ?? "—"}){ev}");
+            if (claimed.Value != effective)
+                parts.Add("Mismatch: CodeMeter is source of truth; claim is from local process args (-nt/GPU).");
+        }
+
+        return string.Join(" · ", parts);
+    }
+
     public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
         Tab = NormalizeTab(Tab);
-        LiveOnly = flood.IsLiveOnly(HttpContext);
         if (Tab == "live")
         {
-            if (flood.ForbidIfLiveDenied(HttpContext) is { } liveDenied)
+            if (await flood.ForbidIfLiveDeniedAsync(HttpContext) is { } liveDenied)
                 return liveDenied;
         }
-        else if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        else if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
         {
             return denied;
         }
+
+        LiveOnly = flood.IsLiveOnly(HttpContext);
 
         if (!OpsPartial.IsPartial(Request))
             return OpsPartial.RedirectToFloodTab(Request, Tab);
@@ -88,7 +151,7 @@ public class HistoricalDashboardModel(
 
     public async Task<IActionResult> OnPostEnrollAsync(CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
 
         var (ok, message) = await fleet.EnrollAsync(EnrollMachineId, EnrollNotes, ct);
@@ -99,7 +162,7 @@ public class HistoricalDashboardModel(
 
     public async Task<IActionResult> OnPostUnenrollAsync(CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfDeniedAsync(HttpContext) is { } denied)
             return denied;
 
         var (ok, message) = await fleet.UnenrollAsync(UnenrollId, ct);
@@ -149,7 +212,9 @@ public class HistoricalDashboardModel(
             LicenseStrip = FloodLiveBroadcastService.BuildLicenseDto(
                 codeMeterOptions.Value.Enabled,
                 codeMeterHub.Latest,
-                LiveRows.Select(r => r.LastIp));
+                LiveRows.Select(r => r.LastIp),
+                await FloodLiveBroadcastService.LoadCodeMeterIpHintsAsync(db, ct),
+                codeMeterOptions.Value.PollSeconds);
             return;
         }
 

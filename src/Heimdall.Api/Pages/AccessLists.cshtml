@@ -8,8 +8,9 @@
 <div class="mb-3">
     <h1 class="hd-title mb-1">Access lists</h1>
     <p class="hd-sub mb-0">
-        Email allowlists that unlock Flood (and future gated pages). Site admins always have Full Flood.
-        Lists saved here are stored in the database and apply immediately — no API restart.
+        Email allowlists that unlock Flood (and future gated pages).
+        <strong>Site admins</strong> (appsettings) always have Full Flood — they are not edited on this page.
+        <strong>Full Flood</strong> and <strong>Flood Live only</strong> are both editable here by the same admins; saves go to the database and apply immediately (no API restart).
     </p>
 </div>
 
@@ -45,8 +46,7 @@
             Windows principal: <code>@(Model.WindowsPrincipal ?? "(none - Negotiate did not authenticate)")</code>
             @if (Model.CandidateEmails.Count > 0)
             {
-                var candidates = string.Join(", ", Model.CandidateEmails);
-                <br />Candidates: @candidates
+                <br /><text>Candidates: </text>@string.Join(", ", Model.CandidateEmails)
             }
         </p>
     </div>
@@ -55,7 +55,7 @@ else
 {
     @foreach (var panel in Model.Panels)
     {
-        <div class="hd-panel mb-4">
+        <div class="hd-panel mb-4" data-access-list="@panel.Id">
             <h2 class="h5 mb-1">@panel.Title</h2>
             <p class="small text-secondary mb-2">@panel.GrantsDescription</p>
             <p class="small text-secondary mb-3">
@@ -66,23 +66,34 @@ else
                 }
                 else
                 {
-                    <span> · Read-only from appsettings</span>
+                    <span> · Read-only from appsettings (not the Full Flood team list)</span>
                 }
                 · @panel.EmailCount email@(panel.EmailCount == 1 ? "" : "s")
             </p>
 
-            @if (panel.Editable)
+            @if (panel.Editable && panel.SaveHandler is string handler)
             {
-                <form method="post" asp-page-handler="Save">
-                    <input type="hidden" name="ListId" value="@panel.Id" />
-                    <label class="form-label small" for="emails-@panel.Id">Emails (one per line)</label>
+                @if (panel.Id == "floodFull" && Model.ConfiguredAdminEmails.Count > 0)
+                {
+                    <p class="small text-secondary mb-2">
+                        Site admins already have Full Flood (do not repeat them below):
+                        @string.Join(", ", Model.ConfiguredAdminEmails)
+                    </p>
+                }
+                <form method="post" asp-page-handler="@handler" autocomplete="off">
+                    <label class="form-label small" for="emails-@panel.Id">Team emails (one per line)</label>
                     <textarea class="form-control font-monospace small mb-2"
                               id="emails-@panel.Id"
-                              name="EmailsInput"
+                              name="emailsInput"
                               rows="8"
-                              spellcheck="false">@panel.EmailsText</textarea>
+                              spellcheck="false"
+                              autocomplete="off">@panel.EmailsText</textarea>
                     <button type="submit" class="hd-btn hd-btn-gold">Save @panel.Title</button>
                 </form>
+            }
+            else if (panel.Editable)
+            {
+                <p class="small text-warning mb-0">This list is marked editable but has no save handler — contact a Heimdall maintainer.</p>
             }
             else
             {
@@ -90,6 +101,7 @@ else
                 <p class="small text-secondary mt-2 mb-0">
                     Change site admins in <code>C:\Program Files\Heimdall\Api\appsettings.json</code>
                     under <code>Heimdall:StaffAccess:AdminEmails</code>, then restart HeimdallApi.
+                    To grant Flood to non-admins, use the <strong>Full Flood</strong> or <strong>Flood Live only</strong> panels below.
                 </p>
             }
         </div>

@@ -29,9 +29,9 @@ public class FloodModel(FloodAccessGuard flood) : PageModel
 
     public IReadOnlyList<(string Key, string Label, string PartialPath)> VisibleTabs { get; private set; } = Tabs;
 
-    public IActionResult OnGet()
+    public async Task<IActionResult> OnGetAsync()
     {
-        if (flood.ForbidIfLiveDenied(HttpContext) is { } denied)
+        if (await flood.ForbidIfLiveDeniedAsync(HttpContext) is { } denied)
             return denied;
 
         LiveOnly = flood.IsLiveOnly(HttpContext);
@@ -39,7 +39,7 @@ public class FloodModel(FloodAccessGuard flood) : PageModel
         if (LiveOnly && ActiveTabKey != "live")
             return Redirect("/Flood?tab=live");
 
-        if (ActiveTabKey != "live" && flood.ForbidIfDenied(HttpContext) is { } fullDenied)
+        if (ActiveTabKey != "live" && await flood.ForbidIfDeniedAsync(HttpContext) is { } fullDenied)
             return fullDenied;
 
         Tab = ActiveTabKey;

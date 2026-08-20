@@ -35,6 +35,9 @@ public class ClientVersionModel(
     [BindProperty]
     public List<string> SelectedHostnames { get; set; } = [];
 
+    [BindProperty]
+    public string? NewApiBaseUrl { get; set; }
+
     public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
         if (!OpsPartial.IsPartial(Request))
@@ -129,6 +132,22 @@ public class ClientVersionModel(
         return RedirectToOpsClients();
     }
 
+    public async Task<IActionResult> OnPostSetApiBaseUrlAsync(CancellationToken ct)
+    {
+        if (SelectedHostnames.Count == 0)
+        {
+            TempData["Error"] = "Select at least one machine to set the API URL.";
+            return RedirectToOpsClients();
+        }
+
+        var (queued, _, message) = await clientUpdates.QueueSetApiBaseUrlAsync(SelectedHostnames, NewApiBaseUrl ?? "", ct);
+        if (queued == 0)
+            TempData["Error"] = message;
+        else
+            TempData["Message"] = message;
+        return RedirectToOpsClients();
+    }
+
     private static IActionResult RedirectToOpsClients() =>
         new RedirectResult("/Fleet?tab=clients");
 
@@ -202,6 +221,7 @@ public class ClientVersionModel(
                 activeUserSession?.Username,
                 activeUserSession?.State,
                 m.ClientUpdateProgressJson,
+                m.PendingApiBaseUrl,
                 status);
         })
             .OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
@@ -271,6 +291,7 @@ public class ClientVersionModel(
         string? ActiveUser,
         SessionState? ActiveUserState,
         string? ClientUpdateProgressJson,
+        string? PendingApiBaseUrl,
         ClientVersionStatus Status)
     {
         public string DisplayName =>

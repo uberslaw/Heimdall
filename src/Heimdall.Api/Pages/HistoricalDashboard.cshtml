@@ -235,51 +235,107 @@
             <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm">Apply</button>
         </form>
         <span class="hd-live-meta ms-auto align-self-center" data-live="meta"
-              data-filtered="@Model.FilteredLiveRows.Count" data-total="@Model.Enrolled.Count">
-            <span data-live-meta-count>@Model.FilteredLiveRows.Count / @Model.Enrolled.Count enrolled</span>
-            <span class="hd-live-meta-sep" aria-hidden="true">·</span>
-            <span data-live-meta-countdown>Connecting…</span>
+              data-filtered="@Model.FilteredLiveRows.Count" data-total="@Model.Enrolled.Count"
+              title="@Model.FilteredLiveRows.Count / @Model.Enrolled.Count enrolled">
+            <span data-live-meta-countdown>Live update in …</span>
         </span>
     </div>
     @{
         var lic = Model.LicenseStrip;
         var licTitle = lic.StatusNote ?? "";
-        string LicPool(int? used, int total, int? avail) =>
-            used is null ? $"—/{total}" : $"{used}/{total}" + (avail is null ? "" : $" ({avail} free)");
         string LicAge()
         {
             if (lic.QueriedAtUtc is null) return "";
             var sec = Math.Max(0, (int)(DateTimeOffset.UtcNow - lic.QueriedAtUtc.Value).TotalSeconds);
             return sec < 90 ? $"{sec}s ago" : $"{sec / 60}m ago";
         }
+        var pollDurLabel = lic.PollDurationMs >= 1000
+            ? (lic.PollDurationMs / 1000.0).ToString("0.0") + "s"
+            : lic.PollDurationMs.ToString("0") + "ms";
+        var stripTitle = string.Join(" · ", new[] { licTitle, pollDurLabel + " last poll" }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        var pollIntervalSec = Math.Clamp(lic.PollIntervalSeconds <= 0 ? 60 : lic.PollIntervalSeconds, 15, 600);
+        string NextPollLabel()
+        {
+            if (lic.QueriedAtUtc is null) return "—";
+            // Interval is measured from poll start ≈ QueriedAtUtc − duration.
+            var started = lic.QueriedAtUtc.Value - TimeSpan.FromMilliseconds(Math.Max(0, lic.PollDurationMs));
+            var next = started.AddSeconds(pollIntervalSec);
+            var rem = (int)Math.Ceiling((next - DateTimeOffset.UtcNow).TotalSeconds);
+            if (rem <= 0) return "due";
+            return rem + "s";
+        }
     }
-    <div class="hd-live-license-strip small mb-2 @(lic.Enabled ? null : "text-secondary")"
+    <div class="hd-live-license-strip mb-2 @(lic.Enabled ? null : "is-muted")"
          data-live="licenses"
-         title="@licTitle">
+         data-poll-interval="@pollIntervalSec"
+         title="@stripTitle">
         @if (!lic.Enabled)
         {
-            <span data-live-lic-text>CodeMeter licenses: off</span>
+            <div class="hd-lic-strip" data-live-lic-body>
+                <span class="hd-lic-chip hd-lic-chip-label">CodeMeter</span>
+                <span class="hd-lic-chip is-muted">Off</span>
+            </div>
         }
         else if (!lic.Available)
         {
-            <span data-live-lic-text>CodeMeter: waiting for first poll…</span>
+            <div class="hd-lic-strip" data-live-lic-body>
+                <span class="hd-lic-chip hd-lic-chip-label">CodeMeter</span>
+                <span class="hd-lic-chip hd-lic-chip-warn">Waiting for first poll…</span>
+            </div>
         }
         else
         {
-            <span data-live-lic-text>
-                HPC @LicPool(lic.HpcUsed, lic.HpcTotal, lic.HpcAvailable)
-                · Classic @LicPool(lic.ClassicUsed, lic.ClassicTotal, lic.ClassicAvailable)
-                · poll @(lic.PollDurationMs >= 1000 ? (lic.PollDurationMs / 1000.0).ToString("0.0") + "s" : lic.PollDurationMs.ToString("0") + "ms")
-                · @LicAge()
+            <div class="hd-lic-strip" data-live-lic-body>
+                <span class="hd-lic-chip hd-lic-chip-label">CodeMeter</span>
+                <span class="hd-lic-chip" title="HPC pool Used=/Total from CodeMeter (product 926). Separate from Classic — do not add to Classic or to the Seats column.">
+                    <span class="hd-lic-k">HPC</span>
+                    <span class="hd-lic-v">@(lic.HpcUsed is null ? "—" : lic.HpcUsed.ToString())/@lic.HpcTotal</span>
+                    @if (lic.HpcAvailable is int ha)
+                    {
+                        <span class="hd-lic-free">@ha free</span>
+                    }
+                </span>
+                <span class="hd-lic-chip" title="Classic pool Used=/Total from CodeMeter (product 920). Separate from HPC — do not add to HPC or to the Seats column.">
+                    <span class="hd-lic-k">Classic</span>
+                    <span class="hd-lic-v">@(lic.ClassicUsed is null ? "—" : lic.ClassicUsed.ToString())/@lic.ClassicTotal</span>
+                    @if (lic.ClassicAvailable is int ca)
+                    {
+                        <span class="hd-lic-free">@ca free</span>
+                    }
+                </span>
+                <span class="hd-lic-chip hd-lic-chip-meta"
+                      title="How long the last CodeMeter query took · age of that result"
+                      data-live-lic-last>
+                    <span class="hd-lic-k">Last poll</span>
+                    <span class="hd-lic-v">@pollDurLabel · @LicAge()</span>
+                </span>
+                <span class="hd-lic-chip hd-lic-chip-meta"
+                      title="Estimated time until the next CodeMeter poll starts"
+                      data-live-lic-next>
+                    <span class="hd-lic-k">Next poll</span>
+                    <span class="hd-lic-v" data-live-lic-next-val>@NextPollLabel()</span>
+                </span>
                 @if (lic.Partial)
                 {
-                    <text> · partial</text>
+                    <span class="hd-lic-chip hd-lic-chip-warn" title="Some license servers failed or timed out">Partial</span>
                 }
-                @if (lic.UnmatchedHpc + lic.UnmatchedClassic > 0)
+                @if (lic.UnmatchedEffective > 0)
                 {
-                    <text> · other @(lic.UnmatchedHpc + lic.UnmatchedClassic)</text>
+                    var outsideTitle = string.IsNullOrWhiteSpace(lic.UnmatchedDetail)
+                        ? $"Seats outside Flood enrollment: {lic.UnmatchedEffective} (max HPC/Classic per IP; not additive). CodeMeter products: HPC {lic.UnmatchedHpc} · Classic {lic.UnmatchedClassic}. Pool Used= is CodeMeter’s total and is not summed with this chip."
+                        : lic.UnmatchedDetail!;
+                    var outsideTitleAttr = outsideTitle
+                        .Replace("&", "&amp;")
+                        .Replace("\"", "&quot;")
+                        .Replace("\r", "")
+                        .Replace("\n", "&#10;");
+                    <span class="hd-lic-chip hd-lic-chip-outside"
+                          title="@Html.Raw(outsideTitleAttr)">
+                        <span class="hd-lic-k">In use by other offices</span>
+                        <span class="hd-lic-v">@lic.UnmatchedEffective</span>
+                    </span>
                 }
-            </span>
+            </div>
         }
     </div>
 
@@ -315,10 +371,7 @@
                             title="Detected run: HH:mm on top, dd/MM under (green = launch, red = stop — stop time stays until the next run starts). Elevated = CPU &gt; 20% or GPU &gt; 5% for 2 samples. Otherwise Active/Idle/N/A from busy thresholds. Click to sort.">Active</th>
                         <th class="hd-th-tip" data-sort="num" scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
-                            title="CodeMeter HPC seats checked out to this machine’s last known IP (product 926). One pool across redundant license servers. Click to sort.">HPC</th>
-                        <th class="hd-th-tip" data-sort="num" scope="col"
-                            data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
-                            title="CodeMeter Classic seats checked out to this machine’s last known IP (product 920). Click to sort.">Classic</th>
+                            title="Licenses in use for this machine = max(CodeMeter HPC, Classic) matched by LastIp only. TUFLOW GPU/HPC typically holds both products — do not add them. Tooltip shows HPC × / Classic ×. /N is agent claim when available. Click to sort.">Seats</th>
                         <th class="hd-th-tip" data-sort="num" data-default-desc scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
                             title="GPU utilisation from the latest ~30s sample. Can exceed 100% when Windows GPU Engine counters are summed across engines. Click to sort.">GPU %</th>
@@ -357,7 +410,7 @@
                 <tbody>
                 @if (Model.FilteredLiveRows.Count == 0)
                 {
-                    <tr><td colspan="16">No rows match the current filter.</td></tr>
+                    <tr><td colspan="15">No rows match the current filter.</td></tr>
                 }
                 @foreach (var r in Model.FilteredLiveRows)
                 {
@@ -370,6 +423,11 @@
                     var statusTitle = HistoricalDashboardModel.ActiveColumnTitle(r);
                     var hasActiveStamp = HistoricalDashboardModel.TryGetActiveStamp(r, out var activeStamp);
                     var (hpcSeats, classicSeats) = Model.LicenseSeatsFor(r);
+                    var seats = Math.Max(hpcSeats, classicSeats);
+                    var hpcDetail = Model.LicenseSeatDetailFor(r, hpc: true);
+                    var classicDetail = Model.LicenseSeatDetailFor(r, hpc: false);
+                    var claimedSeats = HistoricalDashboardModel.EffectiveClaimedSeats(r.ClaimedHpcSeats, r.ClaimedClassicSeats);
+                    var seatsMismatch = claimedSeats is int claim && claim != seats;
                     <tr data-machine-id="@r.MachineId">
                         <td class="hd-col-host" data-sort-value="@r.DisplayName" data-live="host" title="@(offline ? $"Last agent check-in: {checkInLabel} (offline)" : r.Hostname)">
                             @if (Model.LiveOnly)
@@ -416,8 +474,8 @@
                                 <span class="text-secondary">—</span>
                             }
                         </td>
-                        <td class="hd-live-metric" data-sort-value="@hpcSeats" data-live="hpc">@hpcSeats</td>
-                        <td class="hd-live-metric" data-sort-value="@classicSeats" data-live="classic">@classicSeats</td>
+                        <td class="hd-live-metric@(seatsMismatch ? " hd-lic-cell-warn" : null)" data-sort-value="@seats" data-live="seats"
+                            title="@HistoricalDashboardModel.FormatLicenseCellTitle(hpcSeats, classicSeats, hpcDetail, classicDetail, r.ClaimedHpcSeats, r.ClaimedClassicSeats, r.TuflowClaimDetail)">@Html.Raw(HistoricalDashboardModel.FormatLicenseCellHtml(seats, claimedSeats, seatsMismatch))</td>
                         <td class="hd-live-metric" data-sort-value="@(r.GpuPercent ?? -1)" data-live="gpu">@HistoricalDashboardModel.FormatGauge(r.GpuPercent)</td>
                         <td class="hd-live-metric" data-sort-value="@(r.CpuPercent ?? -1)" data-live="cpu">@HistoricalDashboardModel.FormatGauge(r.CpuPercent)</td>
                         <td class="hd-live-metric" data-sort-value="@(r.GpuMemoryUsedMb ?? -1)" data-live="gpumem">@HistoricalDashboardModel.FormatDataFromMb(r.GpuMemoryUsedMb)</td>
@@ -434,18 +492,6 @@
                 </tbody>
             </table>
         }
-    </div>
-
-    <div class="hd-panel mt-3" data-flood-live-charts-panel>
-        <h3 class="h6 mb-2">Active runs</h3>
-        <p class="text-secondary small mb-2">
-            Shared live stream (one server rebuild ≈ every 30s for all viewers).
-            GPU / CPU / RAM% (left) and Disk W / Net Tx MB/s (right) — use the checkboxes to hide series.
-            RAM% needs known hardware RAM on the machine. Charts appear for <strong>Active</strong> machines.
-        </p>
-        <div class="hd-run-list" data-flood-live-charts>
-            <p class="text-secondary small mb-0" data-flood-live-charts-empty>No Active TUFLOW runs right now.</p>
-        </div>
     </div>
     </div>
     </div>

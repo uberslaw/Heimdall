@@ -29,6 +29,8 @@ public class TuflowRunService(
     HeimdallDbContext db,
     FleetDashboardService fleetDashboard,
     TuflowQueueService queues,
+    TuflowScratchSettingsService scratchSettings,
+    CodeMeterLicenseHub codeMeterHub,
     ILogger<TuflowRunService> logger)
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -191,6 +193,7 @@ public class TuflowRunService(
             "Queued TUFLOW start ({RunId}, \"{RunName}\", {Mode}) for {Host}: {Target}",
             runId, resolvedRunName, mode, hostname,
             mode == TuflowLaunchModes.Cmd ? request.CmdPath : request.TcfPath);
+        codeMeterHub.RequestPollSoon($"tuflow-start:{hostname}");
         return (true, null, runId);
     }
 
@@ -282,9 +285,72 @@ public class TuflowRunService(
             ErrorSummary = status.ErrorSummary
         };
         machine.TuflowRunStatusJson = JsonSerializer.Serialize(updated, JsonOptions);
+        await UpsertHistoryAsync(machine.Id, updated, ct);
+        await queues.SyncItemFromRunAsync(status.RunId, TuflowRunStates.StopRequested, null, ct);
 
         await db.SaveChangesAsync(ct);
         logger.LogWarning("Queued TuflowStopGraceful for {Host} (run {RunId})", hostname, status.RunId);
+        codeMeterHub.RequestPollSoon($"tuflow-stop:{hostname}");
+        return (true, null);
+    }
+
+    /// <summary>
+    /// Clears a stuck Starting/Running/StopRequested slot without waiting on the agent (e.g. launch never
+    /// produced a process). Prefer <see cref="QueueStopGracefulAsync"/> when TUFLOW is actually running.
+    /// </summary>
+    public async Task<(bool Ok, string? Error)> AbandonActiveRunAsync(string hostname, CancellationToken ct)
+    {
+        var machine = await db.Machines.FirstOrDefaultAsync(m => m.Hostname == hostname, ct);
+        if (machine is null)
+            return (false, $"Machine '{hostname}' not found.");
+
+        if (!await IsFloodEnrolledAsync(machine.Id, ct))
+            return (false, $"{hostname} is not enrolled as a Flood machine.");
+
+        var status = DeserializeStatus(machine.TuflowRunStatusJson);
+        if (status is null || !IsActiveRunState(status.State))
+            return (false, $"No active TUFLOW run tracked on {hostname}.");
+
+        machine.PendingTuflowStartJson = null;
+        var pending = RemoteMachineService.DeserializeCommands(machine.PendingCommandsJson);
+        pending.RemoveAll(c => string.Equals(c, RemoteMachineCommands.TuflowStopGraceful, StringComparison.OrdinalIgnoreCase));
+        machine.PendingCommandsJson = pending.Count == 0 ? null : JsonSerializer.Serialize(pending, JsonOptions);
+
+        var now = DateTimeOffset.UtcNow;
+        var failed = new TuflowRunStatusDto
+        {
+            RunId = status.RunId,
+            RunName = status.RunName,
+            State = TuflowRunStates.Failed,
+            ProcessId = status.ProcessId,
+            TcfPath = status.TcfPath,
+            CmdPath = status.CmdPath,
+            StartedUtc = status.StartedUtc,
+            StopRequestedUtc = status.StopRequestedUtc,
+            LastCheckpointUtc = status.LastCheckpointUtc,
+            LastCheckpointFile = status.LastCheckpointFile,
+            ExitCode = status.ExitCode,
+            Message = "Abandoned from dashboard (cleared stuck run).",
+            UpdatedUtc = now,
+            PercentComplete = status.PercentComplete,
+            SimulationTimeHours = status.SimulationTimeHours,
+            SimulationEndTimeHours = status.SimulationEndTimeHours,
+            ClockTimeRemainingHours = status.ClockTimeRemainingHours,
+            WarningCount = status.WarningCount,
+            MassErrorPercent = status.MassErrorPercent,
+            ErrorSummary = "Abandoned from dashboard (cleared stuck run).",
+            ScratchDrive = status.ScratchDrive,
+            LocalResultsPath = status.LocalResultsPath,
+            ArchivePath = status.ArchivePath,
+            TransferState = status.TransferState,
+            TransferDetail = status.TransferDetail
+        };
+        machine.TuflowRunStatusJson = JsonSerializer.Serialize(failed, JsonOptions);
+        await UpsertHistoryAsync(machine.Id, failed, ct);
+        await queues.SyncItemFromRunAsync(status.RunId, TuflowRunStates.Failed, failed.ErrorSummary, ct);
+        await db.SaveChangesAsync(ct);
+        logger.LogWarning("Abandoned stuck TUFLOW run {RunId} on {Host}", status.RunId, hostname);
+        codeMeterHub.RequestPollSoon($"tuflow-abandon:{hostname}");
         return (true, null);
     }
 
@@ -391,6 +457,17 @@ public class TuflowRunService(
                 ? status.ErrorSummary
                 : status.Message;
         }
+
+        if (!string.IsNullOrWhiteSpace(status.ScratchDrive))
+            record.ScratchDrive = status.ScratchDrive;
+        if (!string.IsNullOrWhiteSpace(status.LocalResultsPath))
+            record.LocalResultsPath = status.LocalResultsPath;
+        if (!string.IsNullOrWhiteSpace(status.ArchivePath))
+            record.ArchivePath = status.ArchivePath;
+        if (!string.IsNullOrWhiteSpace(status.TransferState))
+            record.TransferState = status.TransferState;
+        if (!string.IsNullOrWhiteSpace(status.TransferDetail))
+            record.TransferDetail = status.TransferDetail;
     }
 
     /// <summary>Recent run history for one machine (newest first), for the Machine page. See Machine.cshtml patch.</summary>
@@ -487,15 +564,53 @@ public class TuflowRunService(
     {
         var machine = await db.Machines.FirstOrDefaultAsync(m => m.Hostname == hostname, ct);
         if (machine is null)
+        {
+            logger.LogDebug("Queue dispatch skip {Host}: machine not in catalogue", hostname);
             return;
+        }
+
         if (!await IsFloodEnrolledAsync(machine.Id, ct))
+        {
+            logger.LogDebug("Queue dispatch skip {Host}: not Flood-enrolled", hostname);
             return;
-        if (!await HasLaunchSlotAsync(machine, ct))
+        }
+
+        var (slotOk, slotReason) = await ExplainLaunchSlotAsync(machine, ct);
+        if (!slotOk)
+        {
+            var waiting = await queues.CountQueuedForHostAsync(machine.Id, ct);
+            // Information when work is sitting idle — otherwise Debug (every ~20s poll would spam).
+            if (waiting > 0)
+            {
+                logger.LogInformation(
+                    "Queue dispatch skip {Host} ({Ip}): {Reason} — {Waiting} Queued item(s) available (pinned+fleet)",
+                    hostname,
+                    machine.LastIp ?? "—",
+                    slotReason,
+                    waiting);
+            }
+            else
+            {
+                logger.LogDebug(
+                    "Queue dispatch skip {Host}: {Reason} (no Queued items)",
+                    hostname, slotReason);
+            }
+
             return;
+        }
 
         var item = await queues.TryClaimNextForHostAsync(machine.Id, ct);
         if (item is null)
+        {
+            var stuckDispatching = await queues.CountDispatchingOrRunningAsync(ct);
+            if (stuckDispatching > 0)
+            {
+                logger.LogDebug(
+                    "Queue dispatch {Host}: eligible but nothing Queued to claim ({Active} already Dispatching/Running)",
+                    hostname, stuckDispatching);
+            }
             return;
+        }
 
         var runId = Guid.NewGuid().ToString("n");
         var scenarios = TuflowQueueService.DeserializeStringList(item.ScenariosJson);
@@ -505,6 +620,16 @@ public class TuflowRunService(
             : item.TcfPath;
         var resolvedRunName = await ResolveRunNameAsync(machine.Id, item.RunName, nameHint, ct);
         var now = DateTimeOffset.UtcNow;
+        var archiveTemplate = await scratchSettings.GetArchiveShareTemplateAsync(ct);
+        var archiveRoot = TuflowScratchSettingsService.ResolveArchiveRoot(
+            string.IsNullOrWhiteSpace(item.ArchiveShare) ? archiveTemplate : item.ArchiveShare,
+            machine.Hostname);
+        var useScratch = item.UseLocalScratch
+            || (string.IsNullOrWhiteSpace(item.WorkingDirectory) && machine.TuflowPreferLocalScratch);
+        // Explicit WorkingDirectory wins over scratch.
+        if (!string.IsNullOrWhiteSpace(item.WorkingDirectory))
+            useScratch = false;
+
         var request = new TuflowStartRequestDto
         {
             RunId = runId,
@@ -518,7 +643,12 @@ public class TuflowRunService(
             Events = events,
             ResultsFolder = item.ResultsFolder,
             RequestedUtc = now,
-            RequestedBy = item.RequestedBy
+            RequestedBy = item.RequestedBy,
+            UseLocalScratch = useScratch,
+            ArchiveShare = archiveRoot,
+            AutoCleanAfterVerify = item.AutoCleanAfterVerify,
+            ScratchMinFreeGb = machine.TuflowScratchMinFreeGb > 0 ? machine.TuflowScratchMinFreeGb : 50,
+            AllowScratchOnC = machine.TuflowAllowScratchOnC
         };
 
         machine.PendingTuflowStartJson = JsonSerializer.Serialize(request, JsonOptions);
@@ -553,23 +683,41 @@ public class TuflowRunService(
 
         await db.SaveChangesAsync(ct);
         logger.LogWarning(
-            "Dispatched queue item {ItemId} as run {RunId} on {Host}: {Name}",
-            item.Id, runId, hostname, resolvedRunName);
+            "Dispatched queue item {ItemId} as run {RunId} on {Host} ({Ip}): {Name}",
+            item.Id, runId, hostname, machine.LastIp ?? "—", resolvedRunName);
     }
 
-    async Task<bool> HasLaunchSlotAsync(Machine machine, CancellationToken ct)
+    /// <summary>
+    /// Why this host cannot (or can) take another Heimdall-launched TUFLOW right now.
+    /// Idle for dispatch ≠ “looks quiet on Live”: licenses/GPU% are not consulted.
+    /// </summary>
+    async Task<(bool Ok, string Reason)> ExplainLaunchSlotAsync(Machine machine, CancellationToken ct)
     {
         if (!string.IsNullOrWhiteSpace(machine.PendingTuflowStartJson))
-            return false;
-        if (IsActiveRunState(DeserializeStatus(machine.TuflowRunStatusJson)?.State))
-            return false;
+            return (false, "pending-tuflow-start (agent has not cleared start request yet)");
+
+        var status = DeserializeStatus(machine.TuflowRunStatusJson);
+        if (IsActiveRunState(status?.State))
+            return (false, $"heimdall-run-active ({status!.State}, run={status.RunName ?? status.RunId})");
 
         var tuflowRunning = await db.FleetMetricSnapshots.AsNoTracking()
             .Where(s => s.MachineId == machine.Id)
             .OrderByDescending(s => s.Id)
             .Select(s => (bool?)s.TuflowRunning)
             .FirstOrDefaultAsync(ct);
-        return tuflowRunning != true;
+
+        if (tuflowRunning is null)
+            return (true, "ok (no fleet sample yet)");
+        if (tuflowRunning == true)
+            return (false, "fleet-snapshot TuflowRunning=true (process still detected)");
+
+        return (true, "ok");
+    }
+
+    async Task<bool> HasLaunchSlotAsync(Machine machine, CancellationToken ct)
+    {
+        var (ok, _) = await ExplainLaunchSlotAsync(machine, ct);
+        return ok;
     }
 
     /// <summary>Fleet-wide "how many licences are in use right now" summary across Flood-enrolled machines,

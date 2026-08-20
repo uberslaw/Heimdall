@@ -9,6 +9,9 @@ namespace Heimdall.Shared;
 public static class TuflowLaunchPath
 {
     /// <summary>Drive letters treated as local disks on Flood hosts. Other letters are treated as mapped shares.</summary>
+    public static IReadOnlySet<char> AllowedLocalDriveLetters { get; } =
+        new HashSet<char> { 'C', 'D', 'E', 'F' };
+
     private static readonly HashSet<char> LocalDriveLetters = ['C', 'D', 'E', 'F'];
 
     public static string? ValidateOptional(string? path, string fieldName)
