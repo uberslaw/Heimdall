@@ -10,7 +10,9 @@ param(
     [string]$InstallDir = "$env:ProgramFiles\Heimdall\Api",
     [int]$Port = 5080,
     [string]$ApiKey = "heimdall-poc-key",
-    [switch]$NoPrompt
+    [switch]$NoPrompt,
+    # Keep existing Program Files appsettings.json (and siblings) when present.
+    [switch]$PreserveConfig
 )
 
 $ErrorActionPreference = "Stop"
@@ -393,6 +395,17 @@ try {
 
     Invoke-Logged "Write appsettings.json" -ProgressStep 5 -ProgressLabel "Writing config" {
         $appsettings = Join-Path $InstallDir "appsettings.json"
+        if ($PreserveConfig -and (Test-Path -LiteralPath $appsettings)) {
+            Write-Log "PreserveConfig: keeping existing $appsettings" -Level OK
+            $mergeHelper = Join-Path $PSScriptRoot "Merge-HeimdallCodeMeterAppsettings.ps1"
+            if (Test-Path -LiteralPath $mergeHelper) {
+                . $mergeHelper
+                if (Merge-HeimdallCodeMeterAppsettings -AppSettingsPath $appsettings -EnableIfRuntimePresent) {
+                    Write-Log "Merged Heimdall:CodeMeter into preserved $appsettings" -Level OK
+                }
+            }
+            return
+        }
         $dbPath = Join-Path $env:ProgramData "Heimdall\heimdall.db"
         $sandboxDbPath = Join-Path $env:ProgramData "Heimdall\heimdall-dev.db"
         $json = @{

@@ -68,8 +68,12 @@ public sealed class HeartbeatDto
     /// Current state of the TUFLOW run this agent is tracking (if any) - read from TuflowLauncher's
     /// status.json each upload cycle. Null when no run has ever been started on this machine, or once
     /// a finished run's pointer file has been cleared (see TuflowRunHelper.ReadCurrentStatus).
+    /// When multiple launchers are active, this is the first non-terminal status (or the latest).
     /// </summary>
     public TuflowRunStatusDto? TuflowRunStatus { get; init; }
+
+    /// <summary>All launcher-managed TUFLOW statuses this cycle (multi-sim queue). Empty when none.</summary>
+    public List<TuflowRunStatusDto> TuflowRunStatuses { get; init; } = [];
 
     /// <summary>Commands executed since last ingest; API clears matching PendingCommands.</summary>
     public List<string> AcknowledgedCommands { get; init; } = [];

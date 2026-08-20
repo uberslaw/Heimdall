@@ -9,7 +9,7 @@
 
 @if (!isPartial)
 {
-    <p class="text-secondary small"><a asp-page="/TuflowRuns">← TUFLOW Runs</a> (start/stop, licence usage)</p>
+    <p class="text-secondary small"><a asp-page="/TuflowRuns">← TUFLOW Runs</a> · <a asp-page="/Flood" asp-route-tab="queue">Run Queue</a></p>
 }
 
 <div class="hd-panel mb-3">
@@ -17,6 +17,12 @@
     {
         <h2 class="hd-section-title">Fleet Sim Progress</h2>
     }
+
+    <p class="text-secondary small mb-2">
+        Queue: <strong>@Model.QueueWaiting</strong> waiting,
+        <strong>@Model.QueueActive</strong> dispatching/running
+        · <a asp-page="/Flood" asp-route-tab="queue">Manage Run Queue →</a>
+    </p>
 
     @if (Model.Rows.Count == 0)
     {

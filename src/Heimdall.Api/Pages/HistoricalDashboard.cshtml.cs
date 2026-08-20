@@ -5,7 +5,11 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Heimdall.Api.Pages;
 
-public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGuard flood) : PageModel
+public class HistoricalDashboardModel(
+    FleetDashboardService fleet,
+    FloodAccessGuard flood,
+    CodeMeterLicenseHub codeMeterHub,
+    Microsoft.Extensions.Options.IOptions<CodeMeterOptions> codeMeterOptions) : PageModel
 {
     [BindProperty(SupportsGet = true)]
     public string Tab { get; set; } = "live";
@@ -48,12 +52,33 @@ public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGu
     public int MachinesActiveToday { get; private set; }
     public double AvgActiveRuntimePerMachine { get; private set; }
 
+    public bool LiveOnly { get; private set; }
+
+    public FloodLiveLicenseDto LicenseStrip { get; private set; } =
+        new(false, false, false, null, 32, null, null, 32, null, 0, 0, 0, null, null);
+
+    public (int Hpc, int Classic) LicenseSeatsFor(FleetDashboardService.LiveFleetRow row)
+    {
+        var snap = codeMeterHub.Latest;
+        if (!codeMeterOptions.Value.Enabled || !snap.Available)
+            return (0, 0);
+        return snap.SeatsForIp(row.LastIp);
+    }
+
     public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
-            return denied;
-
         Tab = NormalizeTab(Tab);
+        LiveOnly = flood.IsLiveOnly(HttpContext);
+        if (Tab == "live")
+        {
+            if (flood.ForbidIfLiveDenied(HttpContext) is { } liveDenied)
+                return liveDenied;
+        }
+        else if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        {
+            return denied;
+        }
+
         if (!OpsPartial.IsPartial(Request))
             return OpsPartial.RedirectToFloodTab(Request, Tab);
 
@@ -121,6 +146,10 @@ public class HistoricalDashboardModel(FleetDashboardService fleet, FloodAccessGu
         if (Tab == "live")
         {
             AvgActiveRuntimePerMachine = 0;
+            LicenseStrip = FloodLiveBroadcastService.BuildLicenseDto(
+                codeMeterOptions.Value.Enabled,
+                codeMeterHub.Latest,
+                LiveRows.Select(r => r.LastIp));
             return;
         }
 

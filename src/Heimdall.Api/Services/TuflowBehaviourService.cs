@@ -410,6 +410,10 @@ public sealed class TuflowBehaviourService(
             ProcessGpuPercent = processGpu,
             MachineCpuPercent = dto.CpuPercent,
             MachineGpuPercent = SanitizeGpu(dto.GpuPercent),
+            MachineRamUsedMb = dto.RamUsedMb,
+            ProcessDiskWriteMBps = dto.TuflowRunning ? dto.ProcessDiskWriteMBps : null,
+            MachineDiskWriteMBps = dto.DiskWriteMBps,
+            NetworkOutMBps = dto.NetworkOutMBps,
             GpuEnginesJson = enginesJson
         });
     }
@@ -604,6 +608,12 @@ public sealed class TuflowBehaviourService(
             .ToList();
     }
 
+    /// <summary>Max per-run rows returned for the Runs card (newest confirmed starts first).</summary>
+    public const int BehaviourRunsPageSize = 75;
+
+    /// <summary>Safety cap on GPU series points per run (full sample resolution up to this; rare for 10s sampling).</summary>
+    public const int GpuSeriesMaxPoints = 5000;
+
     /// <summary>
     /// Aggregates confirmed behaviour runs (DetectedStartUtc set) over a rolling window.
     /// Watching-only rows without a confirmed start are excluded. Open Active runs count toward
@@ -614,6 +624,7 @@ public sealed class TuflowBehaviourService(
     {
         days = Math.Clamp(days, 1, 365);
         var fromUtc = DateTimeOffset.UtcNow.AddDays(-days);
+        var now = DateTimeOffset.UtcNow;
 
         // SQLite DateTimeOffset filter — load candidates then filter in memory.
         var rows = await db.TuflowBehaviourRuns.AsNoTracking()
@@ -628,7 +639,7 @@ public sealed class TuflowBehaviourService(
         var completed = inWindow
             .Where(r => r.DetectedEndUtc is not null
                 && (r.State == TuflowBehaviourStates.Ended
-                    || r.DetectedEndUtc <= DateTimeOffset.UtcNow))
+                    || r.DetectedEndUtc <= now))
             .Select(r => (r, Duration: r.DetectedEndUtc!.Value - r.DetectedStartUtc!.Value))
             .Where(x => x.Duration > TimeSpan.Zero)
             .ToList();
@@ -658,6 +669,8 @@ public sealed class TuflowBehaviourService(
                 ? r.Machine.Hostname
                 : r.Machine.FriendlyName.Trim());
 
+        var runPage = await BuildBehaviourRunRowsAsync(inWindow, now, ct);
+
         return new TuflowBehaviourAnalytics(
             days,
             fromUtc,
@@ -669,7 +682,148 @@ public sealed class TuflowBehaviourService(
             PeakStartHour(startHours),
             startHours.Select((count, hour) => new HourBucket(hour, count)).ToList(),
             byUser,
-            byMachine);
+            byMachine,
+            runPage.Rows,
+            runPage.TotalInWindow,
+            runPage.Truncated);
+    }
+
+    private async Task<(IReadOnlyList<BehaviourRunRow> Rows, int TotalInWindow, bool Truncated)> BuildBehaviourRunRowsAsync(
+        IReadOnlyList<TuflowBehaviourRun> inWindow,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        var total = inWindow.Count;
+        if (total == 0)
+            return ([], 0, false);
+
+        var ordered = inWindow
+            .OrderByDescending(r => r.DetectedStartUtc)
+            .Take(BehaviourRunsPageSize)
+            .ToList();
+        var truncated = total > ordered.Count;
+
+        var ids = ordered.Select(r => r.Id).ToList();
+        var sampleRows = await db.TuflowBehaviourSamples.AsNoTracking()
+            .Where(s => ids.Contains(s.BehaviourRunId))
+            .Select(s => new
+            {
+                s.BehaviourRunId,
+                s.SampledAtUtc,
+                s.ProcessGpuPercent,
+                s.MachineGpuPercent,
+                s.ProcessCpuPercent,
+                s.MachineCpuPercent,
+                s.MachineRamUsedMb,
+                s.ProcessDiskWriteMBps,
+                s.MachineDiskWriteMBps,
+                s.NetworkOutMBps
+            })
+            .ToListAsync(ct);
+
+        var samplesByRun = sampleRows
+            .GroupBy(s => s.BehaviourRunId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var rows = new List<BehaviourRunRow>(ordered.Count);
+        foreach (var r in ordered)
+        {
+            var start = r.DetectedStartUtc!.Value;
+            var end = r.DetectedEndUtc;
+            var isOpen = end is null
+                || r.State is TuflowBehaviourStates.Active or TuflowBehaviourStates.Watching;
+            var duration = (end ?? now) - start;
+            if (duration < TimeSpan.Zero)
+                duration = TimeSpan.Zero;
+
+            var avgGpu = r.SampleCount == 0 || r.SumGpuPercent is null
+                ? null
+                : r.SumGpuPercent / r.SampleCount;
+            var highGpuSeconds = SumHighGpuSeconds(r.GpuPercentHistogramJson);
+
+            IReadOnlyList<MetricSeriesPoint> series = [];
+            if (samplesByRun.TryGetValue(r.Id, out var samples))
+            {
+                var endClip = end ?? now;
+                var ramTotalMb = r.Machine.HardwareRamGb is > 0
+                    ? r.Machine.HardwareRamGb.Value * 1024.0
+                    : (double?)null;
+                series = BuildMetricSeries(
+                    samples
+                        .Where(s => s.SampledAtUtc >= start && s.SampledAtUtc <= endClip)
+                        .OrderBy(s => s.SampledAtUtc)
+                        .Select(s =>
+                        {
+                            var gpu = s.ProcessGpuPercent ?? s.MachineGpuPercent;
+                            var cpu = s.ProcessCpuPercent ?? s.MachineCpuPercent;
+                            double? ram = null;
+                            if (ramTotalMb is { } total && s.MachineRamUsedMb is { } used && total > 0)
+                                ram = Math.Clamp(100.0 * used / total, 0, 100);
+                            var diskW = s.ProcessDiskWriteMBps ?? s.MachineDiskWriteMBps;
+                            return new MetricSeriesPoint(
+                                s.SampledAtUtc,
+                                gpu,
+                                cpu,
+                                ram,
+                                diskW,
+                                s.NetworkOutMBps);
+                        })
+                        .Where(p => p.GpuPercent is not null || p.CpuPercent is not null || p.RamPercent is not null
+                                    || p.DiskWriteMBps is not null || p.NetworkOutMBps is not null)
+                        .ToList());
+            }
+
+            var machineLabel = string.IsNullOrWhiteSpace(r.Machine.FriendlyName)
+                ? r.Machine.Hostname
+                : r.Machine.FriendlyName.Trim();
+
+            rows.Add(new BehaviourRunRow(
+                machineLabel,
+                string.IsNullOrWhiteSpace(r.Username) ? null : r.Username.Trim(),
+                start,
+                end,
+                isOpen,
+                duration,
+                avgGpu,
+                r.PeakGpuPercent,
+                highGpuSeconds,
+                series));
+        }
+
+        return (rows, total, truncated);
+    }
+
+    /// <summary>Seconds spent in GPU histogram buckets at or above 50% (process GPU).</summary>
+    private static double SumHighGpuSeconds(string? histogramJson)
+    {
+        var hist = DeserializeHistogram(histogramJson);
+        double sum = 0;
+        foreach (var (bucket, seconds) in hist)
+        {
+            if (bucket is "50-60" or "60-70" or "70-80" or "80-90" or "90-100" or "100+")
+                sum += seconds;
+        }
+
+        return sum;
+    }
+
+    /// <summary>Keep full sample resolution for zoomable charts; only thin extreme outliers.</summary>
+    private static IReadOnlyList<MetricSeriesPoint> BuildMetricSeries(IReadOnlyList<MetricSeriesPoint> points)
+    {
+        if (points.Count == 0)
+            return [];
+        if (points.Count <= GpuSeriesMaxPoints)
+            return points.ToList();
+
+        var result = new MetricSeriesPoint[GpuSeriesMaxPoints];
+        var last = points.Count - 1;
+        for (var i = 0; i < GpuSeriesMaxPoints; i++)
+        {
+            var idx = (int)Math.Round((double)i * last / (GpuSeriesMaxPoints - 1));
+            result[i] = points[idx];
+        }
+
+        return result;
     }
 
     private static IReadOnlyList<BehaviourDimensionRow> BuildDimensionRows(
@@ -800,7 +954,10 @@ public sealed class TuflowBehaviourService(
         int? PeakStartHourLocal,
         IReadOnlyList<HourBucket> StartHourHistogram,
         IReadOnlyList<BehaviourDimensionRow> ByUser,
-        IReadOnlyList<BehaviourDimensionRow> ByMachine);
+        IReadOnlyList<BehaviourDimensionRow> ByMachine,
+        IReadOnlyList<BehaviourRunRow> Runs,
+        int RunsTotalInWindow,
+        bool RunsTruncated);
 
     public sealed record HourBucket(int HourLocal, int Count);
 
@@ -812,4 +969,26 @@ public sealed class TuflowBehaviourService(
         TimeSpan? AvgCompletedDuration,
         TimeSpan? MedianCompletedDuration,
         int? PeakStartHourLocal);
+
+    /// <summary>One confirmed behaviour run for the Runs card (with timed multi-metric samples for zoomable charts).</summary>
+    public sealed record BehaviourRunRow(
+        string MachineLabel,
+        string? Username,
+        DateTimeOffset DetectedStartUtc,
+        DateTimeOffset? DetectedEndUtc,
+        bool IsOpen,
+        TimeSpan Duration,
+        double? AvgGpuPercent,
+        double? PeakGpuPercent,
+        double HighGpuSeconds,
+        IReadOnlyList<MetricSeriesPoint> GpuSeries);
+
+    /// <summary>GPU/CPU/RAM% and Disk W / Net Tx at a sample time.</summary>
+    public sealed record MetricSeriesPoint(
+        DateTimeOffset SampledAtUtc,
+        double? GpuPercent,
+        double? CpuPercent = null,
+        double? RamPercent = null,
+        double? DiskWriteMBps = null,
+        double? NetworkOutMBps = null);
 }

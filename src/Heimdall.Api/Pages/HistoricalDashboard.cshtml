@@ -186,7 +186,7 @@
 }
 @if (tab == "live")
 {
-    <div id="flood-live-root" data-flood-live-root>
+    <div id="flood-live-root" data-flood-live-root data-live-only="@(Model.LiveOnly ? "1" : "0")">
     <div class="d-flex flex-wrap gap-2 align-items-end mb-3">
         <form method="get" class="d-flex flex-wrap gap-2 align-items-end" id="live-filter-form" action="/HistoricalDashboard" data-flood-live-filter>
             <input type="hidden" name="tab" value="live" />
@@ -197,7 +197,7 @@
             </div>
             <div>
                 <label class="form-label small mb-1" for="statusFilter">Status</label>
-                <select class="form-select form-select-sm" id="statusFilter" name="statusFilter" onchange="this.form.requestSubmit()">
+                <select class="form-select form-select-sm" id="statusFilter" name="statusFilter">
                     @if (Model.StatusFilter == "all")
                     {
                         <option value="all" selected>All</option>
@@ -238,8 +238,49 @@
               data-filtered="@Model.FilteredLiveRows.Count" data-total="@Model.Enrolled.Count">
             <span data-live-meta-count>@Model.FilteredLiveRows.Count / @Model.Enrolled.Count enrolled</span>
             <span class="hd-live-meta-sep" aria-hidden="true">·</span>
-            <span data-live-meta-countdown>Next update in 30s</span>
+            <span data-live-meta-countdown>Connecting…</span>
         </span>
+    </div>
+    @{
+        var lic = Model.LicenseStrip;
+        var licTitle = lic.StatusNote ?? "";
+        string LicPool(int? used, int total, int? avail) =>
+            used is null ? $"—/{total}" : $"{used}/{total}" + (avail is null ? "" : $" ({avail} free)");
+        string LicAge()
+        {
+            if (lic.QueriedAtUtc is null) return "";
+            var sec = Math.Max(0, (int)(DateTimeOffset.UtcNow - lic.QueriedAtUtc.Value).TotalSeconds);
+            return sec < 90 ? $"{sec}s ago" : $"{sec / 60}m ago";
+        }
+    }
+    <div class="hd-live-license-strip small mb-2 @(lic.Enabled ? null : "text-secondary")"
+         data-live="licenses"
+         title="@licTitle">
+        @if (!lic.Enabled)
+        {
+            <span data-live-lic-text>CodeMeter licenses: off</span>
+        }
+        else if (!lic.Available)
+        {
+            <span data-live-lic-text>CodeMeter: waiting for first poll…</span>
+        }
+        else
+        {
+            <span data-live-lic-text>
+                HPC @LicPool(lic.HpcUsed, lic.HpcTotal, lic.HpcAvailable)
+                · Classic @LicPool(lic.ClassicUsed, lic.ClassicTotal, lic.ClassicAvailable)
+                · poll @(lic.PollDurationMs >= 1000 ? (lic.PollDurationMs / 1000.0).ToString("0.0") + "s" : lic.PollDurationMs.ToString("0") + "ms")
+                · @LicAge()
+                @if (lic.Partial)
+                {
+                    <text> · partial</text>
+                }
+                @if (lic.UnmatchedHpc + lic.UnmatchedClassic > 0)
+                {
+                    <text> · other @(lic.UnmatchedHpc + lic.UnmatchedClassic)</text>
+                }
+            </span>
+        }
     </div>
 
     <div data-flood-live-body>
@@ -247,7 +288,15 @@
         @if (Model.Enrolled.Count == 0)
         {
             <p class="text-secondary mb-0">
-                No Flood machines enrolled. Open the <a asp-page="/Flood" asp-route-tab="enroll">Enrollment</a> tab to add hosts by hostname or IP.
+                No Flood machines enrolled.
+                @if (!Model.LiveOnly)
+                {
+                    <text>Open the <a asp-page="/Flood" asp-route-tab="enroll">Enrollment</a> tab to add hosts by hostname or IP.</text>
+                }
+                else
+                {
+                    <text>Ask a Flood admin to enroll hosts.</text>
+                }
             </p>
         }
         else
@@ -265,6 +314,12 @@
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
                             title="Detected run: HH:mm on top, dd/MM under (green = launch, red = stop — stop time stays until the next run starts). Elevated = CPU &gt; 20% or GPU &gt; 5% for 2 samples. Otherwise Active/Idle/N/A from busy thresholds. Click to sort.">Active</th>
                         <th class="hd-th-tip" data-sort="num" scope="col"
+                            data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                            title="CodeMeter HPC seats checked out to this machine’s last known IP (product 926). One pool across redundant license servers. Click to sort.">HPC</th>
+                        <th class="hd-th-tip" data-sort="num" scope="col"
+                            data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
+                            title="CodeMeter Classic seats checked out to this machine’s last known IP (product 920). Click to sort.">Classic</th>
+                        <th class="hd-th-tip" data-sort="num" data-default-desc scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
                             title="GPU utilisation from the latest ~30s sample. Can exceed 100% when Windows GPU Engine counters are summed across engines. Click to sort.">GPU %</th>
                         <th class="hd-th-tip" data-sort="num" scope="col"
@@ -288,7 +343,7 @@
                         <th class="hd-th-tip" data-sort="num" scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
                             title="Network transmit (outbound) rate from the latest sample. Click to sort.">Net Tx</th>
-                        <th class="hd-th-tip" data-sort="num" data-default-desc scope="col"
+                        <th class="hd-th-tip" data-sort="num" scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
                             title="Hours today with TUFLOW detected, from ~30s samples (sum of sample intervals while TUFLOW was running). Click to sort.">Today runtime</th>
                         <th class="hd-th-tip" data-sort="num" scope="col"
@@ -302,7 +357,7 @@
                 <tbody>
                 @if (Model.FilteredLiveRows.Count == 0)
                 {
-                    <tr><td colspan="14">No rows match the current filter.</td></tr>
+                    <tr><td colspan="16">No rows match the current filter.</td></tr>
                 }
                 @foreach (var r in Model.FilteredLiveRows)
                 {
@@ -314,12 +369,20 @@
                     var statusClass = HistoricalDashboardModel.ActiveColumnCssClass(r);
                     var statusTitle = HistoricalDashboardModel.ActiveColumnTitle(r);
                     var hasActiveStamp = HistoricalDashboardModel.TryGetActiveStamp(r, out var activeStamp);
+                    var (hpcSeats, classicSeats) = Model.LicenseSeatsFor(r);
                     <tr data-machine-id="@r.MachineId">
                         <td class="hd-col-host" data-sort-value="@r.DisplayName" data-live="host" title="@(offline ? $"Last agent check-in: {checkInLabel} (offline)" : r.Hostname)">
-                            <a class="hd-live-host @(offline ? "hd-live-host-offline" : null)"
-                               asp-page="/HistoricalDashboardMachine"
-                               asp-route-id="@r.MachineId"
-                               title="@(offline ? $"Last agent check-in: {checkInLabel}" : r.Hostname)">@r.DisplayName</a>
+                            @if (Model.LiveOnly)
+                            {
+                                <span class="hd-live-host @(offline ? "hd-live-host-offline" : null)" data-live-host-text>@r.DisplayName</span>
+                            }
+                            else
+                            {
+                                <a class="hd-live-host @(offline ? "hd-live-host-offline" : null)"
+                                   asp-page="/HistoricalDashboardMachine"
+                                   asp-route-id="@r.MachineId"
+                                   title="@(offline ? $"Last agent check-in: {checkInLabel}" : r.Hostname)">@r.DisplayName</a>
+                            }
                             @if (!string.IsNullOrWhiteSpace(r.FriendlyName))
                             {
                                 <div class="hd-live-hostname text-secondary small">@r.Hostname</div>
@@ -353,6 +416,8 @@
                                 <span class="text-secondary">—</span>
                             }
                         </td>
+                        <td class="hd-live-metric" data-sort-value="@hpcSeats" data-live="hpc">@hpcSeats</td>
+                        <td class="hd-live-metric" data-sort-value="@classicSeats" data-live="classic">@classicSeats</td>
                         <td class="hd-live-metric" data-sort-value="@(r.GpuPercent ?? -1)" data-live="gpu">@HistoricalDashboardModel.FormatGauge(r.GpuPercent)</td>
                         <td class="hd-live-metric" data-sort-value="@(r.CpuPercent ?? -1)" data-live="cpu">@HistoricalDashboardModel.FormatGauge(r.CpuPercent)</td>
                         <td class="hd-live-metric" data-sort-value="@(r.GpuMemoryUsedMb ?? -1)" data-live="gpumem">@HistoricalDashboardModel.FormatDataFromMb(r.GpuMemoryUsedMb)</td>
@@ -370,8 +435,22 @@
             </table>
         }
     </div>
+
+    <div class="hd-panel mt-3" data-flood-live-charts-panel>
+        <h3 class="h6 mb-2">Active runs</h3>
+        <p class="text-secondary small mb-2">
+            Shared live stream (one server rebuild ≈ every 30s for all viewers).
+            GPU / CPU / RAM% (left) and Disk W / Net Tx MB/s (right) — use the checkboxes to hide series.
+            RAM% needs known hardware RAM on the machine. Charts appear for <strong>Active</strong> machines.
+        </p>
+        <div class="hd-run-list" data-flood-live-charts>
+            <p class="text-secondary small mb-0" data-flood-live-charts-empty>No Active TUFLOW runs right now.</p>
+        </div>
     </div>
     </div>
+    </div>
+    <script src="~/js/hd-gpu-run-chart.js" asp-append-version="true"></script>
+    <script src="~/js/hd-flood-live.js" asp-append-version="true"></script>
 }
 
 @if (tab == "historical")
@@ -678,9 +757,6 @@
     }
     return;
   }
-  if (root.dataset.floodLiveBound === '1') return;
-  root.dataset.floodLiveBound = '1';
-
   function initHeaderTooltips(scope) {
     if (!window.bootstrap?.Tooltip) return;
     (scope || root).querySelectorAll('.hd-live-fleet-table thead th[data-bs-toggle="tooltip"]').forEach((el) => {
@@ -691,177 +767,11 @@
       });
     });
   }
-
   if (window.HeimdallTable) {
     HeimdallTable.initSort(root);
     HeimdallTable.initTextFilter(root);
   }
   initHeaderTooltips(root);
-
-  const form = root.querySelector('[data-flood-live-filter]');
-
-  function buildUrl() {
-    const params = new URLSearchParams();
-    params.set('tab', 'live');
-    params.set('partial', '1');
-    if (form) {
-      const q = form.querySelector('[name="q"]');
-      const status = form.querySelector('[name="statusFilter"]');
-      if (q && q.value) params.set('q', q.value);
-      if (status && status.value) params.set('statusFilter', status.value);
-    }
-    return '/HistoricalDashboard?' + params.toString();
-  }
-
-  function patchRows(scopeOld, scopeNew) {
-    scopeNew.querySelectorAll('tr[data-machine-id]').forEach((newRow) => {
-      const id = newRow.getAttribute('data-machine-id');
-      const oldRow = scopeOld.querySelector('tr[data-machine-id="' + id + '"]');
-      if (!oldRow) return;
-      newRow.querySelectorAll('[data-live]').forEach((newCell) => {
-        const key = newCell.getAttribute('data-live');
-        if (!key || key === 'host') return;
-        const oldCell = oldRow.querySelector('[data-live="' + key + '"]');
-        if (!oldCell) return;
-        if (oldCell.innerHTML !== newCell.innerHTML) oldCell.innerHTML = newCell.innerHTML;
-        if (newCell.hasAttribute('data-sort-value'))
-          oldCell.setAttribute('data-sort-value', newCell.getAttribute('data-sort-value'));
-      });
-      const newHost = newRow.querySelector('[data-live="host"]');
-      const oldHost = oldRow.querySelector('[data-live="host"]');
-      if (oldHost && newHost) {
-        const newLink = newHost.querySelector('.hd-live-host');
-        const oldLink = oldHost.querySelector('.hd-live-host');
-        if (newLink && oldLink) {
-          if (oldLink.textContent !== newLink.textContent) oldLink.textContent = newLink.textContent;
-          if (newLink.getAttribute('href') && oldLink.getAttribute('href') !== newLink.getAttribute('href'))
-            oldLink.setAttribute('href', newLink.getAttribute('href'));
-          oldLink.classList.toggle('hd-live-host-offline', newLink.classList.contains('hd-live-host-offline'));
-          oldLink.classList.toggle('hd-live-host-stale', newLink.classList.contains('hd-live-host-stale'));
-          if (newLink.hasAttribute('title')) oldLink.title = newLink.title;
-        }
-        if (newHost.hasAttribute('title')) oldHost.title = newHost.title;
-        const newHn = newHost.querySelector('.hd-live-hostname');
-        const oldHn = oldHost.querySelector('.hd-live-hostname');
-        if (newHn && oldHn) oldHn.textContent = newHn.textContent;
-        else if (newHn && !oldHn) oldHost.insertBefore(newHn.cloneNode(true), oldHost.querySelector('.hd-live-ip'));
-        else if (!newHn && oldHn) oldHn.remove();
-        const newIp = newHost.querySelector('.hd-live-ip');
-        const oldIp = oldHost.querySelector('.hd-live-ip');
-        if (newIp && oldIp) oldIp.textContent = newIp.textContent;
-        else if (newIp && !oldIp) oldHost.appendChild(newIp.cloneNode(true));
-        else if (!newIp && oldIp) oldIp.remove();
-        if (newHost.hasAttribute('data-sort-value'))
-          oldHost.setAttribute('data-sort-value', newHost.getAttribute('data-sort-value'));
-      }
-    });
-  }
-
-  function patchFromHtml(html) {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const nextRoot = doc.querySelector('[data-flood-live-root]');
-    if (!nextRoot) return false;
-
-    const metaNew = nextRoot.querySelector('[data-live="meta"]');
-    if (metaNew) {
-      const filtered = metaNew.getAttribute('data-filtered');
-      const total = metaNew.getAttribute('data-total');
-      if (filtered != null && total != null) updateMetaCount(filtered, total);
-    }
-
-    const bodyOld = root.querySelector('[data-flood-live-body]');
-    const bodyNew = nextRoot.querySelector('[data-flood-live-body]');
-    if (!bodyOld || !bodyNew) return false;
-
-    const oldIds = [...bodyOld.querySelectorAll('tr[data-machine-id]')].map((el) => el.getAttribute('data-machine-id'));
-    const newIds = [...bodyNew.querySelectorAll('tr[data-machine-id]')].map((el) => el.getAttribute('data-machine-id'));
-    const structureSame =
-      oldIds.length === newIds.length &&
-      oldIds.every((id, i) => id === newIds[i]) &&
-      !!bodyOld.querySelector('#live-fleet-table') === !!bodyNew.querySelector('#live-fleet-table');
-
-    if (!structureSame) {
-      bodyOld.innerHTML = bodyNew.innerHTML;
-      if (window.HeimdallTable) HeimdallTable.initSort(bodyOld);
-      initHeaderTooltips(bodyOld);
-      return true;
-    }
-
-    patchRows(bodyOld, bodyNew);
-    return true;
-  }
-
-  const REFRESH_MS = 30000;
-  let timer = null;
-  let countdownTimer = null;
-  let nextRefreshAt = Date.now() + REFRESH_MS;
-  let refreshing = false;
-
-  function updateMetaCount(filtered, total) {
-    const meta = root.querySelector('[data-live="meta"]');
-    if (!meta) return;
-    meta.setAttribute('data-filtered', String(filtered));
-    meta.setAttribute('data-total', String(total));
-    const el = meta.querySelector('[data-live-meta-count]');
-    if (el) el.textContent = filtered + ' / ' + total + ' enrolled';
-  }
-
-  function updateMetaCountdown() {
-    const el = root.querySelector('[data-live-meta-countdown]');
-    if (!el) return;
-    const remaining = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
-    el.textContent = 'Next update in ' + remaining + 's';
-  }
-
-  function resetCountdown() {
-    nextRefreshAt = Date.now() + REFRESH_MS;
-    updateMetaCountdown();
-  }
-
-  async function softRefresh() {
-    if (refreshing || document.hidden) return;
-    refreshing = true;
-    try {
-      const res = await fetch(buildUrl(), {
-        credentials: 'same-origin',
-        headers: {
-          'X-Fleet-Partial': '1',
-          'X-Ops-Partial': '1',
-          Accept: 'text/html'
-        }
-      });
-      if (!res.ok) return;
-      const html = await res.text();
-      if (!patchFromHtml(html)) return;
-      if (window.HeimdallOpsTabs && typeof window.HeimdallOpsTabs.invalidate === 'function')
-        window.HeimdallOpsTabs.invalidate('live');
-      resetCountdown();
-      schedule();
-    } catch (_) {
-      /* keep current numbers */
-    } finally {
-      refreshing = false;
-    }
-  }
-
-  function schedule() {
-    if (timer) clearInterval(timer);
-    timer = setInterval(softRefresh, REFRESH_MS);
-  }
-
-  if (form) {
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      softRefresh();
-    });
-  }
-
-  resetCountdown();
-  schedule();
-  if (countdownTimer) clearInterval(countdownTimer);
-  countdownTimer = setInterval(updateMetaCountdown, 1000);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) softRefresh();
-  });
+  if (window.HeimdallFloodLive) window.HeimdallFloodLive.init(root);
 })();
 </script>

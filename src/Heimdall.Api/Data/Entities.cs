@@ -112,6 +112,14 @@ public class Machine
     public string? PendingTuflowStartJson { get; set; }
     /// <summary>Latest JSON TuflowRunStatusDto reported by the agent for the run it is tracking, if any.</summary>
     public string? TuflowRunStatusJson { get; set; }
+    /// <summary>JSON string array of RunIds to graceful-stop (multi-run queue). Empty/null = stop the tracked run (legacy).</summary>
+    public string? PendingTuflowStopRunIdsJson { get; set; }
+    /// <summary>Max concurrent Heimdall-launched TUFLOW processes on this host. Default 1 until licence model is validated.</summary>
+    public int TuflowMaxConcurrentRuns { get; set; } = 1;
+    /// <summary>Optional GPU card cap for queue dispatch (informational / future slot math). Null = unset.</summary>
+    public int? TuflowMaxGpuCards { get; set; }
+    /// <summary>Optional CPU thread cap for queue dispatch (informational). Null = unset.</summary>
+    public int? TuflowMaxCpuThreads { get; set; }
 
     /// <summary>JSON ClientUpdateRequestDto queued for silent agent self-update.</summary>
     public string? PendingClientUpdateJson { get; set; }
@@ -857,6 +865,10 @@ public class TuflowBehaviourSample
     public double? ProcessGpuPercent { get; set; }
     public double? MachineCpuPercent { get; set; }
     public double? MachineGpuPercent { get; set; }
+    public double? MachineRamUsedMb { get; set; }
+    public double? ProcessDiskWriteMBps { get; set; }
+    public double? MachineDiskWriteMBps { get; set; }
+    public double? NetworkOutMBps { get; set; }
     /// <summary>JSON array of GpuEngineSightingDto.</summary>
     public string GpuEnginesJson { get; set; } = "[]";
 }
@@ -972,4 +984,48 @@ public class SiteUsageEvent
     public string? IpAddress { get; set; }
     public string? UserAgent { get; set; }
     public string? Referrer { get; set; }
+}
+
+/// <summary>Named TUFLOW run queue (per machine, fleet/unassigned, or saved template).</summary>
+public class TuflowQueue
+{
+    public int Id { get; set; }
+    /// <summary>Null = fleet/unassigned or template (see IsTemplate).</summary>
+    public int? MachineId { get; set; }
+    public Machine? Machine { get; set; }
+    public required string Name { get; set; }
+    public bool IsTemplate { get; set; }
+    public DateTimeOffset SavedUtc { get; set; }
+    public DateTimeOffset UpdatedUtc { get; set; }
+    public List<TuflowQueueItem> Items { get; set; } = [];
+}
+
+/// <summary>One simulation in a TUFLOW queue (scenario/event combo or one-off start).</summary>
+public class TuflowQueueItem
+{
+    public int Id { get; set; }
+    public int QueueId { get; set; }
+    public TuflowQueue Queue { get; set; } = null!;
+    /// <summary>Lower runs first. Ties broken by Id.</summary>
+    public int Priority { get; set; }
+    /// <summary>One of TuflowQueueItemStates.*</summary>
+    public required string State { get; set; }
+    /// <summary>Pinned host; null = next free Flood machine on dispatch.</summary>
+    public int? AssignedMachineId { get; set; }
+    public Machine? AssignedMachine { get; set; }
+    public string LaunchMode { get; set; } = "ExeTcf";
+    public string ExePath { get; set; } = "";
+    public string TcfPath { get; set; } = "";
+    public string? CmdPath { get; set; }
+    public string? WorkingDirectory { get; set; }
+    public string ScenariosJson { get; set; } = "[]";
+    public string EventsJson { get; set; } = "[]";
+    public string? ResultsFolder { get; set; }
+    public string? RunName { get; set; }
+    public string? RequestedBy { get; set; }
+    public string? RunId { get; set; }
+    public DateTimeOffset CreatedUtc { get; set; }
+    public DateTimeOffset? StartedUtc { get; set; }
+    public DateTimeOffset? EndedUtc { get; set; }
+    public string? ErrorSummary { get; set; }
 }

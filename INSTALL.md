@@ -310,6 +310,10 @@ Staff Access can tie sign-in to the user's **Windows account** (Negotiate/NTLM/K
 3. Register staff in **Admin → Remote Access Groups** using emails that match AD: UPN (`user@domain.com`) or `user@` one of `EmailDomainSuffixes`.
 4. Restart **`HeimdallApi`** after changing `appsettings.json`.
 
+### CodeMeter TUFLOW licenses (Flood Live)
+
+Optional. On the **API host** (Windows), install [CodeMeter Runtime](https://www.wibu.com/), ensure `cmu32.exe` can reach Arup license servers, then set `Heimdall:CodeMeter:Enabled` to `true` in the installed `appsettings.json` (servers/product codes ship preconfigured for HPC 926 / Classic 920). Flood Live shows pool used/available and per-machine seats matched by `Machine.LastIp`. Poll interval defaults to 60s; the Live strip shows poll duration. Leave `Enabled: false` on hosts without Runtime (including Linux).
+
 **IIS alternative:** If you reverse-proxy with IIS instead of direct Kestrel, enable **Windows Authentication** on the IIS site and disable Anonymous for `/StaffAccess`, `/Staff`, and `/api/staff/*`; forward `X-Forwarded-*` headers. Kestrel-as-service (default installer) supports Negotiate directly — no IIS required.
 
 **Limitations:** Non–domain-joined PCs, macOS/Linux browsers, Safari, and some VPN clients may not send Windows credentials; staff on those machines cannot use Staff Access until they use a domain-joined Windows PC and intranet browser. This is intentional — it prevents email impersonation without passwords.

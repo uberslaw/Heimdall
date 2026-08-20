@@ -1,0 +1,227 @@
+@page
+@model Heimdall.Api.Pages.TuflowQueueModel
+@using Heimdall.Shared.Contracts
+@{
+    ViewData["Title"] = "Run Queue";
+    ViewData["HelpFragment"] = "tuflow-queue";
+    var isPartial = OpsPartial.IsPartial(ViewContext.HttpContext.Request);
+    if (isPartial)
+        Layout = null;
+    var d = Model.Data;
+}
+
+@if (!isPartial)
+{
+    <p class="text-secondary small"><a asp-page="/TuflowRuns">← TUFLOW Runs</a></p>
+}
+
+<div class="hd-panel mb-3">
+    @if (!isPartial)
+    {
+        <h2 class="hd-section-title mb-2">Run Queue</h2>
+    }
+    <p class="text-secondary small mb-0">
+        Same idea as a batch <code>.cmd</code> that loops <code>-s1/-s2/-e1…</code> and waits until TUFLOW count drops —
+        except leftover combos are claimed by the <strong>next idle Flood machine</strong>, not stacked on one host.
+        Each host runs <strong>one Heimdall-launched sim at a time</strong>. Use UNC paths (<code>\\server\share\…</code>), not mapped <code>P:\</code>.
+        Do not wrap the batch in <code>start</code> here — Heimdall launches TUFLOW synchronously so stop/progress work.
+    </p>
+</div>
+
+<div class="hd-panel mb-3">
+    <h3 class="h6 mb-2">Add simulations</h3>
+    <form method="post" asp-page-handler="AddMatrix" class="mb-0">
+        <fieldset class="mb-2">
+            <legend class="form-label mb-1">Where they run</legend>
+            <label class="d-inline-flex align-items-center me-3 gap-1">
+                <input type="radio" name="target" value="fleet" checked />
+                Fleet — any idle enrolled host
+            </label>
+            <label class="d-inline-flex align-items-center gap-1">
+                <input type="radio" name="target" value="machine" />
+                Pin to one machine
+            </label>
+            <select class="form-select form-select-sm d-inline-block w-auto ms-2" name="machineId">
+                <option value="">(pick if pinning)</option>
+                @foreach (var h in d.Hosts)
+                {
+                    if (d.MachineId == h.MachineId)
+                    {
+                        <option value="@h.MachineId" selected>@(h.FriendlyName ?? h.Hostname)</option>
+                    }
+                    else
+                    {
+                        <option value="@h.MachineId">@(h.FriendlyName ?? h.Hostname)</option>
+                    }
+                }
+            </select>
+        </fieldset>
+        <div class="row g-2 mb-2">
+            <div class="col-md-6">
+                <label class="form-label small mb-1">TUFLOW .exe (local C:\–F:\ or UNC)</label>
+                <input class="form-control form-control-sm" name="exePath" required placeholder="C:\TUFLOW\...\TUFLOW_iSP_w64.exe" />
+                <p class="text-secondary small mb-0 mt-1">Fleet target: use a UNC exe (or the same local path on every host). Your old <code>P:\Program Files\Tuflow\…</code> must become <code>\\server\…\TUFLOW_iSP_w64.exe</code>.</p>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small mb-1">.tcf (UNC if on a share)</label>
+                <input class="form-control form-control-sm" name="tcfPath" required placeholder="\\server\share\Models\01266_~s1~_~s2~_~e1~_~e2~_~e3~_~e4~_001.tcf" />
+            </div>
+        </div>
+        <p class="text-secondary small mb-1">Scenario groups become <code>-s1</code>, <code>-s2</code>, … Event groups become <code>-e1</code>, <code>-e2</code>, … Tokens in a group are space/comma separated; every group is crossed with the others (cartesian).</p>
+        <div class="row g-2 mb-2">
+            <div class="col-md-3"><label class="form-label small mb-1">-s1</label><input class="form-control form-control-sm" name="s1" placeholder="E01" /></div>
+            <div class="col-md-3"><label class="form-label small mb-1">-s2</label><input class="form-control form-control-sm" name="s2" placeholder="1m" /></div>
+            <div class="col-md-3"><label class="form-label small mb-1">-s3</label><input class="form-control form-control-sm" name="s3" /></div>
+            <div class="col-md-3"><label class="form-label small mb-1">-s4</label><input class="form-control form-control-sm" name="s4" /></div>
+            <div class="col-md-3"><label class="form-label small mb-1">-e1</label><input class="form-control form-control-sm" name="e1" placeholder="Medium-term_SSP2-4.5" /></div>
+            <div class="col-md-3"><label class="form-label small mb-1">-e2</label><input class="form-control form-control-sm" name="e2" placeholder="01.00p" /></div>
+            <div class="col-md-3"><label class="form-label small mb-1">-e3</label><input class="form-control form-control-sm" name="e3" placeholder="010m 120m" /></div>
+            <div class="col-md-3"><label class="form-label small mb-1">-e4</label><input class="form-control form-control-sm" name="e4" placeholder="tp01 tp02 … tp10" /></div>
+        </div>
+        <div class="row g-2 mb-2">
+            <div class="col-md-4">
+                <label class="form-label small mb-1">Run name prefix (optional)</label>
+                <input class="form-control form-control-sm" name="runName" placeholder="01266" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small mb-1">Your name</label>
+                <input class="form-control form-control-sm" name="requestedBy" value="@Model.SuggestedRequestedBy" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small mb-1">Working directory (optional UNC)</label>
+                <input class="form-control form-control-sm" name="workingDirectory" />
+            </div>
+        </div>
+        <button type="submit" class="btn btn-hd btn-sm">Add to queue</button>
+    </form>
+</div>
+
+<div class="hd-panel mb-3">
+    <h3 class="h6 mb-2">Waiting (fleet — unassigned)</h3>
+    @if (d.FleetUnassigned.Count == 0)
+    {
+        <p class="text-secondary small mb-0">Nothing in the shared queue. Add combos above with “Fleet” selected.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="hd-table mb-0">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Run</th>
+                        <th>Scenarios / events</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var item in d.FleetUnassigned)
+                {
+                    <tr>
+                        <td>@item.Priority</td>
+                        <td>
+                            <div>@(item.RunName ?? "(unnamed)")</div>
+                            <div class="text-secondary small" title="@item.TcfPath">@item.TcfPath</div>
+                        </td>
+                        <td class="small">@item.ScenariosJson @item.EventsJson</td>
+                        <td class="text-nowrap">
+                            <form method="post" asp-page-handler="Move" class="d-inline">
+                                <input type="hidden" name="itemId" value="@item.Id" />
+                                <input type="hidden" name="delta" value="-1" />
+                                <button class="btn btn-ghost btn-sm" type="submit">Up</button>
+                            </form>
+                            <form method="post" asp-page-handler="Move" class="d-inline">
+                                <input type="hidden" name="itemId" value="@item.Id" />
+                                <input type="hidden" name="delta" value="1" />
+                                <button class="btn btn-ghost btn-sm" type="submit">Down</button>
+                            </form>
+                            <form method="post" asp-page-handler="Cancel" class="d-inline">
+                                <input type="hidden" name="itemId" value="@item.Id" />
+                                <button class="btn btn-ghost btn-sm" type="submit">Cancel</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<div class="hd-panel mb-3">
+    <h3 class="h6 mb-2">Running / dispatching</h3>
+    @if (d.FleetActive.Count == 0)
+    {
+        <p class="text-secondary small mb-0">No queue items in flight. See <a asp-page="/Flood" asp-route-tab="sims">Fleet Sims</a> for live progress.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="hd-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Run</th>
+                        <th>Host</th>
+                        <th>State</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var item in d.FleetActive)
+                {
+                    <tr>
+                        <td>@(item.RunName ?? item.RunId)</td>
+                        <td>@(item.AssignedHostname ?? "—")</td>
+                        <td><span class="badge-pill badge-active">@item.State</span></td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@if (d.Items.Count > 0)
+{
+    <div class="hd-panel mb-3">
+        <h3 class="h6 mb-2">Pinned to @(d.FriendlyName ?? d.Hostname)</h3>
+        <div class="table-responsive">
+            <table class="hd-table mb-0">
+                <thead>
+                    <tr><th>Run</th><th>State</th><th></th></tr>
+                </thead>
+                <tbody>
+                @foreach (var item in d.Items)
+                {
+                    <tr>
+                        <td>@(item.RunName ?? item.TcfPath)</td>
+                        <td>@item.State</td>
+                        <td>
+                            @if (item.State == TuflowQueueItemStates.Queued)
+                            {
+                                <form method="post" asp-page-handler="Assign" class="d-inline">
+                                    <input type="hidden" name="itemId" value="@item.Id" />
+                                    <input type="hidden" name="machineId" value="@d.MachineId" />
+                                    <button class="btn btn-ghost btn-sm" type="submit">Move to fleet</button>
+                                </form>
+                                <form method="post" asp-page-handler="Cancel" class="d-inline">
+                                    <input type="hidden" name="itemId" value="@item.Id" />
+                                    <input type="hidden" name="machineId" value="@d.MachineId" />
+                                    <button class="btn btn-ghost btn-sm" type="submit">Cancel</button>
+                                </form>
+                            }
+                            else if (item.State is TuflowQueueItemStates.Failed or TuflowQueueItemStates.Stopped or TuflowQueueItemStates.Completed)
+                            {
+                                <form method="post" asp-page-handler="Rerun" class="d-inline">
+                                    <input type="hidden" name="itemId" value="@item.Id" />
+                                    <input type="hidden" name="machineId" value="@d.MachineId" />
+                                    <button class="btn btn-ghost btn-sm" type="submit">Re-queue</button>
+                                </form>
+                            }
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}

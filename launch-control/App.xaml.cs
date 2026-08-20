@@ -16,6 +16,7 @@ public partial class App : Application
         Directory.CreateDirectory(logs);
         var health = ResolveHealthUrl();
 
+        // Run Setup actions without opening the full WinForms Setup shell.
         ExtraAction Mode(string title, string mode, string group, bool elevate = true) =>
             new(title, w =>
             {
@@ -24,8 +25,10 @@ public partial class App : Application
                     w.AppendLog($"Missing {setupPs1}", "ERROR");
                     return;
                 }
-                ProcessUtil.StartPowerShell(setupPs1, scripts, elevate, "-Mode", mode);
-                w.AppendLog($"Launching Setup -Mode {mode}");
+                w.AppendLog($"Starting {title}…", "STEP");
+                w.SetFollowLogs(true);
+                ProcessUtil.StartPowerShell(setupPs1, scripts, elevate, "-Mode", mode, "-ActionOnly");
+                w.AppendLog($"Launched Setup action {mode} (no full Setup window). Approve UAC if prompted.", "IMPORTANT");
             }, group);
 
         LaunchControlApp.Run(this, new LaunchControlProfile
@@ -34,10 +37,19 @@ public partial class App : Application
             ProductName = "Heimdall",
             AppDataFolder = "Heimdall",
             ServiceNames = ["HeimdallApi", "HeimdallAgent"],
+            CompactServiceControls = true,
+            ShowRefreshButton = false,
+            ShowFollowLogsButton = false,
             HealthUrl = health,
             BrowserUrl = health?.Replace("/api/health", "/", StringComparison.OrdinalIgnoreCase) ?? "http://localhost:5080/",
             LogPaths = Directory.Exists(logs)
-                ? Directory.GetFiles(logs, "*.log").Take(4).ToArray()
+                ? Directory.GetFiles(logs, "launch-control-*.log")
+                    .OrderByDescending(File.GetLastWriteTimeUtc)
+                    .Take(2)
+                    .Concat(Directory.GetFiles(logs, "*.log").Take(2))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(4)
+                    .ToArray()
                 : [],
             CrashLogPath = Path.Combine(root, "logs", "launch-control.log"),
             DefaultColors = new Dictionary<string, string>
@@ -46,34 +58,44 @@ public partial class App : Application
                 ["PrimaryActionColor"] = "#2E6DA4"
             },
             MetaText = () => $"API {health ?? "(not configured)"}  Logs %ProgramData%\\Heimdall\\logs",
+            StartupNotes =
+            [
+                "Closing this window does not stop Heimdall services.",
+                "Republish / Setup run as actions in this window (not the old Setup shell).",
+                "Expand Diagnostics / Recovery when needed. Log colors: blue = important/steps, green = OK, amber = warn, red = failures only."
+            ],
+            ExtraActionLayout = new ExtraActionLayout
+            {
+                CompactGroups = ["Republish", "Setup"],
+                CollapsedGroups = ["Diagnostics", "Recovery"]
+            },
             ExtraActions =
             [
+                // Republish first (preserve-config redeploy + pack)
+                Mode("Redeploy API (preserve config)", "RedeployApi", "Republish"),
+                Mode("Create client pack", "PackCollector", "Republish"),
+                // Setup
                 Mode("Install API on this PC", "InstallApi", "Setup"),
                 Mode("Install agent on this PC", "InstallCollector", "Setup"),
                 Mode("Push client pack to PC(s)…", "PushClientPack", "Setup"),
-                Mode("Create client pack", "PackCollector", "Republish"),
+                Mode("Push pack zip to network share…", "PushPackZip", "Setup"),
+                Mode("Deposit pack via API…", "DepositPack", "Setup"),
+                // Diagnostics (collapsed) — includes refresh / follow logs
+                new("Refresh status", w => { _ = w.RequestStatusRefreshAsync(); }, "Diagnostics"),
+                new("Follow logs (toggle)", w => w.ToggleFollowLogs(), "Diagnostics"),
                 Mode("Client health check", "ClientCheck", "Diagnostics", elevate: false),
                 Mode("Collect diagnostics", "Diagnostics", "Diagnostics"),
+                Mode("Check prerequisites", "Prerequisites", "Diagnostics", elevate: false),
                 Mode("Open logs folder", "OpenLogs", "Diagnostics", elevate: false),
                 Mode("Open remote logs folder…", "OpenRemoteLogs", "Diagnostics", elevate: false),
                 new("Open dashboard", w =>
                 {
                     var url = health?.Replace("/api/health", "/", StringComparison.OrdinalIgnoreCase) ?? "http://localhost:5080/";
                     ProcessUtil.OpenUrl(url.TrimEnd('/') + "/");
-                    w.AppendLog($"Opened {url}");
+                    w.AppendLog($"Opened {url}", "OK");
                 }, "Diagnostics"),
                 Mode("Backup API database…", "BackupApiDatabase", "Recovery"),
                 Mode("Remove seed/demo machines…", "RemoveSeedDemos", "Recovery"),
-                new("Open full Setup (legacy UI)", w =>
-                {
-                    if (!File.Exists(setupPs1))
-                    {
-                        w.AppendLog($"Missing {setupPs1}", "ERROR");
-                        return;
-                    }
-                    ProcessUtil.StartElevatedPowerShell(setupPs1, scripts);
-                    w.AppendLog("Opened Heimdall Setup (WinForms) for Redeploy / pack zip / deposit / prerequisites.");
-                }, "Setup"),
             ]
         });
     }

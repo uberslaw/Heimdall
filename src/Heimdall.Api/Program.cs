@@ -63,9 +63,18 @@ builder.Services.AddScoped<SocratizeQueryService>();
 builder.Services.AddScoped<RemoteMachineService>();
 builder.Services.AddScoped<MachineBookingService>();
 builder.Services.AddScoped<MachineSoftwareCapabilityService>();
+builder.Services.AddScoped<AccessAllowlistService>();
 builder.Services.AddScoped<FloodAccessGuard>();
+builder.Services.AddSingleton<FloodLiveHub>();
+builder.Services.AddHostedService<FloodLiveBroadcastService>();
+builder.Services.Configure<CodeMeterOptions>(
+    builder.Configuration.GetSection(CodeMeterOptions.SectionName));
+builder.Services.AddSingleton<CodeMeterLicenseHub>();
+builder.Services.AddScoped<CodeMeterQueryService>();
+builder.Services.AddHostedService<CodeMeterPollHostedService>();
 builder.Services.AddSingleton<ApiBuildStamp>();
 builder.Services.AddScoped<TuflowRunService>();
+builder.Services.AddScoped<TuflowQueueService>();
 builder.Services.Configure<TuflowBehaviourOptions>(
     builder.Configuration.GetSection(TuflowBehaviourOptions.SectionName));
 builder.Services.AddScoped<TuflowBehaviourService>();
@@ -458,6 +467,68 @@ app.MapPost("/api/fleet/snapshot", async (FleetSnapshotDto dto, FleetDashboardSe
 
     var ok = await fleet.IngestSnapshotAsync(dto, ct);
     return ok ? Results.Accepted() : Results.NotFound();
+});
+
+// --- Flood Live shared stream (SSE) — one rebuild fans out to all viewers ---
+app.MapGet("/api/flood/live/stream", async (
+    HttpContext ctx,
+    FloodAccessGuard flood,
+    FloodLiveHub hub,
+    CancellationToken ct) =>
+{
+    if (flood.ForbidIfLiveDenied(ctx) is not null)
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+
+    ctx.Response.Headers.CacheControl = "no-cache, no-store";
+    ctx.Response.Headers.Connection = "keep-alive";
+    ctx.Response.Headers["X-Accel-Buffering"] = "no";
+    ctx.Response.ContentType = "text/event-stream";
+
+    var jsonOpts = new System.Text.Json.JsonSerializerOptions
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+    };
+
+    async Task WriteEventAsync(FloodLivePayload payload, CancellationToken token)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(payload, jsonOpts);
+        await ctx.Response.WriteAsync("id: " + payload.Version + "\n", token);
+        await ctx.Response.WriteAsync("event: live\n", token);
+        await ctx.Response.WriteAsync("data: " + json + "\n\n", token);
+        await ctx.Response.Body.FlushAsync(token);
+    }
+
+    var reader = hub.Subscribe(out var current);
+    try
+    {
+        if (current.Version > 0)
+            await WriteEventAsync(current, ct);
+
+        while (!ct.IsCancellationRequested)
+        {
+            using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            waitCts.CancelAfter(TimeSpan.FromSeconds(15));
+            try
+            {
+                while (await reader.WaitToReadAsync(waitCts.Token))
+                {
+                    while (reader.TryRead(out var payload))
+                        await WriteEventAsync(payload, ct);
+                }
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                await ctx.Response.WriteAsync(": ping\n\n", ct);
+                await ctx.Response.Body.FlushAsync(ct);
+            }
+        }
+    }
+    finally
+    {
+        hub.Unsubscribe(reader);
+    }
+
+    return Results.Empty;
 });
 
 // --- Staff Access (Windows-verified email when RequireWindowsAuth — see StaffAccessGuard) ---

@@ -140,4 +140,40 @@ public sealed class TuflowPendingDto
     public TuflowStartRequestDto? PendingTuflowStart { get; init; }
     /// <summary>True when RemoteMachineCommands.TuflowStopGraceful is in this machine's PendingCommands.</summary>
     public bool StopRequested { get; init; }
+    /// <summary>Specific RunIds to stop (multi-sim). Empty + StopRequested = stop all tracked runs.</summary>
+    public List<string> StopRunIds { get; init; } = [];
+    /// <summary>Host cap for concurrent Heimdall-launched TUFLOW processes.</summary>
+    public int MaxConcurrentRuns { get; init; } = 1;
+}
+
+/// <summary>TuflowQueueItem.State values.</summary>
+public static class TuflowQueueItemStates
+{
+    public const string Queued = "Queued";
+    public const string Dispatching = "Dispatching";
+    public const string Running = "Running";
+    public const string Completed = "Completed";
+    public const string Failed = "Failed";
+    public const string Stopped = "Stopped";
+    public const string Cancelled = "Cancelled";
+}
+
+/// <summary>Heimdall interchange JSON for queue import/export (not TUFLOW Runner's undocumented native file).</summary>
+public sealed class TuflowQueueFileDto
+{
+    public string Format { get; init; } = "heimdall-tuflow-queue-v1";
+    public List<TuflowQueueFileItemDto> Items { get; init; } = [];
+}
+
+public sealed class TuflowQueueFileItemDto
+{
+    public string? RunName { get; init; }
+    public string LaunchMode { get; init; } = TuflowLaunchModes.ExeTcf;
+    public string ExePath { get; init; } = "";
+    public string TcfPath { get; init; } = "";
+    public string? CmdPath { get; init; }
+    public string? WorkingDirectory { get; init; }
+    public List<string> Scenarios { get; init; } = [];
+    public List<string> Events { get; init; } = [];
+    public string? ResultsFolder { get; init; }
 }

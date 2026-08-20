@@ -7,6 +7,7 @@
     {
         "live" => "Live",
         "historical" => "Historical",
+        "queue" => "Run Queue",
         "sims" => "Fleet Sims",
         "behaviour" => "Run behaviour",
         "enroll" => "Enrollment",
@@ -15,6 +16,7 @@
     var helpFragment = active switch
     {
         "live" or "historical" or "enroll" => "historical-dashboard",
+        "queue" => "tuflow-queue",
         "sims" => "fleet-sims",
         "behaviour" => "tuflow-behaviour",
         _ => "historical-dashboard"
@@ -29,7 +31,7 @@
             <span class="hd-fleet-title-page" data-hd-flood-title>@titleWord</span>
         </h1>
         <ul class="nav nav-tabs hd-ops-tabs mb-0" id="hd-ops-tabs" role="tablist">
-        @foreach (var t in FloodModel.Tabs)
+        @foreach (var t in Model.VisibleTabs)
         {
             var isActive = t.Key == active;
             <li class="nav-item" role="presentation">
@@ -39,6 +41,7 @@
                    data-hd-ops-src="@FloodModel.PartialUrl(t.Key, ViewContext.HttpContext.Request)"
                    data-hd-flood-title="@t.Label"
                    data-hd-flood-help="@((t.Key) switch {
+                       "queue" => "tuflow-queue",
                        "sims" => "fleet-sims",
                        "behaviour" => "tuflow-behaviour",
                        _ => "historical-dashboard"

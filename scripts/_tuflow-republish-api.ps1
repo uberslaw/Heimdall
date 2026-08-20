@@ -67,6 +67,91 @@ function Wait-RepublishSeconds([int]$Seconds) {
     }
 }
 
+function Get-HeimdallApiServicePid {
+    try {
+        $row = Get-CimInstance Win32_Service -Filter "Name='HeimdallApi'" -ErrorAction SilentlyContinue
+        if ($row -and [int]$row.ProcessId -gt 0) { return [int]$row.ProcessId }
+    }
+    catch { }
+    return 0
+}
+
+# Request stop via sc.exe (avoids Stop-Service's long "Waiting for service..." spam),
+# poll until Stopped, then force-kill Heimdall.Api if still holding files.
+function Stop-HeimdallApiForRedeploy {
+    param(
+        [int]$TimeoutSec = 45,
+        [int]$ForceKillAfterSec = 20
+    )
+
+    $svc = Get-Service -Name HeimdallApi -ErrorAction SilentlyContinue
+    if (-not $svc) {
+        Write-RepublishLog 'HeimdallApi service not installed - nothing to stop'
+        return
+    }
+    if ($svc.Status -eq 'Stopped') {
+        Write-RepublishLog 'HeimdallApi already stopped'
+        return
+    }
+
+    Write-RepublishLog 'Stopping HeimdallApi (sc.exe stop)...'
+    # sc.exe returns immediately after requesting stop; avoids Stop-Service blocking + WARN spam.
+    $null = & sc.exe stop HeimdallApi 2>&1
+
+    $started = Get-Date
+    $deadline = $started.AddSeconds($TimeoutSec)
+    $killed = $false
+    while ($true) {
+        $svc = Get-Service -Name HeimdallApi -ErrorAction SilentlyContinue
+        if (-not $svc -or $svc.Status -eq 'Stopped') {
+            Write-RepublishLog 'HeimdallApi is stopped'
+            break
+        }
+
+        $elapsed = ((Get-Date) - $started).TotalSeconds
+        if (-not $killed -and $elapsed -ge $ForceKillAfterSec) {
+            $svcPid = Get-HeimdallApiServicePid
+            if ($svcPid -gt 0) {
+                Write-RepublishLog "HeimdallApi still $($svc.Status) after ${ForceKillAfterSec}s — force-killing PID $svcPid" -Level WARN
+                try {
+                    Stop-Process -Id $svcPid -Force -ErrorAction Stop
+                    $killed = $true
+                }
+                catch {
+                    Write-RepublishLog "Force-kill PID $svcPid failed: $($_.Exception.Message)" -Level WARN
+                }
+            }
+            else {
+                # Service reports running but no PID — try process name.
+                $procs = @(Get-Process -Name 'Heimdall.Api' -ErrorAction SilentlyContinue)
+                if ($procs.Count -gt 0) {
+                    Write-RepublishLog ("Force-killing Heimdall.Api process(es): " + ($procs.Id -join ', ')) -Level WARN
+                    $procs | Stop-Process -Force -ErrorAction SilentlyContinue
+                    $killed = $true
+                }
+            }
+        }
+
+        if ((Get-Date) -ge $deadline) {
+            $svcPid = Get-HeimdallApiServicePid
+            Write-RepublishLog "Timed out waiting for HeimdallApi to stop (Status=$($svc.Status), PID=$svcPid)" -Level WARN
+            if ($svcPid -gt 0) {
+                try { Stop-Process -Id $svcPid -Force -ErrorAction SilentlyContinue } catch { }
+            }
+            Get-Process -Name 'Heimdall.Api' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            break
+        }
+
+        if (Get-Command Update-InstallApiProgressDisplay -ErrorAction SilentlyContinue) {
+            if (Test-InstallApiProgressActive) { Update-InstallApiProgressDisplay }
+        }
+        Start-Sleep -Milliseconds 400
+    }
+
+    # Brief settle so file locks release before robocopy.
+    Wait-RepublishSeconds 2
+}
+
 try {
     $script:RepublishStartedAt = Get-Date
     Write-RepublishLog "Log file: $log"
@@ -129,15 +214,22 @@ try {
     }
 
     Set-RepublishStep 3 'Stopping HeimdallApi'
-    Write-RepublishLog 'Stopping HeimdallApi...'
-    Stop-Service HeimdallApi -Force -ErrorAction SilentlyContinue
-    Wait-RepublishSeconds 2
+    Stop-HeimdallApiForRedeploy -TimeoutSec 45 -ForceKillAfterSec 20
 
     Set-RepublishStep 4 'Deploying binaries'
     Write-RepublishLog 'Robocopy (exclude appsettings)...'
     & robocopy $publish $dest /E /XF appsettings.json appsettings.*.json /NFL /NDL /NJH /NJS /nc /ns /np
     # robocopy 0-7 = success
     if ($LASTEXITCODE -ge 8) { throw "robocopy failed: $LASTEXITCODE" }
+
+    $mergeHelper = Join-Path $PSScriptRoot 'Merge-HeimdallCodeMeterAppsettings.ps1'
+    if (Test-Path -LiteralPath $mergeHelper) {
+        . $mergeHelper
+        $cfg = Join-Path $dest 'appsettings.json'
+        if (Merge-HeimdallCodeMeterAppsettings -AppSettingsPath $cfg -EnableIfRuntimePresent) {
+            Write-RepublishLog "Merged Heimdall:CodeMeter into $cfg (Enabled if cmu32 is present)" -Level OK
+        }
+    }
 
     Set-RepublishStep 5 'TuflowLauncher (optional)'
     if (Test-Path (Join-Path $env:ProgramFiles 'Heimdall\Agent')) {

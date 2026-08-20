@@ -1,0 +1,97 @@
+@page
+@model AccessListsModel
+@{
+    ViewData["Title"] = "Access lists";
+    ViewData["HelpFragment"] = "access-lists";
+}
+
+<div class="mb-3">
+    <h1 class="hd-title mb-1">Access lists</h1>
+    <p class="hd-sub mb-0">
+        Email allowlists that unlock Flood (and future gated pages). Site admins always have Full Flood.
+        Lists saved here are stored in the database and apply immediately — no API restart.
+    </p>
+</div>
+
+@if (TempData["Message"] is string ok)
+{
+    <div class="alert alert-success">@ok</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-warning">@err</div>
+}
+
+@if (!Model.Allowed)
+{
+    <div class="hd-panel mb-3">
+        <p class="mb-2">You need to be listed in <code>Heimdall:StaffAccess:AdminEmails</code> to manage access lists.</p>
+        <p class="small text-secondary mb-2">
+            Edit the installed API config, then restart the service:
+            <code>C:\Program Files\Heimdall\Api\appsettings.json</code>
+            → <code>Heimdall:StaffAccess:AdminEmails</code>
+        </p>
+        @if (Model.ConfiguredAdminEmails.Count > 0)
+        {
+            <p class="small mb-1"><strong>Configured AdminEmails:</strong></p>
+            <ul class="small mb-2">
+                @foreach (var e in Model.ConfiguredAdminEmails)
+                {
+                    <li><code>@e</code></li>
+                }
+            </ul>
+        }
+        <p class="small text-secondary mb-0">
+            Windows principal: <code>@(Model.WindowsPrincipal ?? "(none - Negotiate did not authenticate)")</code>
+            @if (Model.CandidateEmails.Count > 0)
+            {
+                var candidates = string.Join(", ", Model.CandidateEmails);
+                <br />Candidates: @candidates
+            }
+        </p>
+    </div>
+}
+else
+{
+    @foreach (var panel in Model.Panels)
+    {
+        <div class="hd-panel mb-4">
+            <h2 class="h5 mb-1">@panel.Title</h2>
+            <p class="small text-secondary mb-2">@panel.GrantsDescription</p>
+            <p class="small text-secondary mb-3">
+                Seed path: <code>@panel.ConfigPath</code>
+                @if (panel.Editable)
+                {
+                    <span> · Source: @(panel.FromDatabase ? "database (Admin override)" : "appsettings (not saved yet)")</span>
+                }
+                else
+                {
+                    <span> · Read-only from appsettings</span>
+                }
+                · @panel.EmailCount email@(panel.EmailCount == 1 ? "" : "s")
+            </p>
+
+            @if (panel.Editable)
+            {
+                <form method="post" asp-page-handler="Save">
+                    <input type="hidden" name="ListId" value="@panel.Id" />
+                    <label class="form-label small" for="emails-@panel.Id">Emails (one per line)</label>
+                    <textarea class="form-control font-monospace small mb-2"
+                              id="emails-@panel.Id"
+                              name="EmailsInput"
+                              rows="8"
+                              spellcheck="false">@panel.EmailsText</textarea>
+                    <button type="submit" class="hd-btn hd-btn-gold">Save @panel.Title</button>
+                </form>
+            }
+            else
+            {
+                <pre class="small bg-transparent border rounded p-2 mb-0" style="white-space: pre-wrap;">@(string.IsNullOrWhiteSpace(panel.EmailsText) ? "(none configured)" : panel.EmailsText)</pre>
+                <p class="small text-secondary mt-2 mb-0">
+                    Change site admins in <code>C:\Program Files\Heimdall\Api\appsettings.json</code>
+                    under <code>Heimdall:StaffAccess:AdminEmails</code>, then restart HeimdallApi.
+                </p>
+            }
+        </div>
+    }
+}

@@ -17,9 +17,11 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Heimdall.Api.Pages;
 
-public class FleetSimProgressModel(TuflowRunService runs, FloodAccessGuard flood) : PageModel
+public class FleetSimProgressModel(TuflowRunService runs, TuflowQueueService queues, FloodAccessGuard flood) : PageModel
 {
     public IReadOnlyList<FleetSimProgressRow> Rows { get; private set; } = [];
+    public int QueueWaiting { get; private set; }
+    public int QueueActive { get; private set; }
 
     public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
@@ -30,6 +32,7 @@ public class FleetSimProgressModel(TuflowRunService runs, FloodAccessGuard flood
             return OpsPartial.RedirectToFloodTab(Request, "sims");
 
         Rows = await runs.GetFleetProgressAsync(ct);
+        (QueueWaiting, QueueActive) = await queues.CountWorkAsync(ct);
         return Page();
     }
 

@@ -1989,6 +1989,58 @@ public static class SeedData
             )
             """);
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowBehaviourSamples_Run_Sampled ON TuflowBehaviourSamples(BehaviourRunId, SampledAtUtc)");
+        await TryExec(db, "ALTER TABLE TuflowBehaviourSamples ADD COLUMN MachineRamUsedMb REAL NULL");
+        await TryExec(db, "ALTER TABLE TuflowBehaviourSamples ADD COLUMN ProcessDiskWriteMBps REAL NULL");
+        await TryExec(db, "ALTER TABLE TuflowBehaviourSamples ADD COLUMN MachineDiskWriteMBps REAL NULL");
+        await TryExec(db, "ALTER TABLE TuflowBehaviourSamples ADD COLUMN NetworkOutMBps REAL NULL");
+
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN PendingTuflowStopRunIdsJson TEXT NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN TuflowMaxConcurrentRuns INTEGER NOT NULL DEFAULT 1");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN TuflowMaxGpuCards INTEGER NULL");
+        await TryExec(db, "ALTER TABLE Machines ADD COLUMN TuflowMaxCpuThreads INTEGER NULL");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS TuflowQueues (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MachineId INTEGER NULL,
+                Name TEXT NOT NULL,
+                IsTemplate INTEGER NOT NULL DEFAULT 0,
+                SavedUtc TEXT NOT NULL,
+                UpdatedUtc TEXT NOT NULL,
+                FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE
+            )
+            """);
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowQueues_MachineId ON TuflowQueues(MachineId)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowQueues_IsTemplate ON TuflowQueues(IsTemplate)");
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS TuflowQueueItems (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                QueueId INTEGER NOT NULL,
+                Priority INTEGER NOT NULL DEFAULT 0,
+                State TEXT NOT NULL,
+                AssignedMachineId INTEGER NULL,
+                LaunchMode TEXT NOT NULL DEFAULT 'ExeTcf',
+                ExePath TEXT NOT NULL DEFAULT '',
+                TcfPath TEXT NOT NULL DEFAULT '',
+                CmdPath TEXT NULL,
+                WorkingDirectory TEXT NULL,
+                ScenariosJson TEXT NOT NULL DEFAULT '[]',
+                EventsJson TEXT NOT NULL DEFAULT '[]',
+                ResultsFolder TEXT NULL,
+                RunName TEXT NULL,
+                RequestedBy TEXT NULL,
+                RunId TEXT NULL,
+                CreatedUtc TEXT NOT NULL,
+                StartedUtc TEXT NULL,
+                EndedUtc TEXT NULL,
+                ErrorSummary TEXT NULL,
+                FOREIGN KEY (QueueId) REFERENCES TuflowQueues(Id) ON DELETE CASCADE,
+                FOREIGN KEY (AssignedMachineId) REFERENCES Machines(Id) ON DELETE SET NULL
+            )
+            """);
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowQueueItems_Queue_Priority ON TuflowQueueItems(QueueId, Priority, Id)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowQueueItems_State ON TuflowQueueItems(State)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowQueueItems_AssignedMachineId ON TuflowQueueItems(AssignedMachineId)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_TuflowQueueItems_RunId ON TuflowQueueItems(RunId)");
 
         await EnsureCanonicalTeamsAsync(db);
     }

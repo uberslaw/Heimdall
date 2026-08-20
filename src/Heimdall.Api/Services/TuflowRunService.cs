@@ -18,13 +18,18 @@
 
 using System.Text.Json;
 using Heimdall.Api.Data;
+using Heimdall.Shared;
 using Heimdall.Shared.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace Heimdall.Api.Services;
 
-public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetDashboard, ILogger<TuflowRunService> logger)
+public class TuflowRunService(
+    HeimdallDbContext db,
+    FleetDashboardService fleetDashboard,
+    TuflowQueueService queues,
+    ILogger<TuflowRunService> logger)
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
@@ -71,20 +76,6 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
         if (!await IsFloodEnrolledAsync(machine.Id, ct))
             return (false, $"{hostname} is not enrolled as a Flood machine (Flood → Enrollment). Enroll it there first.", null);
 
-        var currentStatus = DeserializeStatus(machine.TuflowRunStatusJson);
-        if (IsActiveRunState(currentStatus?.State))
-            return (false, $"A run ({currentStatus!.RunId}, state {currentStatus.State}) is already tracked on {hostname}. Stop it first.", null);
-
-        if (!string.IsNullOrWhiteSpace(machine.PendingTuflowStartJson))
-            return (false, $"A start request is already queued on {hostname}, waiting for agent pickup.", null);
-
-        // Defence in depth against double-booking a licence: the fleet sampler detects TUFLOW by process
-        // name regardless of who/what started it, so this also catches someone having started a run by
-        // hand on this machine outside Heimdall.
-        var liveRow = (await fleetDashboard.GetLiveFleetAsync(ct)).FirstOrDefault(l => l.MachineId == machine.Id);
-        if (liveRow?.TuflowRunning == true)
-            return (false, $"TUFLOW is already running on {hostname} (detected by fleet sampling, not queued via Heimdall). Confirm it's finished before starting a new run.", null);
-
         var mode = string.Equals(launchMode, TuflowLaunchModes.Cmd, StringComparison.OrdinalIgnoreCase)
             ? TuflowLaunchModes.Cmd
             : TuflowLaunchModes.ExeTcf;
@@ -116,10 +107,32 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
             // looks like a valid short name and CreateProcess/TUFLOW then fail opaquely on the agent.
             if (!trimmedTcf.EndsWith(".tcf", StringComparison.OrdinalIgnoreCase))
                 return (false, $"Tcf path must be a .tcf file (got '{trimmedTcf}').", null);
-            if (!IsAbsoluteOrUncPath(trimmedExe))
-                return (false, $"TUFLOW .exe path must be absolute or UNC (got '{trimmedExe}').", null);
-            if (!IsAbsoluteOrUncPath(trimmedTcf))
-                return (false, $"Tcf path must be absolute or UNC (got '{trimmedTcf}').", null);
+        }
+
+        if (TuflowLaunchPath.ValidateLaunch(
+                mode, trimmedExe, trimmedTcf, trimmedCmd, workingDirectory, resultsFolder) is { } pathErr)
+            return (false, pathErr, null);
+
+        if (!await HasLaunchSlotAsync(machine, ct))
+        {
+            var waitName = await ResolveRunNameAsync(machine.Id, runName, mode == TuflowLaunchModes.Cmd ? trimmedCmd! : trimmedTcf, ct);
+            await queues.AddOneOffMirrorAsync(
+                machine.Id,
+                runId: "",
+                waitName,
+                mode,
+                trimmedExe,
+                mode == TuflowLaunchModes.Cmd ? "" : trimmedTcf,
+                trimmedCmd,
+                string.IsNullOrWhiteSpace(workingDirectory) ? null : workingDirectory.Trim(),
+                mode == TuflowLaunchModes.Cmd ? [] : scenarios.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList(),
+                mode == TuflowLaunchModes.Cmd ? [] : events.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList(),
+                string.IsNullOrWhiteSpace(resultsFolder) ? null : resultsFolder.Trim(),
+                requestedBy,
+                TuflowQueueItemStates.Queued,
+                ct);
+            logger.LogWarning("TUFLOW start for {Host} added to wait queue (host busy)", hostname);
+            return (true, "queued-wait", null);
         }
 
         var runId = Guid.NewGuid().ToString("n");
@@ -198,14 +211,11 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
             return (null, $"CMD/BAT path must end with .cmd or .bat (got '{trimmed}').");
         }
 
-        if (!IsAbsoluteOrUncPath(trimmed))
-            return (null, $"CMD/BAT path must be absolute or UNC (got '{trimmed}'). Prefer \\\\server\\share\\… so the agent service account can see it.");
+        if (TuflowLaunchPath.ValidateRequired(trimmed, "CMD/BAT path") is { } pathErr)
+            return (null, pathErr);
 
         return (trimmed, null);
     }
-
-    private static bool IsAbsoluteOrUncPath(string path) =>
-        Path.IsPathRooted(path);
 
     /// <summary>
     /// Resolution order per Chris's request ("...ask them to enter a name for the run on launch..."):
@@ -299,6 +309,7 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
                 machine.PendingTuflowStartJson = null;
 
             await UpsertHistoryAsync(machine.Id, reported, ct);
+            await queues.SyncItemFromRunAsync(reported.RunId, reported.State, reported.ErrorSummary ?? reported.Message, ct);
         }
 
         if (heartbeat.AcknowledgedCommands.Count == 0)
@@ -447,9 +458,11 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
     /// </summary>
     public async Task<TuflowPendingDto> GetPendingAsync(string hostname, CancellationToken ct)
     {
+        await TryDispatchQueueAsync(hostname, ct);
+
         var row = await db.Machines.AsNoTracking()
             .Where(m => m.Hostname == hostname)
-            .Select(m => new { m.PendingTuflowStartJson, m.PendingCommandsJson })
+            .Select(m => new { m.PendingTuflowStartJson, m.PendingCommandsJson, m.TuflowMaxConcurrentRuns })
             .FirstOrDefaultAsync(ct);
 
         if (row is null)
@@ -461,8 +474,102 @@ public class TuflowRunService(HeimdallDbContext db, FleetDashboardService fleetD
         return new TuflowPendingDto
         {
             PendingTuflowStart = DeserializeStartRequest(row.PendingTuflowStartJson),
-            StopRequested = stopRequested
+            StopRequested = stopRequested,
+            MaxConcurrentRuns = Math.Max(1, row.TuflowMaxConcurrentRuns)
         };
+    }
+
+    /// <summary>
+    /// One Heimdall-launched TUFLOW at a time per host (same idea as the CMD :limit_tuflow_instances
+    /// gate, but the leftover combos go to other idle Flood machines instead of waiting on this box).
+    /// </summary>
+    async Task TryDispatchQueueAsync(string hostname, CancellationToken ct)
+    {
+        var machine = await db.Machines.FirstOrDefaultAsync(m => m.Hostname == hostname, ct);
+        if (machine is null)
+            return;
+        if (!await IsFloodEnrolledAsync(machine.Id, ct))
+            return;
+        if (!await HasLaunchSlotAsync(machine, ct))
+            return;
+
+        var item = await queues.TryClaimNextForHostAsync(machine.Id, ct);
+        if (item is null)
+            return;
+
+        var runId = Guid.NewGuid().ToString("n");
+        var scenarios = TuflowQueueService.DeserializeStringList(item.ScenariosJson);
+        var events = TuflowQueueService.DeserializeStringList(item.EventsJson);
+        var nameHint = string.Equals(item.LaunchMode, TuflowLaunchModes.Cmd, StringComparison.OrdinalIgnoreCase)
+            ? (item.CmdPath ?? item.TcfPath)
+            : item.TcfPath;
+        var resolvedRunName = await ResolveRunNameAsync(machine.Id, item.RunName, nameHint, ct);
+        var now = DateTimeOffset.UtcNow;
+        var request = new TuflowStartRequestDto
+        {
+            RunId = runId,
+            RunName = resolvedRunName,
+            LaunchMode = item.LaunchMode,
+            ExePath = item.ExePath,
+            TcfPath = item.TcfPath,
+            CmdPath = item.CmdPath,
+            WorkingDirectory = item.WorkingDirectory,
+            Scenarios = scenarios,
+            Events = events,
+            ResultsFolder = item.ResultsFolder,
+            RequestedUtc = now,
+            RequestedBy = item.RequestedBy
+        };
+
+        machine.PendingTuflowStartJson = JsonSerializer.Serialize(request, JsonOptions);
+        machine.TuflowRunStatusJson = JsonSerializer.Serialize(new TuflowRunStatusDto
+        {
+            RunId = runId,
+            RunName = resolvedRunName,
+            State = TuflowRunStates.Starting,
+            TcfPath = string.Equals(item.LaunchMode, TuflowLaunchModes.Cmd, StringComparison.OrdinalIgnoreCase) ? null : item.TcfPath,
+            CmdPath = item.CmdPath,
+            UpdatedUtc = now
+        }, JsonOptions);
+
+        db.TuflowRunRecords.Add(new TuflowRunRecord
+        {
+            RunId = runId,
+            RunName = resolvedRunName,
+            MachineId = machine.Id,
+            TcfPath = string.Equals(item.LaunchMode, TuflowLaunchModes.Cmd, StringComparison.OrdinalIgnoreCase)
+                ? (item.CmdPath ?? item.TcfPath)
+                : item.TcfPath,
+            CmdPath = item.CmdPath,
+            RequestedUtc = now,
+            RequestedBy = item.RequestedBy,
+            State = TuflowRunStates.Starting,
+            UpdatedUtc = now
+        });
+
+        item.RunId = runId;
+        item.RunName = resolvedRunName;
+        item.StartedUtc = now;
+
+        await db.SaveChangesAsync(ct);
+        logger.LogWarning(
+            "Dispatched queue item {ItemId} as run {RunId} on {Host}: {Name}",
+            item.Id, runId, hostname, resolvedRunName);
+    }
+
+    async Task<bool> HasLaunchSlotAsync(Machine machine, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(machine.PendingTuflowStartJson))
+            return false;
+        if (IsActiveRunState(DeserializeStatus(machine.TuflowRunStatusJson)?.State))
+            return false;
+
+        var tuflowRunning = await db.FleetMetricSnapshots.AsNoTracking()
+            .Where(s => s.MachineId == machine.Id)
+            .OrderByDescending(s => s.Id)
+            .Select(s => (bool?)s.TuflowRunning)
+            .FirstOrDefaultAsync(ct);
+        return tuflowRunning != true;
     }
 
     /// <summary>Fleet-wide "how many licences are in use right now" summary across Flood-enrolled machines,

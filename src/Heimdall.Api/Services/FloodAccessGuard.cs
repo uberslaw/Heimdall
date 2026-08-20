@@ -1,56 +1,45 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
 
 namespace Heimdall.Api.Services;
 
 /// <summary>
-/// Gates TUFLOW / Flood hub (Historical + Sims + Enrollment) to AdminEmails ∪ FloodTeamEmails.
-/// Checks staff cookie email and Windows candidate emails (Negotiate).
+/// Gates Flood hub. Full Flood = AdminEmails ∪ Full Flood list (config or Admin DB override).
+/// Live-only = full ∪ Flood Live list. Checks staff cookie email and Windows candidate emails.
 /// </summary>
 public sealed class FloodAccessGuard(
-    IOptions<StaffAccessOptions> staffOptions,
-    IConfiguration config,
+    AccessAllowlistService allowlists,
     WindowsStaffIdentityService identity)
 {
-    public bool CanAccessFlood(HttpContext ctx)
-    {
-        foreach (var candidate in ResolveCandidateEmails(ctx))
-        {
-            if (EmailOnFloodAllowlist(candidate))
-                return true;
-        }
+    public bool CanAccessFlood(HttpContext ctx) =>
+        ResolveCandidateEmails(ctx).Any(e => allowlists.IsEmailAllowed(AccessAllowlistCatalog.FloodFull, e));
 
-        return false;
-    }
+    public bool CanAccessFloodLive(HttpContext ctx) =>
+        ResolveCandidateEmails(ctx).Any(e =>
+            allowlists.IsEmailAllowed(AccessAllowlistCatalog.FloodFull, e)
+            || allowlists.IsEmailAllowed(AccessAllowlistCatalog.FloodLive, e));
 
+    /// <summary>Full Flood access only (not Live-only).</summary>
     public IActionResult? ForbidIfDenied(HttpContext ctx) =>
         CanAccessFlood(ctx) ? null : new StatusCodeResult(StatusCodes.Status403Forbidden);
 
-    public bool EmailOnFloodAllowlist(string? email)
-    {
-        if (string.IsNullOrWhiteSpace(email))
-            return false;
+    /// <summary>Live tab / SSE — full Flood or FloodLiveEmails.</summary>
+    public IActionResult? ForbidIfLiveDenied(HttpContext ctx) =>
+        CanAccessFloodLive(ctx) ? null : new StatusCodeResult(StatusCodes.Status403Forbidden);
 
-        var normalized = WindowsStaffIdentityService.NormalizeEmail(email);
-        if (normalized.Length == 0)
-            return false;
+    public bool IsLiveOnly(HttpContext ctx) =>
+        CanAccessFloodLive(ctx) && !CanAccessFlood(ctx);
 
-        return GetFloodAllowlist().Any(allowed =>
-            string.Equals(
-                WindowsStaffIdentityService.NormalizeEmail(allowed),
-                normalized,
-                StringComparison.OrdinalIgnoreCase));
-    }
+    public bool EmailOnFloodAllowlist(string? email) =>
+        allowlists.IsEmailAllowed(AccessAllowlistCatalog.FloodFull, email);
 
-    public IReadOnlyList<string> GetFloodAllowlist()
-    {
-        var admins = staffOptions.Value.AdminEmails ?? [];
-        var flood = config.GetSection("Heimdall:FloodTeamEmails").Get<string[]>() ?? [];
-        return admins.Concat(flood)
-            .Where(e => !string.IsNullOrWhiteSpace(e))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
+    public bool EmailOnFloodLiveAllowlist(string? email) =>
+        allowlists.IsEmailAllowed(AccessAllowlistCatalog.FloodLive, email);
+
+    public IReadOnlyList<string> GetFloodAllowlist() =>
+        allowlists.GetFloodFullEffective();
+
+    public IReadOnlyList<string> GetFloodLiveAllowlist() =>
+        allowlists.GetFloodLiveOnly();
 
     private IEnumerable<string> ResolveCandidateEmails(HttpContext ctx)
     {

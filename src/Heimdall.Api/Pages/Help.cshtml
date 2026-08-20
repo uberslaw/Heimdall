@@ -27,6 +27,7 @@
         <a class="btn btn-ghost btn-sm" href="#remote-workstations">Remote Workstations</a>
         <a class="btn btn-ghost btn-sm" href="#remote-access-groups">Remote Access Groups</a>
         <a class="btn btn-ghost btn-sm" href="#auth">Auth</a>
+        <a class="btn btn-ghost btn-sm" href="#access-lists">Access lists</a>
         <a class="btn btn-ghost btn-sm" href="#tracking-config">Tracking config</a>
         <a class="btn btn-ghost btn-sm" href="#teams">Teams</a>
         <a class="btn btn-ghost btn-sm" href="#utilization">Utilization criteria</a>
@@ -194,7 +195,7 @@
     </p>
     <ol class="small">
         <li>Enroll the modelling host on <strong>Flood → Enrollment</strong> first (Flood allowlist — separate from util sampling, which is always-on for all clients).</li>
-        <li>On <strong>TUFLOW Runs</strong>, choose <strong>TUFLOW exe + .tcf</strong> or <strong>Use existing CMD</strong>. For CMD mode, point at an absolute/UNC <code>.cmd</code>/<code>.bat</code> the agent service can read; Heimdall validates it looks like a TUFLOW launch, then runs it with <code>cmd.exe /c</code>. Optional scenarios/events/run name apply to exe+.tcf mode. The agent picks up within ~20s.</li>
+        <li>On <strong>TUFLOW Runs</strong>, choose <strong>TUFLOW exe + .tcf</strong> or <strong>Use existing CMD</strong>. Paths must be a local volume on the host (<code>C:\</code>–<code>F:\</code>) or <strong>UNC</strong> (<code>\\server\share\…</code>). Mapped drive letters (<code>P:\</code>, <code>S:\</code>, …) are rejected: they exist only in the logged-on user’s session, and HeimdallAgent launches TUFLOW from a service with nobody logged on. For CMD mode, point at a <code>.cmd</code>/<code>.bat</code> the service account can read; Heimdall validates it looks like a TUFLOW launch, then runs it with <code>cmd.exe /c</code>. Optional scenarios/events/run name apply to exe+.tcf mode. The agent picks up within ~20s.</li>
         <li><strong>Stop gracefully</strong> asks the launcher to send a process-group break so TUFLOW can finish the current checkpoint (resume-friendly if your <code>.tcf</code> writes restart files — see <code>tuflow-automation/tcf/</code>). Prefer scripts that call TUFLOW synchronously (not <code>start …</code>) so Heimdall can track/stop the process group.</li>
         <li>Progress comes from TUFLOW’s own <code>.tsf</code>; crashes from <code>.tlf</code> ERROR lines. Machine detail also shows a TUFLOW panel + recent run history for flood-gated users.</li>
         <li>Agent needs <code>%ProgramFiles%\Heimdall\Agent\TuflowLauncher\TuflowLauncher.exe</code> (included when you pack/install the client or run <code>Install-Agent</code>).</li>
@@ -203,6 +204,7 @@
     </ol>
     <p class="text-secondary small mb-0">
         Paths are free-form (not allowlisted job definitions yet). Modelling+DT RBAC is a follow-up.
+        Always convert mapped letters to UNC (in Explorer: right-click the share → Properties, or <code>net use</code> to see the <code>\\server\share</code>).
     </p>
 </section>
 
@@ -214,39 +216,68 @@
     </p>
     <ol class="small mb-0">
         <li>Open <a asp-page="/Flood" asp-route-tab="behaviour">Flood → Run behaviour</a> (or follow the link from <a asp-page="/TuflowRuns">TUFLOW Runs</a>). Default window is last 30 days (7 / 14 / 90 / 180 selectable).</li>
+        <li>Click a <strong>Starts</strong> or <strong>Completed</strong> count in the By user / By machine tables to filter the Runs card; or use the Runs toolbar (user, machine, date range, status, show N).</li>
+        <li>Use <strong>Hide all charts</strong> / <strong>Show all charts</strong> on the Runs card, or each run’s <strong>Hide chart</strong> / <strong>Show chart</strong> for a single chart.</li>
         <li>Only runs with a confirmed <code>DetectedStartUtc</code> are included. Watching-only (process seen, not yet elevated) are excluded.</li>
         <li>Duration averages / medians use completed runs (<code>DetectedEndUtc</code> set). Open Active runs appear in start counts and the hour-of-day chart but not in duration averages.</li>
         <li>Username comes from the interactive session on the host during sampling (ops.* is not preferred once a non-ops user is known).</li>
+        <li>The <strong>Runs</strong> list lists individual confirmed starts (newest first, capped) with avg/peak GPU, time at ≥50% GPU, and a zoomable multi-metric chart (GPU/CPU/RAM% left axis; Disk W / Net Tx MB/s right). Toggle series with checkboxes (all on by default). Older samples may only have GPU/CPU until disk/net/ram fields started filling in.</li>
+        <li><strong>Peak GPU</strong> is the highest TUFLOW <em>process</em> GPU% sample in the run. Windows GPU Engine counters are summed across engines/adapters, so Peak can exceed 100% (e.g. 600%+) on multi-engine hosts; the GPU line is drawn clamped to 0–100%. Hover the Peak/Avg/High GPU cells for the formula.</li>
+    </ol>
+</section>
+
+<section id="tuflow-queue" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Run Queue (Flood → Run Queue)</h2>
+    <p class="text-secondary small mb-2">
+        <strong>Purpose:</strong> spread a batch of scenario/event combos across Flood machines the way a
+        <code>.cmd</code> would loop <code>-s1/-e1…</code> with a local instance limit — except idle hosts claim the next job.
+    </p>
+    <ol class="small mb-0">
+        <li>Enroll modelling hosts on <strong>Flood → Enrollment</strong>.</li>
+        <li>Open <a asp-page="/Flood" asp-route-tab="queue">Flood → Run Queue</a>. Choose <strong>Fleet</strong> (any idle host) or pin to one machine.</li>
+        <li>Enter a local or UNC TUFLOW <code>.exe</code> and a UNC <code>.tcf</code> (mapped <code>P:\</code> is rejected — the agent service cannot see it when logged off).</li>
+        <li>Fill <code>-s1…-s4</code> and <code>-e1…-e4</code> groups (space/comma separated within a group). Heimdall builds the cartesian product (same as many batch files). Cap 500 sims per add.</li>
+        <li>Each Flood host runs <strong>one Heimdall-launched sim at a time</strong>. When it finishes, the ~20s TUFLOW poll claims the next waiting item (pinned first, then unassigned fleet).</li>
+        <li>Watch progress on <a asp-page="/Flood" asp-route-tab="sims">Fleet Sims</a>. Graceful stop remains on <a asp-page="/TuflowRuns">TUFLOW Runs</a>.</li>
+        <li>Do not paste a batch that uses <code>start …</code> and mapped drives. Prefer exe+.tcf matrix here so Heimdall can track and stop the process.</li>
     </ol>
 </section>
 
 <section id="fleet-sims" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Fleet Sims (Flood → Fleet Sims)</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> live progress table for TUFLOW runs currently active on Flood-enrolled machines — complements <a href="#tuflow-runs">TUFLOW Runs</a> (start/stop queue).</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> live progress table for TUFLOW runs currently active on Flood-enrolled machines — complements <a href="#tuflow-runs">TUFLOW Runs</a> and <a href="#tuflow-queue">Run Queue</a>.</p>
     <ol class="small mb-0">
         <li>Open <a asp-page="/Flood" asp-route-tab="sims">Flood → Fleet Sims</a>. Empty when no run is active.</li>
         <li>Columns include run name, machine, started-by, state, progress %, elapsed, estimated remaining, and resource averages since run start.</li>
         <li><strong>TUFLOW process averages</strong> (CPU/GPU/disk R/W) come from 30s fleet snapshots scoped to the TUFLOW process. <strong>Whole-machine</strong> averages include network (no per-process network counter).</li>
-        <li>Start new runs from <a asp-page="/TuflowRuns">TUFLOW Runs</a>; this tab is read-only monitoring.</li>
+        <li>Queue waiting/dispatching counts link to <a href="#tuflow-queue">Run Queue</a>. Start one-offs from <a asp-page="/TuflowRuns">TUFLOW Runs</a>.</li>
     </ol>
 </section>
 
 <section id="historical-dashboard" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Flood hub (Live / Historical / Enrollment / Sims / Run behaviour)</h2>
     <p class="text-secondary small mb-2">
-        <strong>Purpose:</strong> Flood-gated workspace for TUFLOW fleet ops — Live and Historical analytics scoped to the Flood allowlist, Enrollment, Fleet Sims, and Run behaviour.
-        Open <a asp-page="/Flood">Flood</a> (visible only to <code>Heimdall:StaffAccess:AdminEmails</code> ∪ <code>Heimdall:FloodTeamEmails</code>).
+        <strong>Purpose:</strong> Flood-gated workspace for TUFLOW fleet ops — Live and Historical analytics scoped to the Flood allowlist, Enrollment, Run Queue, Fleet Sims, and Run behaviour.
+        Open <a asp-page="/Flood">Flood</a>.
+        <strong>Full Flood</strong> = site admins (<code>Heimdall:StaffAccess:AdminEmails</code>) ∪ Full Flood list
+        (appsettings <code>FloodTeamEmails</code>, or Admin → <a asp-page="/AccessLists">Access lists</a> DB override).
+        <strong>Live-only</strong> = also the Flood Live list (<code>FloodLiveEmails</code> / Access lists).
+        Manage team emails under <a asp-page="/AccessLists">Admin → Access lists</a> (applies immediately; no restart).
         Legacy <code>/HistoricalDashboard</code>, <code>/FleetSimProgress</code>, and <code>/TuflowBehaviour</code> URLs redirect into this hub.
         Estate-wide live util (all clients) lives under <a asp-page="/Fleet" asp-route-tab="live">Fleet → Live</a>.
     </p>
     <ol class="small">
-        <li><strong>Enrollment</strong> — Flood allowlist for TUFLOW Runs / sims / Flood-scoped analytics. Search by hostname or last-known IP. <em>Util sampling does not require enrollment</em> — every heartbeating client gets 30s fleet snapshots.</li>
-        <li><strong>Live</strong> — latest snapshot on enrolled Flood machines: gauges, TUFLOW status (Active / Idle / Not Running), today’s runtime/active/GPU hours. Auto-refreshes every 30s.</li>
+        <li><strong>Enrollment</strong> — Flood allowlist for TUFLOW Runs / sims / Flood-scoped analytics. Search by hostname or last-known IP. <em>Util sampling does not require enrollment</em> — every heartbeating client gets 30s fleet snapshots. Full Flood only.</li>
+        <li><strong>Live</strong> — latest snapshot on enrolled Flood machines: gauges, TUFLOW status (Active / Idle / Not Running), today’s runtime/active/GPU hours,
+            plus optional <strong>CodeMeter HPC/Classic</strong> seats (when <code>Heimdall:CodeMeter:Enabled</code> is on the API host with CodeMeter Runtime).
+            Updates via a <strong>shared server stream</strong> (SSE ≈ every 30s): many browsers share one rebuild — they do not each re-query Live.
+            Active machines also get a live multi-metric chart (GPU/CPU/RAM% and Disk W / Net Tx; process metrics when present). Open Live to the team via Access lists (Flood Live only).</li>
         <li><strong>Active vs Idle</strong> — while TUFLOW is running: Active if <em>TUFLOW process</em> GPU &gt; 5%, CPU &gt; 10%, or disk read/write &gt; 5 MB/s; otherwise Idle. Not Running when TUFLOW is not detected.</li>
-        <li><strong>Historical</strong> — fleet summary cards for enrolled machines, Totals (today / week / month / 30d / 3m / 6m / year) or Averages (daily / 7-day / monthly / all-time), plus rankings (GPU, CPU, RAM, disk I/O, most active).</li>
-        <li><strong>Fleet Sims</strong> — see <a href="#fleet-sims">Fleet Sims</a>.</li>
-        <li><strong>Run behaviour</strong> — see <a href="#tuflow-behaviour">TUFLOW Run Behaviour</a>.</li>
-        <li><strong>Machine detail</strong> — click a hostname (or open <code>/HistoricalDashboardMachine/{id}</code>) for period summary cards and Chart.js time series (24h / 7d / 30d / 90d / 365d).</li>
+        <li><strong>Historical</strong> — fleet summary cards for enrolled machines, Totals (today / week / month / 30d / 3m / 6m / year) or Averages (daily / 7-day / monthly / all-time), plus rankings (GPU, CPU, RAM, disk I/O, most active). Full Flood only.</li>
+        <li><strong>Run Queue</strong> — see <a href="#tuflow-queue">Run Queue</a>. Full Flood only.</li>
+        <li><strong>Fleet Sims</strong> — see <a href="#fleet-sims">Fleet Sims</a>. Full Flood only.</li>
+        <li><strong>Run behaviour</strong> — see <a href="#tuflow-behaviour">TUFLOW Run Behaviour</a>. Full Flood only.</li>
+        <li><strong>Machine detail</strong> — click a hostname (or open <code>/HistoricalDashboardMachine/{id}</code>) for period summary cards and Chart.js time series (24h / 7d / 30d / 90d / 365d). Full Flood only (Live-only viewers see machine names without the detail link).</li>
     </ol>
     <p class="text-secondary small mb-0">
         <strong>Retention:</strong> raw 30s samples are purged after ~90 days by default (<code>Heimdall:FleetSnapshotRetention</code>).
@@ -328,11 +359,27 @@
 
 <section id="auth" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Auth</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> turn team-membership sources on/off under <strong>Admin → Auth</strong>. Not site-wide SSO.</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> turn team-membership sources on/off under <strong>Admin → Auth</strong>. Not site-wide SSO.
+        Flood page allowlists are under <a asp-page="/AccessLists">Admin → Access lists</a>.</p>
     <ol class="small mb-0">
         <li><strong>Manual / CSV</strong> (default on) — backup while Entra permissions are pending. Add people on team detail or <a asp-page="/Teams/ImportCsv">Import CSV</a>.</li>
         <li><strong>Entra Graph sync</strong> (default off) — enable after DPAPI secrets are installed and Graph admin consent is granted. Use <em>Test Entra connection</em> on Auth: token OK + group-read fail usually means consent is still missing.</li>
         <li>At least one source stays enabled. Sync from Entra is blocked while the Entra toggle is off.</li>
+    </ol>
+</section>
+
+<section id="access-lists" class="hd-panel mb-4 hd-help-section">
+    <h2 class="h5">Access lists</h2>
+    <p class="text-secondary small mb-2">
+        <strong>Purpose:</strong> manage named email allowlists that unlock gated areas of the site
+        (<strong>Admin → Access lists</strong>). Site admins only. Saved lists live in the database and apply immediately (no API restart).
+        Appsettings values seed each list until you save from the UI.
+    </p>
+    <ol class="small mb-0">
+        <li><strong>Site admins</strong> — read-only here; edit <code>Heimdall:StaffAccess:AdminEmails</code> in API appsettings and restart. Always included in Full Flood.</li>
+        <li><strong>Full Flood</strong> — Live, Historical, Enrollment, Run Queue, Fleet Sims, Run behaviour, Flood machine detail, TUFLOW Runs, Machine TUFLOW panel.</li>
+        <li><strong>Flood Live only</strong> — Flood → Live tab + shared SSE stream only (no other Flood tabs). Full Flood already includes Live.</li>
+        <li>Future page gates can add another named list in the same catalog without a new storage pattern.</li>
     </ol>
 </section>
 

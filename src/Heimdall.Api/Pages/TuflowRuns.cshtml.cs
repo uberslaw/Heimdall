@@ -108,9 +108,11 @@ public class TuflowRunsModel(TuflowRunService runs, TuflowBehaviourService behav
             cmdPath: string.IsNullOrWhiteSpace(cmdPath) ? null : cmdPath.Trim(),
             ct);
 
-        TempData[ok ? "Message" : "Error"] = ok
-            ? $"TUFLOW start queued for {hostname} (run {runId}). The agent picks this up within about 15-30s via the fast TUFLOW poll (see RunTuflowPollTickAsync), not the slower ConfigRefreshSeconds cycle."
-            : error;
+        TempData[ok ? "Message" : "Error"] = !ok
+            ? error
+            : string.Equals(error, "queued-wait", StringComparison.Ordinal)
+                ? $"Host is busy — added to {hostname}'s wait queue. It starts when this machine is free (or use Flood → Run Queue to spread across the fleet)."
+                : $"TUFLOW start queued for {hostname} (run {runId}). The agent picks this up within about 15-30s.";
         return RedirectToPage();
     }
 

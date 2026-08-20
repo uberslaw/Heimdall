@@ -14,8 +14,13 @@
   (agent install + verify + logs only when payload\ is present).
 #>
 param(
-    [ValidateSet("Menu", "InstallApi", "PackCollector", "InstallCollector", "PushClientPack", "ClientCheck", "OpenLogs", "OpenRemoteLogs", "BackupApiDatabase", "RemoveSeedDemos", "Diagnostics")]
-    [string]$Mode = "Menu"
+    [ValidateSet(
+        "Menu", "InstallApi", "PackCollector", "InstallCollector", "PushClientPack",
+        "PushPackZip", "DepositPack", "RedeployApi", "Prerequisites",
+        "ClientCheck", "OpenLogs", "OpenRemoteLogs", "BackupApiDatabase", "RemoveSeedDemos", "Diagnostics")]
+    [string]$Mode = "Menu",
+    # When set (e.g. from Heimdall Launch Control WPF), run the Mode action without the full Setup shell.
+    [switch]$ActionOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -363,17 +368,71 @@ function Invoke-HeimdallServiceControl {
 function Wait-ProcessWithUiPump {
     param(
         [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
-        [string]$StatusText = ""
+        [string]$StatusText = "",
+        [int]$TimeoutSec = 0,
+        [string]$SuccessLogPattern = "",
+        [string]$LogDir = "",
+        [datetime]$MinLogWriteTime = [datetime]::MinValue
     )
     if ($StatusText) { Set-UiStatus $StatusText }
+    $deadline = if ($TimeoutSec -gt 0) { (Get-Date).AddSeconds($TimeoutSec) } else { $null }
+    $sawLogSuccess = $false
+    $logSuccessSince = $null
+    $minLog = $MinLogWriteTime
+    if ($minLog -eq [datetime]::MinValue -and $Process.StartTime) {
+        $minLog = $Process.StartTime.AddSeconds(-2)
+    }
     while ($Process -and -not $Process.HasExited) {
         [System.Windows.Forms.Application]::DoEvents()
+
+        if ($SuccessLogPattern -and $LogDir -and -not $sawLogSuccess -and (Test-Path -LiteralPath $LogDir)) {
+            $hit = Get-ChildItem -LiteralPath $LogDir -Filter "republish-api-*.log" -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -ge $minLog } |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 3 |
+                Where-Object {
+                    Select-String -LiteralPath $_.FullName -Pattern $SuccessLogPattern -Quiet -ErrorAction SilentlyContinue
+                } |
+                Select-Object -First 1
+            if ($hit) {
+                $sawLogSuccess = $true
+                $logSuccessSince = Get-Date
+                Set-UiStatus "Redeploy log reports success — waiting for elevated window to close..."
+            }
+        }
+
+        # If the log already says DONE but the elevated host hangs on its progress UI, don't wait forever.
+        if ($sawLogSuccess -and $logSuccessSince -and ((Get-Date) - $logSuccessSince).TotalSeconds -ge 25) {
+            Write-HeimdallLog "Republish log already shows success; elevated process still running after 25s — continuing" -Level WARN
+            try {
+                if (-not $Process.HasExited) { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue }
+            }
+            catch { }
+            return 0
+        }
+
+        if ($deadline -and (Get-Date) -ge $deadline) {
+            Write-HeimdallLog "Timed out waiting for process PID $($Process.Id) after ${TimeoutSec}s (HasExited=$($Process.HasExited))" -Level WARN
+            return -2
+        }
         Start-Sleep -Milliseconds 150
     }
     if ($Process) {
-        $Process.Refresh()
-        return $Process.ExitCode
+        try {
+            $Process.Refresh()
+            # Elevated RunAs children sometimes expose ExitCode as $null even after exit.
+            if ($null -eq $Process.ExitCode) {
+                if ($sawLogSuccess) { return 0 }
+                return -1
+            }
+            return [int]$Process.ExitCode
+        }
+        catch {
+            if ($sawLogSuccess) { return 0 }
+            return -1
+        }
     }
+    if ($sawLogSuccess) { return 0 }
     return -1
 }
 
@@ -3115,16 +3174,39 @@ function Start-RedeployApi {
         }
         return
     }
-    $exit = Wait-ProcessWithUiPump -Process $p -StatusText $(if ($alreadyAdmin) { "Redeploying API (watch progress window)..." } else { "Redeploying API (accept UAC; watch progress window)..." })
+    $exit = Wait-ProcessWithUiPump `
+        -Process $p `
+        -StatusText $(if ($alreadyAdmin) { "Redeploying API (watch progress window)..." } else { "Redeploying API (accept UAC; watch progress window)..." }) `
+        -TimeoutSec 600 `
+        -SuccessLogPattern '\[OK\]\s+DONE' `
+        -LogDir $republishLogDir `
+        -MinLogWriteTime $logMarker
+
+    $latest = Get-ChildItem -LiteralPath $republishLogDir -Filter "republish-api-*.log" -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -ge $logMarker.AddSeconds(-2) } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    $logOk = $false
+    $logFail = $false
+    $logFailMsg = $null
+    if ($latest) {
+        $logOk = [bool](Select-String -LiteralPath $latest.FullName -Pattern '\[OK\]\s+DONE' -Quiet -ErrorAction SilentlyContinue)
+        $failHit = Select-String -LiteralPath $latest.FullName -Pattern '\[ERROR\]\s+FAIL:\s*(.+)$' -ErrorAction SilentlyContinue |
+            Select-Object -Last 1
+        if ($failHit) {
+            $logFail = $true
+            $logFailMsg = $failHit.Matches.Groups[1].Value.Trim()
+        }
+    }
+
     if ($null -eq $exit) { $exit = -1 }
-    if ($exit -ne 0) {
+    $succeeded = ($exit -eq 0) -or $logOk
+    if (-not $succeeded) {
         Update-UiStep 1 "[X] 2. Republish failed (exit $exit)"
-        $latest = Get-ChildItem -LiteralPath $republishLogDir -Filter "republish-api-*.log" -ErrorAction SilentlyContinue |
-            Where-Object { $_.LastWriteTime -ge $logMarker.AddSeconds(-2) } |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
         if ($latest) {
-            Write-HeimdallLog "Redeploy API exited with code $exit (see $($latest.FullName) and $republishLogHint)" -Level ERROR
+            $detail = if ($logFailMsg) { $logFailMsg } else { "see $($latest.FullName)" }
+            Write-HeimdallLog "Redeploy API failed (exit $exit): $detail" -Level ERROR
+            Write-HeimdallLog "Log: $($latest.FullName) | $republishLogHint" -Level ERROR
         }
         else {
             Write-HeimdallLog "Redeploy API exited with code $exit with no new republish-api-*.log — script never ran (parse/encoding error, or UAC denied). Try: powershell -NoProfile -File `"$ps1`" and check the console. See $republishLogHint" -Level ERROR
@@ -3132,7 +3214,12 @@ function Start-RedeployApi {
         Set-UiStatus "Redeploy API failed (exit $exit) — check ProgramData\Heimdall\logs\republish-api*"
         return
     }
+
+    if ($exit -ne 0 -and $logOk) {
+        Write-HeimdallLog "Elevated process exit was $exit but log shows DONE — treating as success ($($latest.FullName))" -Level WARN
+    }
     Update-UiStep 1 "[OK] 2. Republish finished"
+    Write-HeimdallLog "Redeploy API succeeded (exit $exit)$(if ($latest) { " — $($latest.FullName)" })" -Level OK
 
     $healthUrl = "http://127.0.0.1:5080/api/health"
     try {
@@ -3173,15 +3260,53 @@ function Start-GuidedApiInstall {
     }
     Update-UiStep 0 "[OK] 1. Prerequisites"
 
-    $inputs = Show-InputForm -Title "Heimdall API settings" -Prompt "Confirm settings for this server. Agents will call this host on the chosen port." -Fields ([ordered]@{
-        Port   = "5080"
-        ApiKey = "heimdall-poc-key"
-    }) -AcceptLabel "Install"
+    $existingSettings = Join-Path $script:ApiInstallDir "appsettings.json"
+    $preserveConfig = $false
+    if (Test-Path -LiteralPath $existingSettings) {
+        Write-HeimdallLog "Existing API config found: $existingSettings" -Level INFO
+        $preserveChoice = [System.Windows.Forms.MessageBox]::Show(
+            "An existing API config was found:`r`n$existingSettings`r`n`r`nPreserve it? (recommended — keeps ApiKey, StaffAccess, URLs, etc.)`r`n`r`nYes = preserve config (like Redeploy)`r`nNo = overwrite with values you enter next",
+            "Preserve API config?",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            [System.Windows.Forms.MessageBoxIcon]::Question,
+            [System.Windows.Forms.MessageBoxDefaultButton]::Button1)
+        if ($preserveChoice -eq [System.Windows.Forms.DialogResult]::Yes) {
+            $preserveConfig = $true
+            Write-HeimdallLog "User chose to preserve existing appsettings.json" -Level OK
+        }
+        else {
+            Write-HeimdallLog "User chose to overwrite appsettings.json" -Level WARN
+        }
+    }
+
+    $portDefault = "5080"
+    $keyDefault = "heimdall-poc-key"
+    if ($preserveConfig -and (Test-Path -LiteralPath $existingSettings)) {
+        try {
+            $cfg = Get-Content -LiteralPath $existingSettings -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($cfg.Urls -match '(\d{2,5})') { $portDefault = $Matches[1] }
+            elseif ($cfg.Heimdall.LiveDashboardUrl -match ':(\d{2,5})') { $portDefault = $Matches[1] }
+            if ($cfg.Heimdall.ApiKey) { $keyDefault = [string]$cfg.Heimdall.ApiKey }
+        }
+        catch {
+            Write-HeimdallLog "Could not prefill from existing config: $($_.Exception.Message)" -Level WARN
+        }
+    }
+
+    $prompt = if ($preserveConfig) {
+        "Config will be preserved. Port is used for firewall + health check only (appsettings will not be rewritten)."
+    } else {
+        "Confirm settings for this server. Agents will call this host on the chosen port."
+    }
+    $inputs = Show-InputForm -Title "Heimdall API settings" -Prompt $prompt -Fields ([ordered]@{
+        Port   = $portDefault
+        ApiKey = $keyDefault
+    }) -AcceptLabel $(if ($preserveConfig) { "Install (keep config)" } else { "Install" })
     if (-not $inputs) {
         Write-HeimdallLog "API install cancelled by user." -Level WARN
         return
     }
-    Update-UiStep 1 "[OK] 2. Settings Port=$($inputs.Port)"
+    Update-UiStep 1 "[OK] 2. Settings Port=$($inputs.Port)$(if ($preserveConfig) { ' (preserve config)' } else { '' })"
 
     $ps1 = Join-Path $script:ScriptDir "install-api.ps1"
     if (-not (Test-Path $ps1)) {
@@ -3206,6 +3331,10 @@ function Start-GuidedApiInstall {
         Write-HeimdallLog "Estimated API install: ~$estMmSs (done by $($installEstimate.FinishAt.ToString('HH:mm:ss')); baseline $($installEstimate.BaselineSec)s from $($installEstimate.Source))" -Level INFO
     }
     $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$ps1`" -Port $($inputs.Port) -ApiKey `"$($inputs.ApiKey)`" -NoPrompt"
+    if ($preserveConfig) {
+        $arg += " -PreserveConfig"
+        Write-HeimdallLog "Passing -PreserveConfig to install-api.ps1" -Level INFO
+    }
     if ($alreadyAdmin) {
         Write-HeimdallLog "Already elevated — running install-api.ps1 in this token (no UAC spawn)." -Level STEP
         $p = Start-Process -FilePath "powershell.exe" -ArgumentList $arg -WorkingDirectory (Split-Path -Parent $ps1) -PassThru
@@ -4684,6 +4813,41 @@ function Show-GuideStepDetail {
     $script:UiGuideDetail.Text = $step.Detail.Trim() + "`r`n"
 }
 
+function Invoke-LaunchControlModeAction {
+    param([string]$ModeName)
+    switch ($ModeName) {
+        "InstallApi"        { Start-GuidedApiInstall }
+        "PackCollector"     { Start-GuidedPack -OfferInstallAfter }
+        "InstallCollector"  { Start-GuidedCollectorInstall }
+        "PushClientPack"    { Push-ClientPackToMachine }
+        "PushPackZip"      { Push-ClientPackZipToNetworkShare }
+        "DepositPack"       { Deposit-ClientPackViaApi }
+        "RedeployApi"       { Start-RedeployApi }
+        "Prerequisites"     {
+            $scenario = if ($script:IsPackedLayout) { "Collector" } else {
+                $choice = [System.Windows.Forms.MessageBox]::Show(
+                    "Yes = Agent install prerequisites`r`nNo = Create-pack / API prerequisites",
+                    "Which check?",
+                    [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+                    [System.Windows.Forms.MessageBoxIcon]::Question)
+                if ($choice -eq [System.Windows.Forms.DialogResult]::Cancel) { return }
+                if ($choice -eq [System.Windows.Forms.DialogResult]::Yes) { "Collector" } else { "Pack" }
+            }
+            $r = Invoke-PrerequisiteCheck -Scenario $scenario
+            $text = if ($r.Ok) { "Prerequisites OK for $scenario." } else { "FAILED:`r`n- " + ($r.Issues -join "`r`n- ") }
+            if ($r.Notes.Count) { $text += "`r`n`r`nNotes:`r`n- " + ($r.Notes -join "`r`n- ") }
+            [System.Windows.Forms.MessageBox]::Show($text + "`r`n`r`nLog: $($script:LogPath)", "Prerequisites", "OK", $(if ($r.Ok) { "Information" } else { "Warning" })) | Out-Null
+        }
+        "ClientCheck"       { Start-ClientHealthCheck }
+        "OpenLogs"          { Open-LogsFolder }
+        "OpenRemoteLogs"    { Open-RemoteLogsFolder }
+        "BackupApiDatabase" { Backup-ApiDatabase }
+        "RemoveSeedDemos"  { Invoke-RemoveSeedDemoMachines }
+        "Diagnostics"       { Start-Diagnostics }
+        default             { throw "Unknown Mode: $ModeName" }
+    }
+}
+
 function Show-LaunchControl {
     Initialize-HeimdallLogging | Out-Null
 
@@ -5161,18 +5325,9 @@ function Show-LaunchControl {
         }
     })
 
-    # Direct mode shortcuts
-    switch ($Mode) {
-        "InstallApi"       { $form.Add_Shown({ Start-GuidedApiInstall }) }
-        "PackCollector"    { $form.Add_Shown({ Start-GuidedPack -OfferInstallAfter }) }
-        "InstallCollector" { $form.Add_Shown({ Start-GuidedCollectorInstall }) }
-        "PushClientPack"   { $form.Add_Shown({ Push-ClientPackToMachine }) }
-        "ClientCheck"      { $form.Add_Shown({ Start-ClientHealthCheck }) }
-        "OpenLogs"         { $form.Add_Shown({ Open-LogsFolder }) }
-        "OpenRemoteLogs"   { $form.Add_Shown({ Open-RemoteLogsFolder }) }
-        "BackupApiDatabase" { $form.Add_Shown({ Backup-ApiDatabase }) }
-        "RemoveSeedDemos"  { $form.Add_Shown({ Invoke-RemoveSeedDemoMachines }) }
-        "Diagnostics"      { $form.Add_Shown({ Start-Diagnostics }) }
+    # Direct mode shortcuts when opened as full Setup UI
+    if ($Mode -ne "Menu") {
+        $form.Add_Shown({ Invoke-LaunchControlModeAction -ModeName $Mode })
     }
 
     Update-LaunchControlLeftColumnLayout
@@ -5182,6 +5337,13 @@ function Show-LaunchControl {
 }
 
 try {
+    if ($ActionOnly -and $Mode -ne "Menu") {
+        Initialize-HeimdallLogging | Out-Null
+        Write-HeimdallLog "ActionOnly mode: $Mode (no full Setup shell)" -Level STEP
+        Invoke-LaunchControlModeAction -ModeName $Mode
+        Write-HeimdallLog "ActionOnly finished: $Mode" -Level OK
+        exit 0
+    }
     Show-LaunchControl
 }
 catch {

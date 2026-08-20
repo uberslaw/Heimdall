@@ -6,7 +6,7 @@ namespace Heimdall.Api.Pages;
 
 /// <summary>
 /// Flood hub — tab shell combining Historical (live/analytics), Fleet Sims, and Flood enrollment.
-/// Flood-gated; TUFLOW Runs remains a separate Flood nav link.
+/// Full Flood: AdminEmails ∪ FloodTeamEmails. Live-only: also FloodLiveEmails (Live tab only).
 /// </summary>
 public class FloodModel(FloodAccessGuard flood) : PageModel
 {
@@ -14,6 +14,7 @@ public class FloodModel(FloodAccessGuard flood) : PageModel
     [
         ("live", "Live", "/HistoricalDashboard"),
         ("historical", "Historical", "/HistoricalDashboard"),
+        ("queue", "Run Queue", "/TuflowQueue"),
         ("sims", "Fleet Sims", "/FleetSimProgress"),
         ("behaviour", "Run behaviour", "/TuflowBehaviour"),
         ("enroll", "Enrollment", "/HistoricalDashboard"),
@@ -24,13 +25,27 @@ public class FloodModel(FloodAccessGuard flood) : PageModel
 
     public string ActiveTabKey { get; private set; } = "live";
 
+    public bool LiveOnly { get; private set; }
+
+    public IReadOnlyList<(string Key, string Label, string PartialPath)> VisibleTabs { get; private set; } = Tabs;
+
     public IActionResult OnGet()
     {
-        if (flood.ForbidIfDenied(HttpContext) is { } denied)
+        if (flood.ForbidIfLiveDenied(HttpContext) is { } denied)
             return denied;
 
+        LiveOnly = flood.IsLiveOnly(HttpContext);
         ActiveTabKey = NormalizeTab(Tab);
+        if (LiveOnly && ActiveTabKey != "live")
+            return Redirect("/Flood?tab=live");
+
+        if (ActiveTabKey != "live" && flood.ForbidIfDenied(HttpContext) is { } fullDenied)
+            return fullDenied;
+
         Tab = ActiveTabKey;
+        VisibleTabs = LiveOnly
+            ? Tabs.Where(t => t.Key == "live").ToArray()
+            : Tabs;
         return Page();
     }
 

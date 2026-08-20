@@ -47,8 +47,23 @@ WriteStatus(RunState.Starting, message: isCmdMode ? "Validating CMD/BAT launch s
 
 // Preflight — fail with a clear ErrorSummary before CreateProcess so the Machine page Detail column
 // (which prefers ErrorSummary over Message) and operators aren't left with an empty Detail.
-// Common real-world miss: .tcf path typed as a folder (e.g. "...\runs") or a mapped drive letter that
-// exists for the interactive user but not for the Heimdall.Agent Windows service session.
+// Mapped drive letters exist in Explorer but not for the Heimdall.Agent Windows service.
+foreach (var (path, name) in new (string?, string)[]
+{
+    (spec.ExePath, "TUFLOW .exe path"),
+    (spec.TcfPath, "Tcf path"),
+    (spec.CmdPath, "CMD/BAT path"),
+    (spec.WorkingDirectory, "Working directory"),
+    (spec.ResultsFolder, "Results folder")
+})
+{
+    if (LaunchPathRules.Validate(path, name) is { } mappedErr)
+    {
+        WriteStatus(RunState.Failed, message: mappedErr, errorSummary: mappedErr);
+        return 1;
+    }
+}
+
 string? launchMessage = null;
 if (isCmdMode)
 {

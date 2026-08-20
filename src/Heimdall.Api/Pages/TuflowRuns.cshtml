@@ -10,8 +10,16 @@
     <p class="text-secondary small mb-0 mt-2">
         <a asp-page="/Flood" asp-route-tab="sims">View Fleet Sim Progress →</a>
         ·
+        <a asp-page="/Flood" asp-route-tab="queue">Run Queue (spread across machines) →</a>
+        ·
         <a asp-page="/Flood" asp-route-tab="behaviour">Run behaviour analytics →</a>
         (start hours, avg duration by user / machine)
+    </p>
+    <p class="text-secondary small mb-0 mt-2">
+        HeimdallAgent starts TUFLOW as a Windows service (no logged-on user). Use
+        <strong>UNC paths</strong> for anything on a network share (<code>\\server\share\Models\…</code>).
+        Mapped letters like <code>P:\</code> or <code>S:\</code> exist in Explorer only while someone is logged on —
+        they are rejected here. Local disks on the host (<code>C:\</code>–<code>F:\</code>) are fine.
     </p>
 </div>
 
@@ -127,6 +135,10 @@ else
                                     <div data-mode="ExeTcf">
                                         <label class="d-block mb-2">TUFLOW .exe path <input class="form-control" name="exePath" required placeholder="C:\TUFLOW\Releases\...\TUFLOW_iSP_w64.exe" /></label>
                                         <label class="d-block mb-2">.tcf path <input class="form-control" name="tcfPath" required placeholder="\\server\share\Models\...\MR_H99_C25_Q100.tcf" /></label>
+                                        <p class="text-secondary small mb-2">
+                                            Model files on a file server must use UNC, not a mapped drive. Example:
+                                            <code>\\fileserver\projects\Flood\run.tcf</code> — not <code>P:\Flood\run.tcf</code>.
+                                        </p>
                                         <label class="d-block mb-2">Scenarios (space/comma separated, optional) <input class="form-control" name="scenarios" placeholder="e.g. RESUME" /></label>
                                         <label class="d-block mb-2">Events (space/comma separated, optional) <input class="form-control" name="events" /></label>
                                     </div>
@@ -134,13 +146,13 @@ else
                                         <label class="d-block mb-2">CMD/BAT path (absolute or UNC)
                                             <input class="form-control" name="cmdPath" placeholder="\\server\share\Models\...\run_model.cmd" /></label>
                                         <p class="text-secondary small mb-2">
-                                            The agent service account must be able to read this path (prefer UNC over mapped drives).
+                                            The agent service account must be able to read this path. Use UNC, not a mapped drive.
                                             Heimdall checks the script looks like a TUFLOW launch, then runs it with <code>cmd.exe /c</code>
                                             — it does not rebuild TUFLOW.exe arguments from the file.
                                         </p>
                                     </div>
 
-                                    <label class="d-block mb-2">Working directory (optional) <input class="form-control" name="workingDirectory" /></label>
+                                    <label class="d-block mb-2">Working directory (optional) <input class="form-control" name="workingDirectory" placeholder="\\server\share\Models\... or C:\local\..." /></label>
                                     <label class="d-block mb-3">Results folder (optional, else auto-detected) <input class="form-control" name="resultsFolder" /></label>
                                     <button type="submit" class="btn btn-hd btn-sm">Queue start</button>
                                     <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('start-@row.Hostname').close()">Cancel</button>

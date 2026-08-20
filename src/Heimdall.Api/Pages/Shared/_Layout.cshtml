@@ -21,7 +21,8 @@
     var customGoogleFontsUrl = activeTheme.Custom is not null
         ? ThemeFonts.BuildGoogleFontsUrl(activeTheme.Custom.HeadingFont, activeTheme.Custom.BodyFont)
         : null;
-    var showFloodNav = FloodAccess.CanAccessFlood(Context);
+    var showFloodNav = FloodAccess.CanAccessFloodLive(Context);
+    var floodFullAccess = FloodAccess.CanAccessFlood(Context);
     var helpFragment = HelpNav.ResolveFragment(Context.Request, ViewData[HelpNav.ViewDataKey]);
     var usageOpts = UsageAnalyticsOptions.Value;
     var usageEnabled = usageOpts.Enabled;
@@ -123,6 +124,7 @@
                         var onFlood = floodPath.Equals("/Flood", StringComparison.OrdinalIgnoreCase)
                                       || floodPath.Equals("/HistoricalDashboard", StringComparison.OrdinalIgnoreCase)
                                       || floodPath.Equals("/FleetSimProgress", StringComparison.OrdinalIgnoreCase)
+                                      || floodPath.Equals("/TuflowQueue", StringComparison.OrdinalIgnoreCase)
                                       || floodPath.Equals("/TuflowBehaviour", StringComparison.OrdinalIgnoreCase);
                         var floodTab = Context.Request.Query["tab"].FirstOrDefault() ?? "live";
                         floodTab = FloodModel.NormalizeTab(floodTab);
@@ -133,12 +135,17 @@
                             <div class="dropdown-menu hd-nav-dropdown-menu">
                                 @foreach (var t in FloodModel.Tabs)
                                 {
+                                    if (!floodFullAccess && t.Key != "live")
+                                        continue;
                                     var isActive = onFlood && t.Key == floodTab;
                                     <a class="dropdown-item @(isActive ? "active" : null)"
                                        asp-page="/Flood"
                                        asp-route-tab="@t.Key">@t.Label</a>
                                 }
-                                <a class="dropdown-item" asp-page="/TuflowRuns">TUFLOW Runs</a>
+                                @if (floodFullAccess)
+                                {
+                                    <a class="dropdown-item" asp-page="/TuflowRuns">TUFLOW Runs</a>
+                                }
                             </div>
                         </div>
                     }
@@ -169,6 +176,7 @@
                                 <span class="hd-settings-label">Access</span>
                                 <div class="d-flex flex-column gap-1">
                                     <a class="dropdown-item px-0" asp-page="/Auth">Auth</a>
+                                    <a class="dropdown-item px-0" asp-page="/AccessLists">Access lists</a>
                                     <a class="dropdown-item px-0" asp-page="/RemoteAccessGroups">Remote Access Groups</a>
                                 </div>
                             </div>

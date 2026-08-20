@@ -8,14 +8,13 @@
 // PendingCommands' bare string list can't carry — see AgentConfigDto.PendingTuflowStart instead).
 //
 // State: this agent tracks at most one TUFLOW run at a time via a small pointer file
-// (%ProgramData%\Heimdall\tuflow-runs\current-run.json) pointing at that run's working directory,
-// where TuflowLauncher.exe writes run-spec.json / status.json / stop.request. This matches the
-// modelling-workstation reality (one machine, one TUFLOW job) and the API-side one-run-per-machine
-// assumption in TuflowRunService.
+// (%ProgramData%\Heimdall\tuflow-runs\current-run.json). The API Run Queue spreads load across
+// Flood hosts by dispatching the next combo only when this pointer is clear (one sim per host).
 
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text.Json;
+using Heimdall.Shared;
 using Heimdall.Shared.Contracts;
 using Microsoft.Extensions.Logging;
 
@@ -45,6 +44,17 @@ internal static class TuflowRunHelper
     {
         if (request is null)
             return;
+
+        if (TuflowLaunchPath.ValidateLaunch(
+                request.LaunchMode,
+                request.ExePath,
+                request.TcfPath,
+                request.CmdPath,
+                request.WorkingDirectory,
+                request.ResultsFolder) is { } pathErr)
+        {
+            logger.LogWarning("TUFLOW start {RunId} path looks unusable from a service session: {Error}", request.RunId, pathErr);
+        }
 
         var current = ReadPointer();
         if (current is not null)

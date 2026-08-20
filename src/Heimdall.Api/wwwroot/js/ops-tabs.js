@@ -42,6 +42,15 @@
     if (window.HeimdallTable && typeof window.HeimdallTable.init === "function") {
       window.HeimdallTable.init(container);
     }
+    if (window.HeimdallGpuRunCharts && typeof window.HeimdallGpuRunCharts.init === "function") {
+      window.HeimdallGpuRunCharts.init(container);
+    }
+    if (window.HeimdallBehaviourRuns && typeof window.HeimdallBehaviourRuns.init === "function") {
+      window.HeimdallBehaviourRuns.init(container);
+    }
+    if (window.HeimdallFloodLive && typeof window.HeimdallFloodLive.init === "function") {
+      window.HeimdallFloodLive.init(container);
+    }
   }
 
   function tabSrc(key) {

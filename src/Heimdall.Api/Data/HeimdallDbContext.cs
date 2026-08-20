@@ -40,6 +40,8 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<FleetDashboardMachine> FleetDashboardMachines => Set<FleetDashboardMachine>();
     public DbSet<FleetMetricSnapshot> FleetMetricSnapshots => Set<FleetMetricSnapshot>();
     public DbSet<TuflowRunRecord> TuflowRunRecords => Set<TuflowRunRecord>();
+    public DbSet<TuflowQueue> TuflowQueues => Set<TuflowQueue>();
+    public DbSet<TuflowQueueItem> TuflowQueueItems => Set<TuflowQueueItem>();
     public DbSet<TuflowBehaviourRun> TuflowBehaviourRuns => Set<TuflowBehaviourRun>();
     public DbSet<TuflowBehaviourSample> TuflowBehaviourSamples => Set<TuflowBehaviourSample>();
     public DbSet<CustomTheme> CustomThemes => Set<CustomTheme>();
@@ -339,6 +341,32 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
                 .WithMany()
                 .HasForeignKey(x => x.MachineId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TuflowQueue>(e =>
+        {
+            e.HasIndex(x => x.MachineId);
+            e.HasIndex(x => x.IsTemplate);
+            e.HasOne(x => x.Machine)
+                .WithMany()
+                .HasForeignKey(x => x.MachineId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TuflowQueueItem>(e =>
+        {
+            e.HasIndex(x => new { x.QueueId, x.Priority, x.Id });
+            e.HasIndex(x => x.State);
+            e.HasIndex(x => x.AssignedMachineId);
+            e.HasIndex(x => x.RunId);
+            e.HasOne(x => x.Queue)
+                .WithMany(x => x.Items)
+                .HasForeignKey(x => x.QueueId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.AssignedMachine)
+                .WithMany()
+                .HasForeignKey(x => x.AssignedMachineId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<TuflowBehaviourRun>(e =>

@@ -117,8 +117,36 @@
                 {
                     <tr>
                         <td>@row.Label</td>
-                        <td data-sort-value="@row.RunCount">@row.RunCount</td>
-                        <td data-sort-value="@row.CompletedCount">@row.CompletedCount</td>
+                        <td data-sort-value="@row.RunCount">
+                            @if (row.RunCount > 0)
+                            {
+                                <button type="button"
+                                        class="hd-runs-filter-btn"
+                                        data-runs-filter-dim="user"
+                                        data-runs-filter-value="@row.Label"
+                                        data-runs-filter-status="all"
+                                        title="Show runs for this user">@row.RunCount</button>
+                            }
+                            else
+                            {
+                                @row.RunCount
+                            }
+                        </td>
+                        <td data-sort-value="@row.CompletedCount">
+                            @if (row.CompletedCount > 0)
+                            {
+                                <button type="button"
+                                        class="hd-runs-filter-btn"
+                                        data-runs-filter-dim="user"
+                                        data-runs-filter-value="@row.Label"
+                                        data-runs-filter-status="completed"
+                                        title="Show completed runs for this user">@row.CompletedCount</button>
+                            }
+                            else
+                            {
+                                @row.CompletedCount
+                            }
+                        </td>
                         <td data-sort-value="@row.OpenCount">@row.OpenCount</td>
                         <td data-sort-value="@(row.AvgCompletedDuration?.TotalSeconds ?? -1)">@TuflowBehaviourModel.FormatDuration(row.AvgCompletedDuration)</td>
                         <td data-sort-value="@(row.MedianCompletedDuration?.TotalSeconds ?? -1)">@TuflowBehaviourModel.FormatDuration(row.MedianCompletedDuration)</td>
@@ -157,8 +185,36 @@
                 {
                     <tr>
                         <td>@row.Label</td>
-                        <td data-sort-value="@row.RunCount">@row.RunCount</td>
-                        <td data-sort-value="@row.CompletedCount">@row.CompletedCount</td>
+                        <td data-sort-value="@row.RunCount">
+                            @if (row.RunCount > 0)
+                            {
+                                <button type="button"
+                                        class="hd-runs-filter-btn"
+                                        data-runs-filter-dim="machine"
+                                        data-runs-filter-value="@row.Label"
+                                        data-runs-filter-status="all"
+                                        title="Show runs for this machine">@row.RunCount</button>
+                            }
+                            else
+                            {
+                                @row.RunCount
+                            }
+                        </td>
+                        <td data-sort-value="@row.CompletedCount">
+                            @if (row.CompletedCount > 0)
+                            {
+                                <button type="button"
+                                        class="hd-runs-filter-btn"
+                                        data-runs-filter-dim="machine"
+                                        data-runs-filter-value="@row.Label"
+                                        data-runs-filter-status="completed"
+                                        title="Show completed runs for this machine">@row.CompletedCount</button>
+                            }
+                            else
+                            {
+                                @row.CompletedCount
+                            }
+                        </td>
                         <td data-sort-value="@row.OpenCount">@row.OpenCount</td>
                         <td data-sort-value="@(row.AvgCompletedDuration?.TotalSeconds ?? -1)">@TuflowBehaviourModel.FormatDuration(row.AvgCompletedDuration)</td>
                         <td data-sort-value="@(row.MedianCompletedDuration?.TotalSeconds ?? -1)">@TuflowBehaviourModel.FormatDuration(row.MedianCompletedDuration)</td>
@@ -168,5 +224,170 @@
                 </tbody>
             </table>
         </div>
+    }
+</div>
+
+<div class="hd-panel mb-3" id="hd-behaviour-runs">
+    <h3 class="h6 mb-2">Runs</h3>
+    <p class="text-secondary small mb-2">
+        Confirmed starts in this range (newest first). Each run shows details, then a multi-metric chart
+        (GPU/CPU/RAM% and Disk W / Net Tx MB/s; process metrics when present). Toggle series with the checkboxes.
+        Scroll-wheel or buttons zoom; reset restores the full run. Zoom bottoms out at sample spacing (~10s while TUFLOW is watched).
+        Click a Starts or Completed count in the tables above to filter this list, or use the controls below.
+        @if (a.RunsTruncated)
+        {
+            <span>Showing latest @a.Runs.Count of @a.RunsTotalInWindow.</span>
+        }
+    </p>
+    @if (a.Runs.Count == 0)
+    {
+        <p class="text-secondary mb-0">No confirmed runs in this range.</p>
+    }
+    else
+    {
+        var runUsers = a.Runs
+            .Select(r => string.IsNullOrWhiteSpace(r.Username) ? "(unknown)" : r.Username!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(u => u, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var runMachines = a.Runs
+            .Select(r => r.MachineLabel)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(m => m, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        <div class="hd-runs-toolbar mb-2" data-runs-toolbar>
+            <div class="hd-runs-toolbar-fields">
+                <div>
+                    <label class="form-label small mb-1" for="hd-runs-user">User</label>
+                    <select class="form-select form-select-sm" id="hd-runs-user" data-runs-user>
+                        <option value="">All users</option>
+                        @foreach (var u in runUsers)
+                        {
+                            <option value="@u">@u</option>
+                        }
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label small mb-1" for="hd-runs-machine">Machine</label>
+                    <select class="form-select form-select-sm" id="hd-runs-machine" data-runs-machine>
+                        <option value="">All machines</option>
+                        @foreach (var m in runMachines)
+                        {
+                            <option value="@m">@m</option>
+                        }
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label small mb-1" for="hd-runs-from">From</label>
+                    <input type="date" class="form-control form-control-sm" id="hd-runs-from" data-runs-from />
+                </div>
+                <div>
+                    <label class="form-label small mb-1" for="hd-runs-to">To</label>
+                    <input type="date" class="form-control form-control-sm" id="hd-runs-to" data-runs-to />
+                </div>
+                <div>
+                    <label class="form-label small mb-1" for="hd-runs-status">Status</label>
+                    <select class="form-select form-select-sm" id="hd-runs-status" data-runs-status>
+                        <option value="all">All</option>
+                        <option value="completed">Completed</option>
+                        <option value="open">Open</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label small mb-1" for="hd-runs-limit">Show</label>
+                    <select class="form-select form-select-sm" id="hd-runs-limit" data-runs-limit>
+                        <option value="10">10 runs</option>
+                        <option value="25">25 runs</option>
+                        <option value="50">50 runs</option>
+                        <option value="0" selected>All listed</option>
+                    </select>
+                </div>
+            </div>
+            <div class="hd-runs-toolbar-actions">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-gpu-toggle-all aria-pressed="true">Hide all charts</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-runs-filter-clear>Clear filters</button>
+            </div>
+        </div>
+        <p class="text-secondary small mb-2" data-runs-filter-label></p>
+        <div class="hd-run-list" data-runs-list>
+        @foreach (var row in a.Runs)
+        {
+            var seriesJson = TuflowBehaviourModel.GpuSeriesJson(row);
+            var userKey = string.IsNullOrWhiteSpace(row.Username) ? "(unknown)" : row.Username!;
+            var startLocal = row.DetectedStartUtc.ToLocalTime();
+            <div class="hd-run-block"
+                 data-run-user="@userKey"
+                 data-run-machine="@row.MachineLabel"
+                 data-run-open="@(row.IsOpen ? "1" : "0")"
+                 data-run-start="@startLocal.ToString("yyyy-MM-dd")">
+                <div class="hd-run-meta-row">
+                    <div class="hd-run-meta table-responsive">
+                        <table class="hd-table mb-0 hd-run-meta-table">
+                            <thead>
+                                <tr>
+                                    <th>Machine</th>
+                                    <th>User</th>
+                                    <th>Start</th>
+                                    <th>End</th>
+                                    <th>Duration</th>
+                                    <th title="@TuflowBehaviourModel.AvgGpuTitle">Avg GPU</th>
+                                    <th title="@TuflowBehaviourModel.PeakGpuTitle">Peak GPU</th>
+                                    <th title="@TuflowBehaviourModel.HighGpuTitle">High GPU</th>
+                                    <th>Samples</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>@row.MachineLabel</td>
+                                    <td>@(row.Username ?? "—")</td>
+                                    <td>@TuflowBehaviourModel.FormatLocalStamp(row.DetectedStartUtc)</td>
+                                    <td>
+                                        @if (row.IsOpen || row.DetectedEndUtc is null)
+                                        {
+                                            <span class="text-secondary">open</span>
+                                        }
+                                        else
+                                        {
+                                            @TuflowBehaviourModel.FormatLocalStamp(row.DetectedEndUtc.Value)
+                                        }
+                                    </td>
+                                    <td>@TuflowBehaviourModel.FormatDuration(row.Duration)</td>
+                                    <td title="@TuflowBehaviourModel.AvgGpuTitle">@TuflowBehaviourModel.FormatGpuPercent(row.AvgGpuPercent)</td>
+                                    <td title="@TuflowBehaviourModel.PeakGpuTitle">@TuflowBehaviourModel.FormatGpuPercent(row.PeakGpuPercent)</td>
+                                    <td title="@TuflowBehaviourModel.HighGpuTitle">@TuflowBehaviourModel.FormatHighGpu(row.HighGpuSeconds)</td>
+                                    <td>@row.GpuSeries.Count</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-secondary hd-run-gpu-toggle"
+                            data-gpu-toggle
+                            aria-pressed="true"
+                            title="Show or hide this run’s utilization chart">Hide chart</button>
+                </div>
+                <div class="hd-gpu-chart"
+                     data-gpu-panel
+                     data-start-unix="@row.DetectedStartUtc.ToUnixTimeSeconds()"
+                     data-end-unix="@((row.DetectedEndUtc ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds())"
+                     data-series="@seriesJson">
+                    <div class="hd-gpu-chart-toolbar">
+                        <span class="hd-gpu-chart-title">Utilization over run</span>
+                        <span class="hd-gpu-chart-range text-secondary small" data-range-label></span>
+                        <div class="hd-gpu-chart-actions">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" data-zoom-out title="Zoom out">−</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" data-zoom-in title="Zoom in">+</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" data-zoom-reset title="Show full run">Reset</button>
+                        </div>
+                    </div>
+                    <canvas class="hd-gpu-chart-canvas" width="900" height="140" aria-label="Utilization over time"></canvas>
+                    <p class="hd-gpu-chart-hint text-secondary small mb-0">Scroll wheel over the chart to zoom · drag to pan when zoomed</p>
+                </div>
+            </div>
+        }
+        </div>
+        <p class="text-secondary small mb-0" data-runs-filter-empty hidden>No listed runs match this filter.</p>
+        <script src="~/js/hd-gpu-run-chart.js" asp-append-version="true"></script>
+        <script src="~/js/hd-behaviour-runs.js" asp-append-version="true"></script>
     }
 </div>
