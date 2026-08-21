@@ -49,7 +49,7 @@ The agent runs a single loop (`Worker.cs`) with several independent timers:
 | **TUFLOW poll** | ~20 s | Picks up queued TUFLOW start/stop from config |
 | **Disk usage scan poll** | ~20 s | On-demand / weekly fleet folder scan when queued (`PendingDiskUsageScan`) |
 
-If the API is unreachable, ingest batches are **queued** in `queue.db` and retried. Live/fleet samples are **dropped** on failure (stale points are worse than gaps).
+If the API is unreachable, **ingest batches**, **fleet snapshots** (Flood util / run charts), and **staff live resource samples** are **gzip-compressed** into `%ProgramData%\Heimdall\queue.db` (cap **500 MB**; oldest dropped first) and drained FIFO when the API is reachable again. Permanent HTTP 4xx failures are dropped so one bad payload cannot block the queue.
 
 ---
 

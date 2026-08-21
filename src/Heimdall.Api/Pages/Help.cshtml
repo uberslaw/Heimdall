@@ -256,7 +256,7 @@
         <li>Machine shows friendly name (e.g. Matilda) with the Windows hostname underneath.</li>
         <li>Columns include run name, machine, started-by, state, progress %, elapsed, estimated remaining, and resource averages since run start.</li>
         <li><strong>TUFLOW process averages</strong> (CPU/GPU/disk R/W) come from 30s fleet snapshots scoped to the TUFLOW process. <strong>Whole-machine</strong> averages include network (no per-process network counter).</li>
-        <li><strong>Stop</strong> queues a graceful checkpoint exit. <strong>Force clear</strong> immediately frees the host slot when a run is stuck in Starting with no real TUFLOW process (does not delete local files).</li>
+        <li><strong>Stop</strong> queues a graceful checkpoint exit. <strong>Force clear</strong> immediately frees the host slot when a run is stuck in Starting (marks the run Failed, asks the agent to drop its local pointer so heartbeats cannot resurrect it; does not delete local files).</li>
         <li>Queue waiting/dispatching counts link to <a href="#tuflow-queue">Run Queue</a>. Start one-offs from <a asp-page="/TuflowRuns">TUFLOW Runs</a>.</li>
     </ol>
 </section>
@@ -279,7 +279,9 @@
         <li><strong>Live</strong> — latest snapshot on enrolled Flood machines: gauges, TUFLOW status (Active / Idle / Not Running), today’s runtime/active/GPU hours,
             plus optional <strong>CodeMeter seats</strong> (when <code>Heimdall:CodeMeter:Enabled</code> is on the API host with CodeMeter Runtime).
             The strip still shows separate HPC (926) and Classic (920) pool Used=/Total from CodeMeter.
-            Per-machine <strong>Seats</strong> and <strong>In use by other offices</strong> use <code>max(HPC, Classic)</code> per client IP — TUFLOW GPU/HPC typically holds both products, so summing would double-count.
+            Per-machine <strong>HPC</strong> and <strong>Classic</strong> columns show CodeMeter seats for that product by <code>LastIp</code> (TUFLOW GPU/HPC often holds both — do not add the two columns).
+            When the agent’s local claim disagrees, the cell shows <code>CodeMeter/claim</code> (e.g. <code>4/0</code>); matching seats show a single number.
+            <strong>In use by other offices</strong> uses <code>max(HPC, Classic)</code> per client IP so the same checkout is not double-counted there.
             Tooltips show the HPC/Classic product breakdown. Matching is by machine <code>LastIp</code> only (HA servers de-duplicated — max per IP, never summed).
             Cells show <code>CodeMeter/claim</code> when the agent reports process <code>-nt</code>/GPU estimates; CodeMeter remains source of truth.
             Updates via a <strong>shared live stream</strong> (one server rebuild ≈ every 30s for all viewers — browsers share one rebuild; they do not each re-query Live).
@@ -452,9 +454,11 @@
 
 <section id="site-usage" class="hd-panel mb-4 hd-help-section">
     <h2 class="h5">Site usage</h2>
-    <p class="text-secondary small mb-2"><strong>Purpose:</strong> Admin → <strong>Site usage</strong> — first-party log of who opened which page, how long they stayed, and which links they clicked (no third-party tracker).</p>
+    <p class="text-secondary small mb-2"><strong>Purpose:</strong> Admin → <strong>Site usage</strong> — first-party log of who opened which page, how long they stayed, and what they clicked (no third-party tracker). Richer dashboards come later; capture is on now.</p>
     <ol class="small mb-0">
-        <li>Page views are recorded server-side; dwell time and link clicks come from a small script in the layout (beacon on unload).</li>
+        <li><strong>Page views</strong> — recorded server-side on real HTML navigations (soft/partial refreshes are skipped).</li>
+        <li><strong>Dwell time</strong> — layout script heartbeats + unload beacon → one duration row per page view.</li>
+        <li><strong>Clicks</strong> — links, buttons, tabs, and elements marked <code>data-hd-track</code> (labels only; no form field values or passwords).</li>
         <li>Identity is best-effort: Windows/Negotiate name when present, else staff cookie email, else <code>anonymous:{session}</code>.</li>
         <li>Toggle with <code>Heimdall:UsageAnalytics:Enabled</code>; prune with <code>RetentionDays</code> (default 90). Export CSV from the Usage page.</li>
     </ol>
@@ -481,7 +485,17 @@
         <li>Deploy queues a silent agent self-update (download + service restart only). Updates defer while any interactive session is Active — no logoff or reboot. Agents below version <code>3</code> do not support <code>UpdateClient</code> — Deploy marks them Failed with bootstrap guidance.</li>
         <li><strong>Restart agent</strong> — queues <code>RestartAgent</code> (detached <code>sc stop/start HeimdallAgent</code>). <strong>Cleanup staging</strong> — deletes deposit folders only: <code>%ProgramData%\Heimdall\update\</code> (portal Deploy extract under <code>extracted-v{version}-{yyyyMMdd-HHmmss}</code>, plus legacy <code>extracted</code> / <code>extracted-{guid}</code>) and under <code>C:\Temp\</code> any folder named exactly <code>Heimdall-Client</code> or <code>Heimdall-Client-*</code>. Does not touch other Temp content, Program Files Agent, queue, secrets, or logs. Both are blocked while Deploy/UpdateClient is pending; use Cleanup then re-Deploy on hosts stuck with a locked extract folder.</li>
         <li><strong>Deposit pack to Temp</strong> — queues <code>DepositClientPack</code>: the agent downloads the Ready pack from the API into <code>C:\Temp\Heimdall-Client-v{version}-{yyyyMMdd-HHmmss}</code> for manual <code>Install.lnk</code> (does not replace the running agent). Version comes from the Ready pack (<code>PendingClientDeposit</code> / <code>VERSION.json</code>). Pack must be Ready; skipped if Deploy/UpdateClient or Deposit already pending. Launch Control → <strong>Deposit pack via API</strong> uses the same queue (not SMB/robocopy).</li>
+        <li><strong>Push zip to share</strong> — on the pack readiness panel: copies <code>Heimdall-Client-v{version}.zip</code> to a UNC/folder (default <code>Heimdall:ClientPackSharePath</code> / last used under <code>%ProgramData%\Heimdall\pack-zip-share.json</code>). Non-destructive (skips if the zip already exists). Same idea as Launch Control → Push pack zip to network share. The API service account must be able to write the share (LocalSystem uses the machine account).</li>
         <li><strong>Set API URL</strong> — queues <code>SetApiBaseUrl</code> with a new <code>Heimdall:ApiBaseUrl</code>. Agents that can still reach this API rewrite Program Files <code>appsettings.json</code> and restart. Only works while online to the current URL; for offline hosts open the deposited pack and run <code>Set-ApiUrl.lnk</code> / <code>Set-HeimdallAgentApiBaseUrl.cmd</code> (API IP is set at the top of the <code>.cmd</code>). Agents do not auto-install from <code>C:\Temp</code>.</li>
+        <li><strong>Moving the API to a new host (staged):</strong>
+            <ol class="mb-0">
+                <li>Install/redeploy Heimdall API on the new machine (preserve <code>appsettings</code> StaffAccess / ApiKey; copy or re-seed live DB from <code>%ProgramData%\Heimdall\heimdall.db</code> or the API install folder if that is where it lives).</li>
+                <li>Confirm <code>/api/health</code> on the new host; leave the old API up until agents are retargeted.</li>
+                <li>On Client version: select online agents → set <strong>API URL</strong> to the new base (e.g. <code>http://NEWHHOST:5080</code>) → <strong>Set API URL</strong>. Offline agents: deposit pack or share zip → run <code>Set-ApiUrl.lnk</code> on those PCs.</li>
+                <li>Watch heartbeats / Client version Online on the new host; then stop the old API service.</li>
+                <li>Update bookmarks, Launch Control health URL / agent <code>ApiBaseUrl</code> defaults, and any SPN notes if you use a DNS alias.</li>
+            </ol>
+        </li>
         <li><strong>Bootstrap once:</strong> first upgrade from pre-3 / legacy clients needs Heimdall Setup push or <code>Install.lnk</code> from the pack. After that, silent Deploy works for subsequent versions.</li>
         <li>Old <code>/Clients</code> URLs redirect here. Full agent architecture: see <a href="#client-agent">Client / agent</a> or repo doc <code>docs/CLIENT.md</code>.</li>
     </ol>
@@ -491,7 +505,7 @@
     <h2 class="h5">Client / agent (how it works)</h2>
     <p class="text-secondary small mb-2"><strong>Purpose:</strong> background on the Windows service installed on each workstation — not a dashboard page. Install procedures: <code>INSTALL.md</code> and <code>docs/CLIENT.md</code> in the repo.</p>
     <ol class="small">
-        <li><strong>Service</strong> — <code>HeimdallAgent</code> under <code>%ProgramFiles%\Heimdall\Agent\</code>; logs in <code>%ProgramData%\Heimdall\logs\</code>; offline ingest queue <code>queue.db</code>.</li>
+        <li><strong>Service</strong> — <code>HeimdallAgent</code> under <code>%ProgramFiles%\Heimdall\Agent\</code>; logs in <code>%ProgramData%\Heimdall\logs\</code>; offline telemetry queue <code>queue.db</code> (gzip, ~500&nbsp;MB cap — sessions/apps, fleet util, staff live samples).</li>
         <li><strong>Ingest</strong> — every ~60s (configurable): sessions, allowlisted process runs, heartbeat, hardware. Auth: header <code>X-Heimdall-Key</code>.</li>
         <li><strong>Config poll</strong> — every ~5 min: merged App lists + Tracking Config + pending commands (Restart RDS, Restart agent, Cleanup staging, Deposit pack, inventory, TUFLOW start, disk scan, UpdateClient).</li>
         <li><strong>Fleet snapshots</strong> — every <strong>30s</strong> for every known machine: CPU/GPU/RAM/disk/network, TUFLOW Y/N, Active/Idle, top processes. Powers Fleet → Live, Computers util columns, and Flood analytics.</li>

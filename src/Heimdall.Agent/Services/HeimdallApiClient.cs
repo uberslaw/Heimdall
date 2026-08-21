@@ -1,26 +1,35 @@
+using System.Net;
 using System.Net.Http.Json;
 using Heimdall.Shared.Contracts;
 
 namespace Heimdall.Agent.Services;
 
+public enum TelemetryUploadResult
+{
+    Ok,
+    /// <summary>Transient failure — keep in offline queue and retry later.</summary>
+    Retryable,
+    /// <summary>Client/permanent error — drop the queued item so it cannot block the drain.</summary>
+    Permanent
+}
+
 public sealed class HeimdallApiClient(HttpClient http, IConfiguration config, ILogger<HeimdallApiClient> logger)
 {
-    public async Task<bool> UploadAsync(IngestBatchDto batch, CancellationToken ct)
+    public async Task<bool> UploadAsync(IngestBatchDto batch, CancellationToken ct) =>
+        await UploadIngestAsync(batch, ct) == TelemetryUploadResult.Ok;
+
+    public async Task<TelemetryUploadResult> UploadIngestAsync(IngestBatchDto batch, CancellationToken ct)
     {
         try
         {
             ApplyKey();
             using var response = await http.PostAsJsonAsync("/api/ingest", batch, ct);
-            if (response.IsSuccessStatusCode)
-                return true;
-
-            logger.LogWarning("Ingest failed: {Status}", response.StatusCode);
-            return false;
+            return Classify(response.StatusCode, "Ingest");
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Ingest upload error");
-            return false;
+            return TelemetryUploadResult.Retryable;
         }
     }
 
@@ -106,42 +115,39 @@ public sealed class HeimdallApiClient(HttpClient http, IConfiguration config, IL
         }
     }
 
-    /// <summary>
-    /// Live metric samples are near-real-time only — unlike UploadAsync, a failed report is dropped, not
-    /// queued offline. A stale queued "point in time" reading would just show wrong data later; better to
-    /// skip and let the next 10s reading (or next calibration burst) supersede it.
-    /// </summary>
-    public async Task<bool> ReportResourceSampleAsync(ResourceSampleReportDto dto, CancellationToken ct)
+    public async Task<bool> ReportResourceSampleAsync(ResourceSampleReportDto dto, CancellationToken ct) =>
+        await ReportResourceSampleResultAsync(dto, ct) == TelemetryUploadResult.Ok;
+
+    public async Task<TelemetryUploadResult> ReportResourceSampleResultAsync(ResourceSampleReportDto dto, CancellationToken ct)
     {
         try
         {
             ApplyKey();
             using var response = await http.PostAsJsonAsync("/api/resource-sampling/report", dto, ct);
-            return response.IsSuccessStatusCode;
+            return Classify(response.StatusCode, "Resource sample");
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Resource sample report failed (dropped)");
-            return false;
+            logger.LogDebug(ex, "Resource sample report failed");
+            return TelemetryUploadResult.Retryable;
         }
     }
 
-    /// <summary>
-    /// Always-on fleet snapshot for Historical Dashboard enrollment. Like live samples, failures are
-    /// dropped (not queued) — the next 30s tick supersedes a missed point.
-    /// </summary>
-    public async Task<bool> ReportFleetSnapshotAsync(FleetSnapshotDto dto, CancellationToken ct)
+    public async Task<bool> ReportFleetSnapshotAsync(FleetSnapshotDto dto, CancellationToken ct) =>
+        await ReportFleetSnapshotResultAsync(dto, ct) == TelemetryUploadResult.Ok;
+
+    public async Task<TelemetryUploadResult> ReportFleetSnapshotResultAsync(FleetSnapshotDto dto, CancellationToken ct)
     {
         try
         {
             ApplyKey();
             using var response = await http.PostAsJsonAsync("/api/fleet/snapshot", dto, ct);
-            return response.IsSuccessStatusCode;
+            return Classify(response.StatusCode, "Fleet snapshot");
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Fleet snapshot report failed (dropped)");
-            return false;
+            logger.LogDebug(ex, "Fleet snapshot report failed");
+            return TelemetryUploadResult.Retryable;
         }
     }
 
@@ -183,6 +189,29 @@ public sealed class HeimdallApiClient(HttpClient http, IConfiguration config, IL
             logger.LogWarning(ex, "Client pack download error");
             return (false, null);
         }
+    }
+
+    private TelemetryUploadResult Classify(HttpStatusCode status, string label)
+    {
+        var code = (int)status;
+        if (code is >= 200 and <= 299)
+            return TelemetryUploadResult.Ok;
+
+        // Auth / validation / not found — do not block the offline drain forever.
+        if (status is HttpStatusCode.BadRequest
+            or HttpStatusCode.Unauthorized
+            or HttpStatusCode.Forbidden
+            or HttpStatusCode.NotFound
+            or HttpStatusCode.Conflict
+            or HttpStatusCode.RequestEntityTooLarge
+            or HttpStatusCode.UnprocessableEntity)
+        {
+            logger.LogWarning("{Label} permanent failure: {Status}", label, status);
+            return TelemetryUploadResult.Permanent;
+        }
+
+        logger.LogWarning("{Label} failed: {Status}", label, status);
+        return TelemetryUploadResult.Retryable;
     }
 
     private void ApplyKey()

@@ -168,6 +168,42 @@ internal static class TuflowRunHelper
 
     public static bool TryExecuteCommand(string command, ILogger logger, out string detail)
     {
+        if (string.Equals(command, RemoteMachineCommands.TuflowClearRun, StringComparison.OrdinalIgnoreCase))
+        {
+            var pointer = ReadPointer();
+            if (pointer is null)
+            {
+                detail = "No TUFLOW run pointer to clear";
+                return true;
+            }
+
+            try
+            {
+                // Best-effort stop signal if a run dir still exists, then drop the pointer so heartbeats
+                // stop resurrecting Starting after a dashboard Force clear.
+                try
+                {
+                    Directory.CreateDirectory(pointer.RunDir);
+                    File.WriteAllText(Path.Combine(pointer.RunDir, "stop.request"), DateTimeOffset.UtcNow.ToString("O"));
+                }
+                catch
+                {
+                    /* pointer clear still proceeds */
+                }
+
+                ClearPointer();
+                detail = $"Cleared TUFLOW run pointer {pointer.RunId}";
+                logger.LogWarning("Cleared local TUFLOW run pointer {RunId} (TuflowClearRun)", pointer.RunId);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                detail = ex.Message;
+                logger.LogError(ex, "Failed to clear TUFLOW run pointer {RunId}", pointer.RunId);
+                return false;
+            }
+        }
+
         if (!string.Equals(command, RemoteMachineCommands.TuflowStopGraceful, StringComparison.OrdinalIgnoreCase))
         {
             detail = $"Unknown command: {command}";

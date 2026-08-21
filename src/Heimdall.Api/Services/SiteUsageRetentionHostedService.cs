@@ -62,6 +62,10 @@ public sealed class SiteUsageRetentionHostedService(
         try
         {
             var cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays);
+            // SQLite + DateTimeOffset cannot translate ExecuteDelete; use parameterized SQL.
+            // Values are stored as text like "2026-08-21 00:00:34.0694944+00:00" (lexical ISO-sortable).
+            var cutoffText = cutoff.ToOffset(TimeSpan.Zero)
+                .ToString("yyyy-MM-dd HH:mm:ss.fffffffzzz", System.Globalization.CultureInfo.InvariantCulture);
             var total = 0;
             foreach (var mode in new[] { HeimdallDatabaseMode.Live, HeimdallDatabaseMode.Sandbox })
             {
@@ -69,9 +73,10 @@ public sealed class SiteUsageRetentionHostedService(
                 var optionsBuilder = new DbContextOptionsBuilder<HeimdallDbContext>();
                 optionsBuilder.UseSqlite(conn);
                 await using var db = new HeimdallDbContext(optionsBuilder.Options);
-                var deleted = await db.SiteUsageEvents
-                    .Where(e => e.OccurredUtc < cutoff)
-                    .ExecuteDeleteAsync(ct);
+                var deleted = await db.Database.ExecuteSqlRawAsync(
+                    """DELETE FROM "SiteUsageEvents" WHERE "OccurredUtc" < {0}""",
+                    [cutoffText],
+                    ct);
                 total += deleted;
             }
 

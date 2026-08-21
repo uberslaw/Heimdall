@@ -267,55 +267,36 @@
         statusCell.setAttribute("data-sort-value", String(activeSortValue(row)));
       }
       function licenseCellHtml(cm, claimed) {
-        if (claimed == null || claimed === undefined) return String(cm || 0);
-        var mismatch = Number(claimed) !== Number(cm || 0);
+        var seats = cm || 0;
+        if (claimed == null || claimed === undefined || Number(claimed) === Number(seats))
+          return String(seats);
         return (
           '<span class="hd-lic-cm">' +
-          String(cm || 0) +
-          '</span><span class="hd-lic-claim' +
-          (mismatch ? " hd-lic-mismatch" : "") +
-          '" title="Agent claim (estimate)">/' +
+          String(seats) +
+          '</span><span class="hd-lic-claim hd-lic-mismatch" title="Agent claim (estimate)">/' +
           String(claimed) +
           "</span>"
         );
       }
-      function licenseTitle(hpc, classic, hpcDetail, classicDetail, claimedHpc, claimedClassic, claimDetail) {
-        var seats = Math.max(hpc || 0, classic || 0);
-        var parts = [
-          "Seats in use: " +
-            seats +
-            " = max(HPC " +
-            (hpc || 0) +
-            ", Classic " +
-            (classic || 0) +
-            "). TUFLOW GPU/HPC typically holds both products — do not add them."
-        ];
-        if (hpcDetail) parts.push("HPC: " + hpcDetail);
-        else if (!(hpc > 0)) parts.push("No HPC checkout at this machine LastIp");
-        if (classicDetail) parts.push("Classic: " + classicDetail);
-        else if (!(classic > 0)) parts.push("No Classic checkout at this machine LastIp");
-        var claimed = effectiveClaim(claimedHpc, claimedClassic);
-        if (claimed != null) {
+      function licenseTitle(key, cm, detail, claimed, claimDetail) {
+        var product = key === "hpc" ? "HPC" : "Classic";
+        var parts = [];
+        if (detail) parts.push("CodeMeter (by client IP only): " + detail);
+        else if (!cm)
+          parts.push("No " + product + " checkout at this machine LastIp");
+        else parts.push("CodeMeter " + product + ": " + cm + " (LastIp match)");
+        if (claimed != null && claimed !== undefined) {
           parts.push(
             "Agent claim: " +
               claimed +
-              " (max HPC " +
-              (claimedHpc != null ? claimedHpc : "—") +
-              " / Classic " +
-              (claimedClassic != null ? claimedClassic : "—") +
-              ")" +
               (claimDetail ? " — " + claimDetail : "")
           );
-          if (Number(claimed) !== Number(seats))
+          if (Number(claimed) !== Number(cm || 0))
             parts.push(
               "Mismatch: CodeMeter is source of truth; claim is from local process args (-nt/GPU)."
             );
         }
         return parts.join(" · ");
-      }
-      function effectiveClaim(hpc, classic) {
-        if (hpc == null && classic == null) return null;
-        return Math.max(hpc || 0, classic || 0);
       }
       function metric(key, text, sort, detail) {
         var cell = tr.querySelector('[data-live="' + key + '"]');
@@ -324,24 +305,20 @@
         cell.setAttribute("data-sort-value", String(sort));
         if (detail) {
           cell.title = "CodeMeter (by client IP only): " + detail;
+        } else if (key === "hpc" || key === "classic") {
+          cell.title =
+            Number(sort) > 0
+              ? "CodeMeter seats matched by machine LastIp only (not session username)"
+              : "No checkout at this machine LastIp";
         }
       }
-      function licenseMetric(hpc, classic, hpcDetail, classicDetail, claimedHpc, claimedClassic, claimDetail) {
-        var cell = tr.querySelector('[data-live="seats"]');
+      function licenseMetric(key, cm, claimed, cmDetail, claimDetail) {
+        var cell = tr.querySelector('[data-live="' + key + '"]');
         if (!cell) return;
-        var seats = Math.max(hpc || 0, classic || 0);
-        var claimed = effectiveClaim(claimedHpc, claimedClassic);
+        var seats = cm || 0;
         cell.innerHTML = licenseCellHtml(seats, claimed);
         cell.setAttribute("data-sort-value", String(seats));
-        cell.title = licenseTitle(
-          hpc,
-          classic,
-          hpcDetail,
-          classicDetail,
-          claimedHpc,
-          claimedClassic,
-          claimDetail
-        );
+        cell.title = licenseTitle(key, seats, cmDetail, claimed, claimDetail);
         cell.classList.toggle(
           "hd-lic-cell-warn",
           claimed != null && Number(claimed) !== Number(seats)
@@ -358,15 +335,8 @@
       metric("runtime", formatHours(row.todayRuntimeHours) + "\u00A0h", row.todayRuntimeHours);
       metric("activeh", formatHours(row.todayActiveHours) + "\u00A0h", row.todayActiveHours);
       metric("gpuh", formatHours(row.todayGpuHours) + "\u00A0h", row.todayGpuHours);
-      licenseMetric(
-        row.hpcSeats,
-        row.classicSeats,
-        row.hpcSeatDetail,
-        row.classicSeatDetail,
-        row.claimedHpcSeats,
-        row.claimedClassicSeats,
-        row.tuflowClaimDetail
-      );
+      licenseMetric("hpc", row.hpcSeats, row.claimedHpcSeats, row.hpcSeatDetail, row.tuflowClaimDetail);
+      licenseMetric("classic", row.classicSeats, row.claimedClassicSeats, row.classicSeatDetail, row.tuflowClaimDetail);
       tr.hidden = false;
     }
 
@@ -428,14 +398,14 @@
           lic.hpcUsed,
           lic.hpcTotal,
           lic.hpcAvailable,
-          "HPC pool Used=/Total from CodeMeter (product 926). Separate from Classic — do not add to Classic or to the Seats column."
+          "HPC pool Used=/Total from CodeMeter (product 926). Separate from Classic — do not add the two products."
         ) +
         poolChip(
           "Classic",
           lic.classicUsed,
           lic.classicTotal,
           lic.classicAvailable,
-          "Classic pool Used=/Total from CodeMeter (product 920). Separate from HPC — do not add to HPC or to the Seats column."
+          "Classic pool Used=/Total from CodeMeter (product 920). Separate from HPC — do not add the two products."
         ) +
         '<span class="hd-lic-chip hd-lic-chip-meta" title="How long the last CodeMeter query took · age of that result" data-live-lic-last>' +
         '<span class="hd-lic-k">Last poll</span><span class="hd-lic-v">' +

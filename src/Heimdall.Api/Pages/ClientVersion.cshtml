@@ -69,6 +69,21 @@
                     title="Waiting for pack readiness check">Deploy Client</button>
         </div>
     </div>
+    <form method="post" asp-page="/ClientVersion" asp-page-handler="PushPackZipToShare"
+          class="d-flex flex-wrap align-items-end gap-2 mt-3 pt-3 border-top border-secondary border-opacity-25">
+        @Html.AntiForgeryToken()
+        <div class="flex-grow-1" style="min-width:16rem">
+            <label class="form-label small text-secondary mb-1" for="share-path">Pack zip → network share</label>
+            <input class="form-control form-control-sm" id="share-path" name="SharePath"
+                   value="@Model.PackSharePath"
+                   placeholder="\\server\share\Heimdall"
+                   title="Copies Heimdall-Client-v{version}.zip only. Skips if that file already exists (never overwrites). HeimdallApi needs write access on the UNC (LocalSystem = machine account)." />
+        </div>
+        <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm" id="btn-push-pack-share"
+                title="Build/reuse Heimdall-Client-v{version}.zip beside the Ready pack and copy to the share if missing (same as Launch Control → Push pack zip to network share).">
+            Push zip to share
+        </button>
+    </form>
 </div>
 
 <div class="hd-grid">

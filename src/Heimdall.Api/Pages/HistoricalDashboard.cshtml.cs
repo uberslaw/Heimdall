@@ -81,15 +81,41 @@ public class HistoricalDashboardModel(
         return Math.Max(claimedHpc ?? 0, claimedClassic ?? 0);
     }
 
-    /// <summary>CodeMeter count is authoritative (LastIp). Claim is agent estimate; mismatch is advisory only.</summary>
+    /// <summary>CodeMeter count is authoritative (LastIp). Claim is agent estimate; show /claim only on mismatch.</summary>
     public static string FormatLicenseCellHtml(int codeMeterSeats, int? claimedSeats, bool mismatch)
     {
-        if (claimedSeats is null)
-            return System.Net.WebUtility.HtmlEncode(codeMeterSeats.ToString());
         var cm = System.Net.WebUtility.HtmlEncode(codeMeterSeats.ToString());
+        if (claimedSeats is null || !mismatch)
+            return cm;
         var claim = System.Net.WebUtility.HtmlEncode(claimedSeats.Value.ToString());
-        var warn = mismatch ? " hd-lic-mismatch" : "";
-        return $"<span class=\"hd-lic-cm\">{cm}</span><span class=\"hd-lic-claim{warn}\" title=\"Agent claim (estimate)\">/{claim}</span>";
+        return $"<span class=\"hd-lic-cm\">{cm}</span><span class=\"hd-lic-claim hd-lic-mismatch\" title=\"Agent claim (estimate)\">/{claim}</span>";
+    }
+
+    public static string FormatLicenseProductCellTitle(
+        int seats,
+        string? detail,
+        int? claimed,
+        string? claimDetail,
+        bool hpc)
+    {
+        var product = hpc ? "HPC" : "Classic";
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(detail))
+            parts.Add($"CodeMeter (by client IP only): {detail}");
+        else if (seats == 0)
+            parts.Add($"No {product} checkout at this machine LastIp");
+        else
+            parts.Add($"CodeMeter {product}: {seats} (LastIp match)");
+
+        if (claimed is not null)
+        {
+            var ev = string.IsNullOrWhiteSpace(claimDetail) ? "" : $" — {claimDetail}";
+            parts.Add($"Agent claim: {claimed}{ev}");
+            if (claimed.Value != seats)
+                parts.Add("Mismatch: CodeMeter is source of truth; claim is from local process args (-nt/GPU).");
+        }
+
+        return string.Join(" · ", parts);
     }
 
     public static string FormatLicenseCellTitle(

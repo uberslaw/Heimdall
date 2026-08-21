@@ -71,17 +71,21 @@ public sealed class Worker(
         var configuredQueue = configuration["Heimdall:QueuePath"];
         var queuePath = string.IsNullOrWhiteSpace(configuredQueue)
             ? Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
                 "Heimdall",
                 "queue.db")
             : configuredQueue;
         _queue = new OfflineQueue(queuePath);
         _weeklyInventoryPath = Path.Combine(
-            Path.GetDirectoryName(queuePath) ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Heimdall"),
+            Path.GetDirectoryName(queuePath) ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Heimdall"),
             "weekly-inventory.json");
         _weeklyInventory = WeeklyInventoryState.LoadOrCreate(_weeklyInventoryPath);
 
-        logger.LogInformation("Heimdall agent starting on {Hostname}", hostname);
+        logger.LogInformation(
+            "Heimdall agent starting on {Hostname}; offline queue {Queue} (cap {CapMb} MB gzip)",
+            hostname,
+            queuePath,
+            OfflineQueue.DefaultMaxBytes / (1024 * 1024));
         RefreshHardware(hostname, force: true);
 
         while (!stoppingToken.IsCancellationRequested)
@@ -450,8 +454,8 @@ public sealed class Worker(
             DiskUsageScanProgress = diskProgress
         };
 
-        var ok = await api.UploadAsync(batch, ct);
-        if (!ok)
+        var upload = await api.UploadIngestAsync(batch, ct);
+        if (upload != TelemetryUploadResult.Ok)
         {
             // Keep disk-scan payload for the next successful upload (don't drop the only copy).
             if (diskScan is not null || diskProgress is not null)
@@ -464,8 +468,18 @@ public sealed class Worker(
                         _diskScanProgressReady = diskProgress;
                 }
             }
-            _queue?.Enqueue(batch);
-            logger.LogWarning("Queued batch offline ({Sessions} sessions, {Processes} processes)", sessions.Count, processes.Count);
+
+            if (upload == TelemetryUploadResult.Permanent)
+            {
+                logger.LogWarning(
+                    "Ingest rejected permanently — not queued ({Sessions} sessions, {Processes} processes)",
+                    sessions.Count, processes.Count);
+            }
+            else
+            {
+                QueueOfflineIngest(batch, sessions.Count, processes.Count);
+            }
+
             return;
         }
 
@@ -493,18 +507,100 @@ public sealed class Worker(
             }
         }
 
+        await DrainOfflineQueueAsync(ct);
+    }
+
+    private void QueueOfflineIngest(IngestBatchDto batch, int sessionCount, int processCount)
+    {
+        if (_queue is null) return;
+        _queue.EnqueueIngest(batch);
+        var (count, bytes) = _queue.GetStats();
+        logger.LogWarning(
+            "Queued ingest offline ({Sessions} sessions, {Processes} processes); queue {Count} items ≈ {Mb:0.0} MB",
+            sessionCount, processCount, count, bytes / (1024.0 * 1024.0));
+    }
+
+    private void QueueOfflineFleet(FleetSnapshotDto dto)
+    {
+        if (_queue is null) return;
+        _queue.EnqueueFleet(dto);
+        var (count, bytes) = _queue.GetStats();
+        logger.LogWarning(
+            "Queued fleet snapshot offline; queue {Count} items ≈ {Mb:0.0} MB",
+            count, bytes / (1024.0 * 1024.0));
+    }
+
+    private void QueueOfflineResource(ResourceSampleReportDto dto)
+    {
+        if (_queue is null) return;
+        _queue.EnqueueResourceSample(dto);
+        var (count, bytes) = _queue.GetStats();
+        logger.LogWarning(
+            "Queued resource sample offline; queue {Count} items ≈ {Mb:0.0} MB",
+            count, bytes / (1024.0 * 1024.0));
+    }
+
+    private async Task DrainOfflineQueueAsync(CancellationToken ct)
+    {
         if (_queue is null) return;
 
-        var pending = _queue.Peek(20);
-        var acked = new List<long>();
-        foreach (var (id, queued) in pending)
+        // Drain in FIFO order across kinds so sessions/fleet stay chronologically coherent.
+        for (var pass = 0; pass < 25; pass++)
         {
-            if (await api.UploadAsync(queued, ct))
-                acked.Add(id);
-            else
+            var pending = _queue.Peek(20);
+            if (pending.Count == 0)
+                return;
+
+            var acked = new List<long>();
+            var stop = false;
+            foreach (var item in pending)
+            {
+                if (item.Corrupt)
+                {
+                    logger.LogWarning("Dropping corrupt offline queue item {Id} ({Kind})", item.Id, item.Kind);
+                    acked.Add(item.Id);
+                    continue;
+                }
+
+                TelemetryUploadResult result;
+                try
+                {
+                    result = item.Kind switch
+                    {
+                        OfflineQueue.KindFleet => item.AsFleet() is { } fleet
+                            ? await api.ReportFleetSnapshotResultAsync(fleet, ct)
+                            : TelemetryUploadResult.Permanent,
+                        OfflineQueue.KindResourceSample => item.AsResource() is { } sample
+                            ? await api.ReportResourceSampleResultAsync(sample, ct)
+                            : TelemetryUploadResult.Permanent,
+                        _ => item.AsIngest() is { } ingest
+                            ? await api.UploadIngestAsync(ingest, ct)
+                            : TelemetryUploadResult.Permanent
+                    };
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Offline drain failed for item {Id}", item.Id);
+                    result = TelemetryUploadResult.Retryable;
+                }
+
+                if (result == TelemetryUploadResult.Ok || result == TelemetryUploadResult.Permanent)
+                {
+                    if (result == TelemetryUploadResult.Permanent)
+                        logger.LogWarning("Dropping offline queue item {Id} ({Kind}) after permanent failure", item.Id, item.Kind);
+                    acked.Add(item.Id);
+                    continue;
+                }
+
+                // Retryable — stop this drain pass; try again after the next successful online upload.
+                stop = true;
                 break;
+            }
+
+            _queue.Remove(acked);
+            if (stop || acked.Count == 0)
+                return;
         }
-        _queue.Remove(acked);
     }
 
     /// <summary>
@@ -563,16 +659,25 @@ public sealed class Worker(
             if (_resourceCalibrationBuffer.Count == CalibrationSampleCount)
             {
                 var report = BuildReport(hostname, sample, _resourceCalibrationBuffer, _resourceFavoriteNames, isCalibrationAverage: true);
-                await api.ReportResourceSampleAsync(report, ct);
+                await UploadOrQueueResourceAsync(report, ct);
                 _nextResourceSample = now.AddSeconds(ResourceSteadyStateInterval.TotalSeconds);
             }
         }
         else
         {
             var report = BuildReport(hostname, sample, burst: null, _resourceFavoriteNames, isCalibrationAverage: false);
-            await api.ReportResourceSampleAsync(report, ct);
+            await UploadOrQueueResourceAsync(report, ct);
             _nextResourceSample = now.Add(ResourceSteadyStateInterval);
         }
+    }
+
+    private async Task UploadOrQueueResourceAsync(ResourceSampleReportDto report, CancellationToken ct)
+    {
+        var result = await api.ReportResourceSampleResultAsync(report, ct);
+        if (result == TelemetryUploadResult.Ok)
+            await DrainOfflineQueueAsync(ct);
+        else if (result == TelemetryUploadResult.Retryable)
+            QueueOfflineResource(report);
     }
 
     /// <summary>
@@ -710,9 +815,13 @@ public sealed class Worker(
             TuflowClaimDetail = string.IsNullOrWhiteSpace(claim.Detail) ? null : claim.Detail
         };
 
-        var ok = await api.ReportFleetSnapshotAsync(dto, ct);
-        if (!ok)
-            logger.LogDebug("Fleet snapshot upload failed for {Host} (dropped)", hostname);
+        var fleetResult = await api.ReportFleetSnapshotResultAsync(dto, ct);
+        if (fleetResult == TelemetryUploadResult.Ok)
+            await DrainOfflineQueueAsync(ct);
+        else if (fleetResult == TelemetryUploadResult.Retryable)
+            QueueOfflineFleet(dto);
+        else
+            logger.LogWarning("Fleet snapshot rejected permanently for {Host} — not queued", hostname);
     }
 
     private static bool MatchesFleetProcess(string name, IReadOnlyList<string> patterns)

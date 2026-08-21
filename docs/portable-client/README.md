@@ -68,7 +68,7 @@ There is **no separate “workstation collector” folder to combine** with a �
 - Refreshes config from **`GET /api/config/{hostname}`** (~5 min)
 - **30s fleet snapshots** to **`POST /api/fleet/snapshot`** (all heartbeating machines — CPU/GPU/RAM/disk/network + TUFLOW flags)
 - Optional **Staff live sampling** when a viewer is active (separate from fleet snapshots)
-- Offline queue: `%ProgramData%\Heimdall\queue.db` when API is down
+- Offline queue: `%ProgramData%\Heimdall\queue.db` when API is down (gzip; ~500 MB; ingest + fleet + live samples)
 
 See **[docs/CLIENT.md](../CLIENT.md)** for detail.
 

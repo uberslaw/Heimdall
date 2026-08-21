@@ -231,7 +231,7 @@ Repo-based `Install-Agent` cannot publish `net10.0` with SDK 8. Use the portable
 |------|----------------|
 | API DB (live) | `%ProgramData%\Heimdall\heimdall.db` |
 | API DB (sandbox / dev) | `%ProgramData%\Heimdall\heimdall-dev.db` |
-| Agent offline queue | `%ProgramData%\Heimdall\queue.db` |
+| Agent offline queue | `%ProgramData%\Heimdall\queue.db` (gzip; ~500 MB cap; ingest + fleet + live samples) |
 
 Ensure `%ProgramData%\Heimdall\` exists and the service account (LocalSystem by default) can write there. Do not commit or overwrite these DBs into the git clone.
 

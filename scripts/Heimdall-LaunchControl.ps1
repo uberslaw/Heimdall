@@ -17,7 +17,10 @@ param(
     [ValidateSet(
         "Menu", "InstallApi", "PackCollector", "InstallCollector", "PushClientPack",
         "PushPackZip", "DepositPack", "RedeployApi", "Prerequisites",
-        "ClientCheck", "OpenLogs", "OpenRemoteLogs", "BackupApiDatabase", "RemoveSeedDemos", "Diagnostics")]
+        "ClientCheck", "OpenLogs", "OpenRemoteLogs", "BackupApiDatabase", "BackupApiConfig",
+        "RemoveSeedDemos", "Diagnostics",
+        "MigrationInstallApi", "MigrationRestoreData", "MigrationVerifyHealth",
+        "MigrationRetargetAgents", "MigrationStopOldApi")]
     [string]$Mode = "Menu",
     # When set (e.g. from Heimdall Launch Control WPF), run the Mode action without the full Setup shell.
     [switch]$ActionOnly
@@ -2759,6 +2762,367 @@ function Resolve-RemoteApiDataRootUncPath {
     return (Split-Path -Parent $dbUnc)
 }
 
+function Resolve-RemoteApiInstallUncPath {
+    param([Parameter(Mandatory)][string]$HostOrIp)
+    $hostNorm = $HostOrIp.Trim().TrimEnd('\')
+    if ([string]::IsNullOrWhiteSpace($hostNorm)) { return $null }
+    return "\\$hostNorm\C$\Program Files\Heimdall\Api"
+}
+
+function Show-RemoteApiHostPrompt {
+    param(
+        [string]$Title = "API host",
+        [string]$Hint = "Machine name or IP (admin share C$ required).",
+        [string]$AcceptLabel = "OK"
+    )
+    $defaultHost = Get-DefaultRemoteApiHost
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = $Title
+    $form.StartPosition = "CenterParent"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.Width = 560
+    $form.Height = 220
+    $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text = $Hint
+    $lbl.Left = 16; $lbl.Top = 16; $lbl.Width = 520; $lbl.Height = 36
+    $form.Controls.Add($lbl)
+
+    $combo = New-Object System.Windows.Forms.ComboBox
+    $combo.Left = 16; $combo.Top = 58; $combo.Width = 520
+    $combo.DropDownStyle = "DropDown"
+    $combo.AutoCompleteMode = "SuggestAppend"
+    $combo.AutoCompleteSource = "ListItems"
+    foreach ($t in (Get-RemoteLogTargets)) {
+        [void]$combo.Items.Add($t.host)
+    }
+    if ($combo.Items.Count -gt 0) {
+        $idx = [array]::IndexOf($combo.Items, $defaultHost)
+        if ($idx -ge 0) { $combo.SelectedIndex = $idx } else { $combo.Text = $defaultHost }
+    }
+    else {
+        $combo.Text = $defaultHost
+    }
+    $form.Controls.Add($combo)
+
+    $okBtn = New-Object System.Windows.Forms.Button
+    $okBtn.Text = $AcceptLabel
+    $okBtn.Left = 250; $okBtn.Top = 110; $okBtn.Width = 90; $okBtn.Height = 28
+    $okBtn.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.AcceptButton = $okBtn
+    $form.Controls.Add($okBtn)
+
+    $cancelBtn = New-Object System.Windows.Forms.Button
+    $cancelBtn.Text = "Cancel"
+    $cancelBtn.Left = 350; $cancelBtn.Top = 110; $cancelBtn.Width = 90; $cancelBtn.Height = 28
+    $cancelBtn.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.CancelButton = $cancelBtn
+    $form.Controls.Add($cancelBtn)
+
+    if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+        return $null
+    }
+    $hostInput = $combo.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($hostInput)) {
+        [System.Windows.Forms.MessageBox]::Show("Enter the API machine name or IP.", "Missing input", "OK", "Warning") | Out-Null
+        return $null
+    }
+    return $hostInput
+}
+
+function Backup-ApiConfig {
+    Write-HeimdallLog "Backup API config (appsettings)" -Level STEP
+    Set-UiSteps @(
+        '[ ] 1. Choose API host',
+        '[ ] 2. Copy appsettings*.json from Program Files\Heimdall\Api',
+        '[ ] 3. Save under %LOCALAPPDATA%\Heimdall\backups\config\'
+    )
+    Set-UiStatus "Backup API config..."
+
+    $hostInput = Show-RemoteApiHostPrompt -Title "Backup API config" `
+        -Hint "Copies appsettings.json (+ Development if present) from \\HOST\C$\Program Files\Heimdall\Api\. Use for routine backups or before a server move." `
+        -AcceptLabel "Backup"
+    if (-not $hostInput) {
+        Write-HeimdallLog "API config backup cancelled." -Level WARN
+        return
+    }
+
+    $apiUnc = Resolve-RemoteApiInstallUncPath -HostOrIp $hostInput
+    $dataRootUnc = Resolve-RemoteApiDataRootUncPath -HostOrIp $hostInput
+    $hostSafe = ($hostInput -replace '[\\/:*?"<>|]', '-')
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $localRoot = Join-Path $env:LOCALAPPDATA "Heimdall\backups\config\$hostSafe-$stamp"
+    New-Item -ItemType Directory -Path $localRoot -Force | Out-Null
+
+    Write-HeimdallLog "API config backup: host=$hostInput from=$apiUnc to=$localRoot" -Level INFO
+    if (-not (Test-Path -LiteralPath $apiUnc)) {
+        Write-HeimdallLog "API install folder unreachable: $apiUnc" -Level ERROR
+        [System.Windows.Forms.MessageBox]::Show(
+            "Cannot reach:`r`n$apiUnc`r`n`r`nCheck machine name, admin rights, and SMB.",
+            "Backup failed", "OK", "Error") | Out-Null
+        Update-UiStep 0 "[X] 1. Host unreachable"
+        return
+    }
+    Update-UiStep 0 "[OK] 1. Host $hostInput"
+
+    $copied = @()
+    foreach ($name in @("appsettings.json", "appsettings.Development.json", "appsettings.Production.json", "web.config")) {
+        $src = Join-Path $apiUnc $name
+        if (Test-Path -LiteralPath $src) {
+            Copy-Item -LiteralPath $src -Destination (Join-Path $localRoot $name) -Force
+            $copied += $name
+            Write-HeimdallLog "Copied $name" -Level OK
+        }
+    }
+    if ($copied.Count -eq 0) {
+        Write-HeimdallLog "No appsettings*.json found under $apiUnc" -Level ERROR
+        [System.Windows.Forms.MessageBox]::Show("No appsettings*.json found under:`r`n$apiUnc", "Backup failed", "OK", "Error") | Out-Null
+        Update-UiStep 1 "[X] 2. No config files"
+        return
+    }
+    Update-UiStep 1 "[OK] 2. Copied $($copied -join ', ')"
+
+    $remoteNote = ""
+    try {
+        $remoteBackupDir = Join-Path $dataRootUnc "backups\config\$hostSafe-$stamp"
+        New-Item -ItemType Directory -Path $remoteBackupDir -Force | Out-Null
+        foreach ($name in $copied) {
+            Copy-Item -LiteralPath (Join-Path $localRoot $name) -Destination (Join-Path $remoteBackupDir $name) -Force
+        }
+        $remoteNote = "`r`n`r`nAlso on API PC:`r`n$remoteBackupDir"
+        Write-HeimdallLog "Remote config backup: $remoteBackupDir" -Level OK
+    }
+    catch {
+        $remoteNote = "`r`n`r`nRemote copy skipped: $($_.Exception.Message)"
+        Write-HeimdallLog $remoteNote.Trim() -Level WARN
+    }
+
+    Add-RemoteLogTarget -TargetHost $hostInput -UncPath "$dataRootUnc\logs"
+    Update-UiStep 2 "[OK] 3. Saved $localRoot"
+    Set-UiStatus "API config backed up: $hostInput"
+    [System.Windows.Forms.MessageBox]::Show(
+        ("Backup saved locally:`r`n{0}`r`n`r`nFiles: {1}{2}" -f $localRoot, ($copied -join ', '), $remoteNote),
+        "Config backup complete", "OK", "Information") | Out-Null
+}
+
+function Start-MigrationInstallApiGuide {
+    Write-HeimdallLog "Server migration step 3: Install API on NEW host" -Level STEP
+    $r = [System.Windows.Forms.MessageBox]::Show(
+        ("Run this ON the NEW API machine (or after RDP to it).`r`n`r`n" +
+         "This starts Install API on this PC — it writes Program Files\Heimdall\Api and registers HeimdallApi.`r`n`r`n" +
+         "Do NOT use the old host for this step.`r`n`r`n" +
+         "After install: leave the new service running, then use step 4 to copy DB + secrets.`r`n`r`n" +
+         "Start Install API now?"),
+        "3 · Install API on NEW host",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Information)
+    if ($r -ne [System.Windows.Forms.DialogResult]::Yes) {
+        Write-HeimdallLog "Migration install cancelled." -Level WARN
+        return
+    }
+    Start-GuidedApiInstall
+}
+
+function Start-MigrationRestoreData {
+    Write-HeimdallLog "Server migration step 4: Copy DB + secrets onto NEW host" -Level STEP
+    Set-UiSteps @(
+        '[ ] 1. Choose NEW API host',
+        '[ ] 2. Choose source (local backup .db or OLD host)',
+        '[ ] 3. Stop HeimdallApi on NEW host',
+        '[ ] 4. Copy heimdall.db + secrets',
+        '[ ] 5. Start HeimdallApi on NEW host'
+    )
+    Set-UiStatus "Migration restore..."
+
+    $newHost = Show-RemoteApiHostPrompt -Title "4 · NEW API host" `
+        -Hint "Destination machine that already has HeimdallApi installed (step 3). Admin C$ required." `
+        -AcceptLabel "Next"
+    if (-not $newHost) { return }
+    Update-UiStep 0 "[OK] 1. NEW host $newHost"
+
+    $srcChoice = [System.Windows.Forms.MessageBox]::Show(
+        "Where is the live database to copy FROM?`r`n`r`nYes = pick a local backup .db file`r`nNo = copy from OLD host ProgramData over SMB`r`nCancel = abort",
+        "4 · Database source",
+        [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+        [System.Windows.Forms.MessageBoxIcon]::Question)
+    if ($srcChoice -eq [System.Windows.Forms.DialogResult]::Cancel) { return }
+
+    $sourceDb = $null
+    $sourceSecrets = $null
+    if ($srcChoice -eq [System.Windows.Forms.DialogResult]::Yes) {
+        $ofd = New-Object System.Windows.Forms.OpenFileDialog
+        $ofd.Title = "Select heimdall backup database"
+        $ofd.Filter = "SQLite DB (*.db)|*.db|All files (*.*)|*.*"
+        $ofd.InitialDirectory = (Join-Path $env:LOCALAPPDATA "Heimdall\backups")
+        if ($ofd.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+        $sourceDb = $ofd.FileName
+    }
+    else {
+        $oldHost = Show-RemoteApiHostPrompt -Title "4 · OLD API host" `
+            -Hint "Source machine to copy \\HOST\C$\ProgramData\Heimdall\heimdall.db (+ secrets) from." `
+            -AcceptLabel "Use old host"
+        if (-not $oldHost) { return }
+        $sourceDb = Resolve-RemoteApiDatabaseUncPath -HostOrIp $oldHost
+        $sourceSecrets = Join-Path (Resolve-RemoteApiDataRootUncPath -HostOrIp $oldHost) "secrets"
+    }
+
+    if (-not (Test-Path -LiteralPath $sourceDb)) {
+        [System.Windows.Forms.MessageBox]::Show("Source DB not found:`r`n$sourceDb", "Restore failed", "OK", "Error") | Out-Null
+        Update-UiStep 1 "[X] 2. Source missing"
+        return
+    }
+    Update-UiStep 1 "[OK] 2. Source $sourceDb"
+
+    $destDb = Resolve-RemoteApiDatabaseUncPath -HostOrIp $newHost
+    $destRoot = Resolve-RemoteApiDataRootUncPath -HostOrIp $newHost
+    $destSecrets = Join-Path $destRoot "secrets"
+
+    Write-HeimdallLog "Stopping HeimdallApi on $newHost before DB copy..." -Level STEP
+    try {
+        & sc.exe "\\$newHost" stop HeimdallApi | Out-Null
+        Start-Sleep -Seconds 3
+        Update-UiStep 2 "[OK] 3. Stopped (or already stopped) HeimdallApi"
+    }
+    catch {
+        Write-HeimdallLog "sc stop warning: $($_.Exception.Message)" -Level WARN
+        Update-UiStep 2 "[!] 3. Stop may have failed — continue carefully"
+    }
+
+    try {
+        New-Item -ItemType Directory -Path $destRoot -Force | Out-Null
+        Copy-Item -LiteralPath $sourceDb -Destination $destDb -Force
+        Write-HeimdallLog "Copied DB → $destDb" -Level OK
+
+        $sandboxSrc = $null
+        if ($sourceDb -match 'heimdall\.db$') {
+            $sandboxCandidate = $sourceDb -replace 'heimdall\.db$', 'heimdall-dev.db'
+            if (Test-Path -LiteralPath $sandboxCandidate) { $sandboxSrc = $sandboxCandidate }
+        }
+        if ($sandboxSrc) {
+            Copy-Item -LiteralPath $sandboxSrc -Destination (Join-Path $destRoot "heimdall-dev.db") -Force
+            Write-HeimdallLog "Copied sandbox DB" -Level OK
+        }
+
+        if ($sourceSecrets -and (Test-Path -LiteralPath $sourceSecrets)) {
+            if (-not (Test-Path -LiteralPath $destSecrets)) {
+                New-Item -ItemType Directory -Path $destSecrets -Force | Out-Null
+            }
+            Copy-Item -LiteralPath (Join-Path $sourceSecrets "*") -Destination $destSecrets -Recurse -Force -ErrorAction SilentlyContinue
+            Write-HeimdallLog "Copied secrets → $destSecrets" -Level OK
+        }
+        elseif ($srcChoice -eq [System.Windows.Forms.DialogResult]::Yes) {
+            Write-HeimdallLog "Local .db restore: secrets not copied (re-run Protect-HeimdallEntraSecret on new host if needed)." -Level WARN
+        }
+        Update-UiStep 3 "[OK] 4. DB (+ secrets if available) copied"
+    }
+    catch {
+        Write-HeimdallLog "Restore copy failed: $($_.Exception.Message)" -Level ERROR
+        [System.Windows.Forms.MessageBox]::Show("Copy failed:`r`n$($_.Exception.Message)", "Restore failed", "OK", "Error") | Out-Null
+        return
+    }
+
+    try {
+        & sc.exe "\\$newHost" start HeimdallApi | Out-Null
+        Update-UiStep 4 "[OK] 5. Started HeimdallApi on $newHost"
+        Write-HeimdallLog "Started HeimdallApi on $newHost" -Level OK
+    }
+    catch {
+        Write-HeimdallLog "sc start warning: $($_.Exception.Message)" -Level WARN
+        Update-UiStep 4 "[!] 5. Start may need manual sc start"
+    }
+
+    Set-UiStatus "Migration restore done: $newHost"
+    [System.Windows.Forms.MessageBox]::Show(
+        ("Copied to {0}:`r`n{1}`r`n`r`nNext: step 5 — Verify new API /api/health." -f $newHost, $destDb),
+        "4 · Restore complete", "OK", "Information") | Out-Null
+}
+
+function Start-MigrationVerifyHealth {
+    Write-HeimdallLog "Server migration step 5: Verify new API health" -Level STEP
+    $fields = [ordered]@{
+        HealthUrl = "http://NEWHOST:5080/api/health"
+    }
+    $u = Show-InputForm -Title "5 · Verify new API health" -Prompt "Paste the NEW host health URL (must return status ok)." -Fields $fields -AcceptLabel "Check"
+    if (-not $u) { return }
+    $url = [string]$u.HealthUrl
+    if ([string]::IsNullOrWhiteSpace($url)) { return }
+    Write-HeimdallLog "GET $url" -Level INFO
+    try {
+        $r = Invoke-WebRequest -Uri $url.Trim() -UseBasicParsing -TimeoutSec 15
+        $body = $r.Content
+        Write-HeimdallLog "Health HTTP $($r.StatusCode): $body" -Level OK
+        [System.Windows.Forms.MessageBox]::Show(
+            ("HTTP {0}`r`n`r`n{1}`r`n`r`nNext: step 6 — Retarget agents (Set API URL)." -f $r.StatusCode, $body),
+            "5 · Health OK", "OK", "Information") | Out-Null
+        Set-UiStatus "Health OK: $url"
+    }
+    catch {
+        Write-HeimdallLog "Health failed: $($_.Exception.Message)" -Level ERROR
+        [System.Windows.Forms.MessageBox]::Show(
+            "Health check failed:`r`n$($_.Exception.Message)`r`n`r`n$url",
+            "5 · Health failed", "OK", "Error") | Out-Null
+    }
+}
+
+function Start-MigrationRetargetAgents {
+    Write-HeimdallLog "Server migration step 6: Retarget agents" -Level STEP
+    $fields = [ordered]@{
+        DashboardUrl = "http://NEWHOST:5080/Fleet?tab=clients"
+        NewApiBaseUrl = "http://NEWHOST:5080"
+    }
+    $u = Show-InputForm -Title "6 · Retarget agents" `
+        -Prompt "Open Client version on the NEW API. Select online agents → paste NewApiBaseUrl → Set API URL. Offline PCs: deposit pack / share zip → Set-ApiUrl.lnk." `
+        -Fields $fields -AcceptLabel "Open Client version"
+    if (-not $u) { return }
+    $dash = [string]$u.DashboardUrl
+    $apiBase = [string]$u.NewApiBaseUrl
+    if (-not [string]::IsNullOrWhiteSpace($apiBase)) {
+        try { Set-Clipboard -Value $apiBase.Trim() } catch { }
+        Write-HeimdallLog "Copied NewApiBaseUrl to clipboard: $apiBase" -Level INFO
+    }
+    if ([string]::IsNullOrWhiteSpace($dash)) { return }
+    Start-Process $dash.Trim()
+    Write-HeimdallLog "Opened $dash" -Level OK
+    Set-UiStatus "Retarget agents via Client version"
+    [System.Windows.Forms.MessageBox]::Show(
+        ("Client version opened.`r`n`r`nNew API URL is on the clipboard (if set):`r`n{0}`r`n`r`nWhen heartbeats show Online on the new host, run step 7 — Stop old HeimdallApi." -f $apiBase),
+        "6 · Retarget agents", "OK", "Information") | Out-Null
+}
+
+function Start-MigrationStopOldApi {
+    Write-HeimdallLog "Server migration step 7: Stop old HeimdallApi" -Level STEP
+    $oldHost = Show-RemoteApiHostPrompt -Title "7 · Stop OLD HeimdallApi" `
+        -Hint "Only after agents are heartbeating on the NEW host. Stops Windows service HeimdallApi on the OLD machine (sc \\HOST stop)." `
+        -AcceptLabel "Stop service"
+    if (-not $oldHost) { return }
+
+    $confirm = [System.Windows.Forms.MessageBox]::Show(
+        ("Stop HeimdallApi on OLD host '{0}'?`r`n`r`nAgents that still point here will go offline until Set API URL / Set-ApiUrl.lnk." -f $oldHost),
+        "Confirm stop",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Warning)
+    if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) {
+        Write-HeimdallLog "Stop old API cancelled." -Level WARN
+        return
+    }
+
+    try {
+        $out = & sc.exe "\\$oldHost" stop HeimdallApi 2>&1 | Out-String
+        Write-HeimdallLog "sc stop output: $out" -Level INFO
+        Set-UiStatus "Stopped HeimdallApi on $oldHost"
+        [System.Windows.Forms.MessageBox]::Show(
+            ("Stop requested on {0}.`r`n`r`n{1}`r`n`r`nMigration complete once dashboards use the new host only." -f $oldHost, $out.Trim()),
+            "7 · Old API stopped", "OK", "Information") | Out-Null
+    }
+    catch {
+        Write-HeimdallLog "Stop failed: $($_.Exception.Message)" -Level ERROR
+        [System.Windows.Forms.MessageBox]::Show("Stop failed:`r`n$($_.Exception.Message)", "7 · Stop failed", "OK", "Error") | Out-Null
+    }
+}
+
 function Backup-ApiDatabase {
     Write-HeimdallLog "Backup API database" -Level STEP
 
@@ -5067,8 +5431,14 @@ function Invoke-LaunchControlModeAction {
         "OpenLogs"          { Open-LogsFolder }
         "OpenRemoteLogs"    { Open-RemoteLogsFolder }
         "BackupApiDatabase" { Backup-ApiDatabase }
+        "BackupApiConfig"   { Backup-ApiConfig }
         "RemoveSeedDemos"  { Invoke-RemoveSeedDemoMachines }
         "Diagnostics"       { Start-Diagnostics }
+        "MigrationInstallApi"    { Start-MigrationInstallApiGuide }
+        "MigrationRestoreData"   { Start-MigrationRestoreData }
+        "MigrationVerifyHealth"  { Start-MigrationVerifyHealth }
+        "MigrationRetargetAgents"{ Start-MigrationRetargetAgents }
+        "MigrationStopOldApi"    { Start-MigrationStopOldApi }
         default             { throw "Unknown Mode: $ModeName" }
     }
 }
@@ -5216,11 +5586,21 @@ function Show-LaunchControl {
 
     Add-SectionHeading "Recovery"
     $btnBackupDb = New-ActionButton "Backup API database..." $true
+    $btnBackupConfig = New-ActionButton "Backup API config (appsettings)..." $true
     if (-not $script:IsPackedLayout) {
         $btnRemoveDemos = New-ActionButton "Remove seed/demo machines..." $true
     }
 
-    foreach ($btn in @($btnApi, $btnRedeployApi, $btnPack, $btnPush, $btnPushZipShare, $btnDepositApi, $btnAgent, $btnClientCheck, $btnLogs, $btnRemoteLogs, $btnBackupDb, $btnRemoveDemos, $btnDiag, $btnDash, $btnPre)) {
+    Add-SectionHeading "Server migration"
+    $btnMig1 = New-ActionButton "1 · Backup database from OLD API host..." $true
+    $btnMig2 = New-ActionButton "2 · Backup config from OLD API host..." $true
+    $btnMig3 = New-ActionButton "3 · Install API on NEW host (run on that PC)..." (-not $script:IsPackedLayout)
+    $btnMig4 = New-ActionButton "4 · Copy DB + secrets onto NEW host..." $true
+    $btnMig5 = New-ActionButton "5 · Verify new API /api/health..." $true
+    $btnMig6 = New-ActionButton "6 · Retarget agents (open Client version)..." $true
+    $btnMig7 = New-ActionButton "7 · Stop HeimdallApi on OLD host..." $true
+
+    foreach ($btn in @($btnApi, $btnRedeployApi, $btnPack, $btnPush, $btnPushZipShare, $btnDepositApi, $btnAgent, $btnClientCheck, $btnLogs, $btnRemoteLogs, $btnBackupDb, $btnBackupConfig, $btnRemoveDemos, $btnDiag, $btnDash, $btnPre, $btnMig1, $btnMig2, $btnMig3, $btnMig4, $btnMig5, $btnMig6, $btnMig7)) {
         if ($btn) { Register-LaunchControlActionButton -Button $btn }
     }
 
@@ -5526,8 +5906,16 @@ function Show-LaunchControl {
     $btnLogs.Add_Click({ Open-LogsFolder })
     $btnRemoteLogs.Add_Click({ Open-RemoteLogsFolder })
     $btnBackupDb.Add_Click({ Invoke-LaunchControlAction { Backup-ApiDatabase } })
+    $btnBackupConfig.Add_Click({ Invoke-LaunchControlAction { Backup-ApiConfig } })
     if ($btnRemoveDemos) { $btnRemoveDemos.Add_Click({ Invoke-LaunchControlAction { Invoke-RemoveSeedDemoMachines } }) }
     if ($btnDiag) { $btnDiag.Add_Click({ Invoke-LaunchControlAction { Start-Diagnostics } }) }
+    $btnMig1.Add_Click({ Invoke-LaunchControlAction { Backup-ApiDatabase } })
+    $btnMig2.Add_Click({ Invoke-LaunchControlAction { Backup-ApiConfig } })
+    if ($btnMig3) { $btnMig3.Add_Click({ Invoke-LaunchControlAction { Start-MigrationInstallApiGuide } }) }
+    $btnMig4.Add_Click({ Invoke-LaunchControlAction { Start-MigrationRestoreData } })
+    $btnMig5.Add_Click({ Invoke-LaunchControlAction { Start-MigrationVerifyHealth } })
+    $btnMig6.Add_Click({ Invoke-LaunchControlAction { Start-MigrationRetargetAgents } })
+    $btnMig7.Add_Click({ Invoke-LaunchControlAction { Start-MigrationStopOldApi } })
     $btnDash.Add_Click({
         $u = Show-InputForm -Title "Open dashboard" -Prompt "API base URL" -Fields ([ordered]@{ ApiUrl = "http://localhost:5080" }) -AcceptLabel "Open"
         if ($u -and $u.ApiUrl) { Start-Process $u.ApiUrl.TrimEnd("/") }

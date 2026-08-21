@@ -16,7 +16,8 @@ namespace Heimdall.Api.Pages;
 public class ClientVersionModel(
     HeimdallDbContext db,
     PublishedVersionService publishedVersion,
-    ClientUpdateService clientUpdates) : PageModel
+    ClientUpdateService clientUpdates,
+    ClientPackSharePushService packSharePush) : PageModel
 {
     public string? PublishedVersion { get; private set; }
     public int? PublishedSimpleVersion { get; private set; }
@@ -29,6 +30,9 @@ public class ClientVersionModel(
     public int OutOfDateCount { get; private set; }
     public int UnknownCount { get; private set; }
 
+    /// <summary>Preferred UNC/folder for Push pack zip to share (config + last used).</summary>
+    public string PackSharePath { get; private set; } = ClientPackSharePushService.DefaultSharePath;
+
     [BindProperty]
     public string? NewPublishedVersion { get; set; }
 
@@ -37,6 +41,9 @@ public class ClientVersionModel(
 
     [BindProperty]
     public string? NewApiBaseUrl { get; set; }
+
+    [BindProperty]
+    public string? SharePath { get; set; }
 
     public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
@@ -148,11 +155,23 @@ public class ClientVersionModel(
         return RedirectToOpsClients();
     }
 
+    public IActionResult OnPostPushPackZipToShare()
+    {
+        var (ok, message, _, _) = packSharePush.PushVersionedZipToShare(SharePath);
+        if (ok)
+            TempData["Message"] = message;
+        else
+            TempData["Error"] = message;
+        return RedirectToOpsClients();
+    }
+
     private static IActionResult RedirectToOpsClients() =>
         new RedirectResult("/Fleet?tab=clients");
 
     private async Task LoadAsync(CancellationToken ct)
     {
+        PackSharePath = packSharePush.GetPreferredSharePath();
+
         var info = await publishedVersion.GetAsync(ct);
         PublishedVersion = info.Version;
         PublishedSimpleVersion = VersionCompare.TryGetSimpleVersion(info.Version);

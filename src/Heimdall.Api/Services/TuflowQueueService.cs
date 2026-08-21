@@ -200,6 +200,15 @@ public class TuflowQueueService(
         if (TuflowLaunchPath.ValidateLaunch(launchMode, exePath, tcfPath, cmdPath, workingDirectory, resultsFolder) is { } pathErr)
             return (false, pathErr, 0);
 
+        // Same soft guard as TuflowRunService.QueueStartAsync: without .tcf the launcher later fails
+        // with "folder, not a .tcf file" after the item already claimed a host slot.
+        if (!string.Equals(launchMode, TuflowLaunchModes.Cmd, StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(tcfPath)
+            && !tcfPath.Trim().EndsWith(".tcf", StringComparison.OrdinalIgnoreCase))
+        {
+            return (false, $"Tcf path must be a .tcf file (got '{tcfPath.Trim()}').", 0);
+        }
+
         var sCombos = CartesianScenarios(scenarioGroups);
         var eCombos = CartesianScenarios(eventGroups);
         var total = sCombos.Count * eCombos.Count;
@@ -566,6 +575,12 @@ public class TuflowQueueService(
     {
         var item = await db.TuflowQueueItems.FirstOrDefaultAsync(i => i.RunId == runId, ct);
         if (item is null)
+            return;
+
+        // Terminal queue rows must not flip back to Dispatching/Running when a stale agent heartbeat
+        // re-reports Starting after Force clear.
+        if (item.EndedUtc is not null
+            || item.State is TuflowQueueItemStates.Completed or TuflowQueueItemStates.Failed or TuflowQueueItemStates.Stopped)
             return;
 
         // Keep Starting as Dispatching so the queue doesn't look "Running" before TUFLOW actually starts.

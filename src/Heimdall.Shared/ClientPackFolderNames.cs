@@ -39,6 +39,10 @@ public static class ClientPackFolderNames
     public static string BuildPushFolderName(string? version) =>
         $"{FolderPrefix}-v{SanitizeVersion(version)}";
 
+    /// <summary>Versioned zip beside pack / on share: <c>Heimdall-Client-v{version}.zip</c>.</summary>
+    public static string BuildZipFileName(string? version) =>
+        $"{BuildPushFolderName(version)}.zip";
+
     /// <summary>Agent DepositClientPack: <c>Heimdall-Client-v{version}-{yyyyMMdd-HHmmss}</c>.</summary>
     public static string BuildDepositFolderName(string? version, DateTime? localStamp = null)
     {

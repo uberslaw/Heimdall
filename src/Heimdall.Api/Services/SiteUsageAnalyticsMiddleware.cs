@@ -10,7 +10,8 @@ public sealed class SiteUsageAnalyticsMiddleware(RequestDelegate next)
         if (usage.IsEnabled
             && HttpMethods.IsGet(context.Request.Method)
             && SiteUsageAnalyticsService.ShouldTrackPath(context.Request.Path)
-            && AcceptsHtml(context.Request))
+            && AcceptsHtml(context.Request)
+            && !IsSoftPartialRequest(context.Request))
         {
             // Ensure session cookie can still be written before the response starts.
             usage.EnsureSessionId(context);
@@ -40,5 +41,20 @@ public sealed class SiteUsageAnalyticsMiddleware(RequestDelegate next)
         if (string.IsNullOrWhiteSpace(accept) || accept.Contains("*/*", StringComparison.Ordinal))
             return true;
         return accept.Contains("text/html", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Ops/Flood soft refresh fetch — not a real navigation.</summary>
+    private static bool IsSoftPartialRequest(HttpRequest request)
+    {
+        if (request.Headers.ContainsKey("X-Ops-Partial")
+            || request.Headers.ContainsKey("X-Fleet-Partial")
+            || request.Headers.ContainsKey("X-Heimdall-Partial"))
+            return true;
+
+        if (request.Query.TryGetValue("partial", out var partial)
+            && string.Equals(partial.ToString(), "1", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
     }
 }

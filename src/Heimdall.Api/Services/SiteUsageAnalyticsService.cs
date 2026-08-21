@@ -334,9 +334,12 @@ public sealed class SiteUsageAnalyticsService(
     {
         var days = Math.Max(1, retentionDays);
         var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
-        return await db.SiteUsageEvents
-            .Where(e => e.OccurredUtc < cutoff)
-            .ExecuteDeleteAsync(ct);
+        var cutoffText = cutoff.ToOffset(TimeSpan.Zero)
+            .ToString("yyyy-MM-dd HH:mm:ss.fffffffzzz", System.Globalization.CultureInfo.InvariantCulture);
+        return await db.Database.ExecuteSqlRawAsync(
+            """DELETE FROM "SiteUsageEvents" WHERE "OccurredUtc" < {0}""",
+            [cutoffText],
+            ct);
     }
 
     private static string? NullIfEmpty(string value) =>

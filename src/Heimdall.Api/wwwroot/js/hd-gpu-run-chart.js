@@ -347,18 +347,24 @@
         ctx.lineCap = "round";
         ctx.beginPath();
         let started = false;
+        let lastT = null;
+        // Break the polyline across long sample gaps so sparse overnight points
+        // do not draw a fake diagonal "trend" across hours of missing data.
+        const gapBreakSec = 3 * 60;
         visible.forEach((p) => {
           const v = p[s.key];
           if (v == null) {
             started = false;
+            lastT = null;
             return;
           }
           const x = xOf(p.t);
           const y = yOf(s.axis === "pct" ? Math.min(100, Math.max(0, v)) : v);
-          if (!started) {
+          if (!started || (lastT != null && p.t - lastT > gapBreakSec)) {
             ctx.moveTo(x, y);
             started = true;
           } else ctx.lineTo(x, y);
+          lastT = p.t;
         });
         ctx.stroke();
       });

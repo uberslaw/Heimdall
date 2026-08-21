@@ -13,6 +13,12 @@ public static class RemoteMachineCommands
     public const string TuflowStopGraceful = "TuflowStopGraceful";
 
     /// <summary>
+    /// Force-clear the agent's local TUFLOW pointer (<c>current-run.json</c>) after dashboard abandon.
+    /// Does not wait for a graceful checkpoint; use when Starting is stuck or Force clear was used.
+    /// </summary>
+    public const string TuflowClearRun = "TuflowClearRun";
+
+    /// <summary>
     /// Silent client self-update: agent downloads the published pack from the API and replaces
     /// HeimdallAgent files (service restart only — never logoff/reboot). Payload is
     /// AgentConfigDto.PendingClientUpdate.

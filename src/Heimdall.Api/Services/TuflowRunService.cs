@@ -313,8 +313,12 @@ public class TuflowRunService(
 
         machine.PendingTuflowStartJson = null;
         var pending = RemoteMachineService.DeserializeCommands(machine.PendingCommandsJson);
-        pending.RemoveAll(c => string.Equals(c, RemoteMachineCommands.TuflowStopGraceful, StringComparison.OrdinalIgnoreCase));
-        machine.PendingCommandsJson = pending.Count == 0 ? null : JsonSerializer.Serialize(pending, JsonOptions);
+        pending.RemoveAll(c =>
+            string.Equals(c, RemoteMachineCommands.TuflowStopGraceful, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(c, RemoteMachineCommands.TuflowClearRun, StringComparison.OrdinalIgnoreCase));
+        // Ask the agent to drop current-run.json so the next heartbeat cannot resurrect Starting.
+        pending.Add(RemoteMachineCommands.TuflowClearRun);
+        machine.PendingCommandsJson = JsonSerializer.Serialize(pending.Distinct(StringComparer.OrdinalIgnoreCase), JsonOptions);
 
         var now = DateTimeOffset.UtcNow;
         var failed = new TuflowRunStatusDto
@@ -349,7 +353,7 @@ public class TuflowRunService(
         await UpsertHistoryAsync(machine.Id, failed, ct);
         await queues.SyncItemFromRunAsync(status.RunId, TuflowRunStates.Failed, failed.ErrorSummary, ct);
         await db.SaveChangesAsync(ct);
-        logger.LogWarning("Abandoned stuck TUFLOW run {RunId} on {Host}", status.RunId, hostname);
+        logger.LogWarning("Abandoned stuck TUFLOW run {RunId} on {Host} (queued TuflowClearRun)", status.RunId, hostname);
         codeMeterHub.RequestPollSoon($"tuflow-abandon:{hostname}");
         return (true, null);
     }
@@ -366,29 +370,98 @@ public class TuflowRunService(
     {
         if (heartbeat.TuflowRunStatus is { } reported)
         {
-            machine.TuflowRunStatusJson = JsonSerializer.Serialize(reported, JsonOptions);
+            // Force clear / terminal history must stick: agents that still hold current-run.json keep
+            // emitting Starting and used to overwrite Failed + resurrect Fleet Sims / queue slots.
+            if (await IsTerminalRunRevivalAsync(reported, ct))
+            {
+                logger.LogWarning(
+                    "Ignoring TUFLOW heartbeat revive for ended run {RunId} on machine {MachineId} (reported {State})",
+                    reported.RunId, machine.Id, reported.State);
+                EnsurePendingClearRun(machine);
+                // Keep machine live status terminal if a prior revive already overwrote it.
+                var live = DeserializeStatus(machine.TuflowRunStatusJson);
+                if (live is not null
+                    && string.Equals(live.RunId, reported.RunId, StringComparison.OrdinalIgnoreCase)
+                    && IsActiveRunState(live.State))
+                {
+                    var failed = new TuflowRunStatusDto
+                    {
+                        RunId = live.RunId,
+                        RunName = live.RunName,
+                        State = TuflowRunStates.Failed,
+                        ProcessId = live.ProcessId,
+                        TcfPath = live.TcfPath,
+                        CmdPath = live.CmdPath,
+                        StartedUtc = live.StartedUtc,
+                        StopRequestedUtc = live.StopRequestedUtc,
+                        LastCheckpointUtc = live.LastCheckpointUtc,
+                        LastCheckpointFile = live.LastCheckpointFile,
+                        ExitCode = live.ExitCode,
+                        Message = "Abandoned from dashboard (cleared stuck run).",
+                        UpdatedUtc = DateTimeOffset.UtcNow,
+                        PercentComplete = live.PercentComplete,
+                        SimulationTimeHours = live.SimulationTimeHours,
+                        SimulationEndTimeHours = live.SimulationEndTimeHours,
+                        ClockTimeRemainingHours = live.ClockTimeRemainingHours,
+                        WarningCount = live.WarningCount,
+                        MassErrorPercent = live.MassErrorPercent,
+                        ErrorSummary = "Abandoned from dashboard (cleared stuck run).",
+                        ScratchDrive = live.ScratchDrive,
+                        LocalResultsPath = live.LocalResultsPath,
+                        ArchivePath = live.ArchivePath,
+                        TransferState = live.TransferState,
+                        TransferDetail = live.TransferDetail
+                    };
+                    machine.TuflowRunStatusJson = JsonSerializer.Serialize(failed, JsonOptions);
+                    await UpsertHistoryAsync(machine.Id, failed, ct);
+                }
+            }
+            else
+            {
+                machine.TuflowRunStatusJson = JsonSerializer.Serialize(reported, JsonOptions);
 
-            // Once the agent confirms it picked up the start request for this RunId, clear the pending
-            // copy so a stale request is never re-sent on a later config refresh.
-            var pendingStart = DeserializeStartRequest(machine.PendingTuflowStartJson);
-            if (pendingStart is not null && string.Equals(pendingStart.RunId, reported.RunId, StringComparison.OrdinalIgnoreCase))
-                machine.PendingTuflowStartJson = null;
+                // Once the agent confirms it picked up the start request for this RunId, clear the pending
+                // copy so a stale request is never re-sent on a later config refresh.
+                var pendingStart = DeserializeStartRequest(machine.PendingTuflowStartJson);
+                if (pendingStart is not null && string.Equals(pendingStart.RunId, reported.RunId, StringComparison.OrdinalIgnoreCase))
+                    machine.PendingTuflowStartJson = null;
 
-            await UpsertHistoryAsync(machine.Id, reported, ct);
-            await queues.SyncItemFromRunAsync(reported.RunId, reported.State, reported.ErrorSummary ?? reported.Message, ct);
+                await UpsertHistoryAsync(machine.Id, reported, ct);
+                await queues.SyncItemFromRunAsync(reported.RunId, reported.State, reported.ErrorSummary ?? reported.Message, ct);
+            }
         }
 
         if (heartbeat.AcknowledgedCommands.Count == 0)
             return;
 
-        var ackedStop = heartbeat.AcknowledgedCommands.Any(c =>
-            string.Equals(c, RemoteMachineCommands.TuflowStopGraceful, StringComparison.OrdinalIgnoreCase));
-        if (!ackedStop)
-            return;
-
         var pending = RemoteMachineService.DeserializeCommands(machine.PendingCommandsJson);
-        pending.RemoveAll(c => string.Equals(c, RemoteMachineCommands.TuflowStopGraceful, StringComparison.OrdinalIgnoreCase));
-        machine.PendingCommandsJson = pending.Count == 0 ? null : JsonSerializer.Serialize(pending, JsonOptions);
+        var removed = pending.RemoveAll(c =>
+            heartbeat.AcknowledgedCommands.Any(a => string.Equals(a, c, StringComparison.OrdinalIgnoreCase)
+                && (string.Equals(c, RemoteMachineCommands.TuflowStopGraceful, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(c, RemoteMachineCommands.TuflowClearRun, StringComparison.OrdinalIgnoreCase))));
+        if (removed > 0)
+            machine.PendingCommandsJson = pending.Count == 0 ? null : JsonSerializer.Serialize(pending, JsonOptions);
+    }
+
+    private async Task<bool> IsTerminalRunRevivalAsync(TuflowRunStatusDto reported, CancellationToken ct)
+    {
+        if (!IsActiveRunState(reported.State) || string.IsNullOrWhiteSpace(reported.RunId))
+            return false;
+
+        // EndedUtc is the durable "this run is finished" marker — State alone can be corrupted to
+        // Starting by an older heartbeat that already revived the row before this guard existed.
+        var record = await db.TuflowRunRecords.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.RunId == reported.RunId, ct);
+        return record?.EndedUtc is not null;
+    }
+
+    private static void EnsurePendingClearRun(Machine machine)
+    {
+        var pending = RemoteMachineService.DeserializeCommands(machine.PendingCommandsJson);
+        if (pending.Contains(RemoteMachineCommands.TuflowClearRun, StringComparer.OrdinalIgnoreCase))
+            return;
+        pending.Add(RemoteMachineCommands.TuflowClearRun);
+        machine.PendingCommandsJson = JsonSerializer.Serialize(pending, JsonOptions);
     }
 
     /// <summary>
@@ -421,7 +494,9 @@ public class TuflowRunService(
         }
 
         record.RunName = status.RunName ?? record.RunName;
-        record.State = status.State;
+        // Never reopen a run that already ended (Force clear / Completed / Failed).
+        if (record.EndedUtc is null || !IsActiveRunState(status.State))
+            record.State = status.State;
         record.StartedUtc ??= status.StartedUtc;
         if (!string.IsNullOrWhiteSpace(status.CmdPath))
             record.CmdPath = status.CmdPath;
@@ -755,7 +830,7 @@ public class TuflowRunService(
     {
         var activeStates = new[] { TuflowRunStates.Starting, TuflowRunStates.Running, TuflowRunStates.StopRequested };
         var activeRuns = await db.TuflowRunRecords.AsNoTracking()
-            .Where(r => activeStates.Contains(r.State))
+            .Where(r => activeStates.Contains(r.State) && r.EndedUtc == null)
             .Include(r => r.Machine)
             .ToListAsync(ct);
 

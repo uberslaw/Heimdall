@@ -3,7 +3,10 @@ using System.Text.Json;
 using Heimdall.Api.Data;
 using Heimdall.Api.Services;
 using Heimdall.Shared.Contracts;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Negotiate;
+using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -11,6 +14,14 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Required for SCM registration; without this, Windows service start times out (Error 1053).
 builder.Host.UseWindowsService(options => options.ServiceName = "HeimdallApi");
+
+// Negotiate/NTLM keeps handshake state on the TCP connection. HTTP/2 multiplexing can send an
+// anonymous request on the same connection mid-handshake and Kestrel then throws
+// "An anonymous request was received in between authentication handshake requests" → /Error.
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.ConfigureEndpointDefaults(listen => listen.Protocols = HttpProtocols.Http1);
+});
 
 // Always-on rolling file logs under %ProgramData%\Heimdall\logs\api\ (known location if UI is down).
 builder.Logging.AddProvider(new Heimdall.Api.Logging.RollingFileLoggerProvider());
@@ -31,7 +42,25 @@ builder.Services.AddScoped<SiteUsageAnalyticsService>();
 var staffAccessOpts = builder.Configuration.GetSection("Heimdall:StaffAccess").Get<StaffAccessOptions>() ?? new();
 if (staffAccessOpts.RequireWindowsAuth)
 {
-    builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme).AddNegotiate();
+    builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme)
+        .AddNegotiate(options =>
+        {
+            options.Events = new NegotiateEvents
+            {
+                // Prefer a clean 401 challenge over bubbling to /Error when the browser interrupts NTLM.
+                OnAuthenticationFailed = context =>
+                {
+                    if (!IsNegotiateHandshakeInterrupted(context.Exception))
+                        return Task.CompletedTask;
+
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    if (!context.Response.Headers.ContainsKey("WWW-Authenticate"))
+                        context.Response.Headers.WWWAuthenticate = "Negotiate";
+                    context.HandleResponse();
+                    return Task.CompletedTask;
+                }
+            };
+        });
     builder.Services.AddAuthorization();
 }
 
@@ -84,6 +113,7 @@ builder.Services.AddScoped<LiveSamplingService>();
 builder.Services.AddScoped<SessionDrilldownService>();
 builder.Services.AddScoped<PublishedVersionService>();
 builder.Services.AddSingleton<ClientPackReadinessService>();
+builder.Services.AddSingleton<ClientPackSharePushService>();
 builder.Services.AddScoped<ClientUpdateService>();
 builder.Services.AddScoped<StorageScanService>();
 builder.Services.AddSingleton<DiagnosticBundleService>();
@@ -112,7 +142,35 @@ RdpProtocolHandler.EnsureRegistered(app.Logger);
 
 if (!app.Environment.IsDevelopment())
 {
-    app.UseExceptionHandler("/Error");
+    // Do not re-execute /Error on the same TCP connection for Negotiate handshake races —
+    // that re-run hits AuthenticationMiddleware again and can throw a second time.
+    app.UseExceptionHandler(errorApp =>
+    {
+        errorApp.Run(async context =>
+        {
+            var feature = context.Features.Get<IExceptionHandlerPathFeature>();
+            var ex = feature?.Error;
+            if (IsNegotiateHandshakeInterrupted(ex))
+            {
+                var logger = context.RequestServices.GetRequiredService<ILoggerFactory>()
+                    .CreateLogger("Heimdall.Api.Negotiate");
+                logger.LogWarning(
+                    ex,
+                    "Windows auth handshake interrupted on {Path}; challenging again instead of Error page",
+                    feature?.Path ?? context.Request.Path.Value);
+
+                if (!context.Response.HasStarted)
+                {
+                    context.Response.Clear();
+                    await context.ChallengeAsync(NegotiateDefaults.AuthenticationScheme);
+                }
+
+                return;
+            }
+
+            context.Response.Redirect("/Error");
+        });
+    });
     app.UseHsts();
 }
 
@@ -665,3 +723,12 @@ app.MapPost("/api/usage/beacon", async (HttpContext ctx, SiteUsageAnalyticsServi
 }).DisableAntiforgery();
 
 app.Run();
+
+/// <summary>
+/// Negotiate keeps incomplete handshake state on the connection. A follow-up anonymous request
+/// (second tab, EventSource, prefetch) throws instead of starting a new challenge — map that to retry.
+/// </summary>
+static bool IsNegotiateHandshakeInterrupted(Exception? ex) =>
+    ex is InvalidOperationException ioe
+    && (ioe.Message.Contains("anonymous request was received in between authentication handshake", StringComparison.OrdinalIgnoreCase)
+        || ioe.Message.Contains("Non-negotiate request was received in between authentication handshake", StringComparison.OrdinalIgnoreCase));
