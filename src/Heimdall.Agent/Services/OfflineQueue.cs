@@ -9,25 +9,28 @@ namespace Heimdall.Agent.Services;
 /// <summary>
 /// Durable offline store for telemetry the API never received (ingest batches + fleet snapshots).
 /// Payloads are gzip-compressed JSON; oldest rows are dropped when the DB exceeds
-/// <see cref="MaxBytes"/> (~500 MB).
+/// <see cref="MaxBytes"/> or <see cref="MaxRetentionDays"/>.
 /// </summary>
 public sealed class OfflineQueue
 {
     public const long DefaultMaxBytes = 500L * 1024 * 1024;
+    public const int DefaultMaxRetentionDays = 4;
     public const string KindIngest = "ingest";
     public const string KindFleet = "fleet";
     public const string KindResourceSample = "resource";
 
     private readonly string _dbPath;
     private readonly long _maxBytes;
+    private readonly int _maxRetentionDays;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     private static readonly byte[] GzipMagic = [0x1f, 0x8b];
 
-    public OfflineQueue(string dbPath, long maxBytes = DefaultMaxBytes)
+    public OfflineQueue(string dbPath, long maxBytes = DefaultMaxBytes, int maxRetentionDays = DefaultMaxRetentionDays)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dbPath);
         _dbPath = dbPath;
         _maxBytes = Math.Max(16L * 1024 * 1024, maxBytes);
+        _maxRetentionDays = Math.Max(1, maxRetentionDays);
         var directory = Path.GetDirectoryName(Path.GetFullPath(dbPath));
         if (!string.IsNullOrWhiteSpace(directory))
             Directory.CreateDirectory(directory);
@@ -35,6 +38,7 @@ public sealed class OfflineQueue
     }
 
     public long MaxBytes => _maxBytes;
+    public int MaxRetentionDays => _maxRetentionDays;
 
     public void EnqueueIngest(IngestBatchDto batch) =>
         Enqueue(KindIngest, JsonSerializer.SerializeToUtf8Bytes(batch, JsonOptions));
@@ -121,6 +125,8 @@ public sealed class OfflineQueue
 
     private void TrimToBudget(SqliteConnection conn)
     {
+        TrimOlderThanRetention(conn);
+
         // Prefer SUM(payload_bytes); fall back to LENGTH for legacy rows.
         long used;
         using (var sum = conn.CreateCommand())
@@ -162,6 +168,15 @@ public sealed class OfflineQueue
 
             used -= oldestBytes;
         }
+    }
+
+    private void TrimOlderThanRetention(SqliteConnection conn)
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-_maxRetentionDays).ToString("O");
+        using var del = conn.CreateCommand();
+        del.CommandText = "DELETE FROM queue WHERE created_utc < $c;";
+        del.Parameters.AddWithValue("$c", cutoff);
+        del.ExecuteNonQuery();
     }
 
     private void EnsureSchema()

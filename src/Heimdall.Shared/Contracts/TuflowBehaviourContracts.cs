@@ -15,6 +15,10 @@ public static class TuflowBehaviourDefaults
     public const int SampleRetentionDays = 180;
     public const int FastSampleSeconds = 10;
     public const int NormalFleetSampleSeconds = 30;
+    /// <summary>Default lookback when recovering TUFLOW streak start after ingest outage (4 days).</summary>
+    public const int StreakLookbackHours = 96;
+    /// <summary>Max gap between fleet samples while TuflowRunning before treating as a different job (3 days).</summary>
+    public const int MaxSilentGapHours = 72;
     /// <summary>
     /// Legacy: stop stamps on Live no longer expire by age (they stay until the next run starts).
     /// Kept so existing appsettings keys still bind without error.

@@ -1,0 +1,166 @@
+@page
+@model ApiHealthModel
+@using Heimdall.Api.Services
+@{
+    ViewData["Title"] = "API health";
+    ViewData["HelpFragment"] = "api-health";
+    string FmtUtc(DateTimeOffset? utc) => utc is null ? "—" : utc.Value.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss");
+    string FmtSpan(TimeSpan? span) => span is null ? "—" : DurationDisplay.Format(span.Value);
+}
+
+<h1 class="hd-title mb-1">API health</h1>
+<p class="hd-sub">Uptime probes, ingest lag, fleet snapshot gaps, and TUFLOW behaviour coverage after outages.</p>
+
+@if (!Model.Allowed)
+{
+    <p class="text-secondary">You need to be listed in AdminEmails to view API health.</p>
+}
+else if (Model.Dashboard is { } d)
+{
+    <section class="hd-panel mb-4">
+        <h2 class="h5 mb-3">Current status</h2>
+        <div class="d-flex flex-wrap gap-4 small">
+            <div><strong>Host</strong><br />@d.Hostname</div>
+            <div><strong>Process uptime</strong><br />@FmtSpan(d.ProcessUptime)</div>
+            <div><strong>7-day uptime</strong><br />@d.UptimePercent7d.ToString("0.0")% (@d.SampleCount7d probes)</div>
+            <div><strong>DB latency (7d avg)</strong><br />@(d.AvgDbLatencyMs is int ms ? $"{ms} ms" : "—")</div>
+            <div><strong>Windows service</strong><br />@(d.WindowsServiceStatus ?? "—")</div>
+            <div><strong>ApiHeal task</strong><br />@(d.ApiHealTaskRegistered switch { true => "Registered", false => "Not registered", _ => "n/a" })</div>
+        </div>
+        <div class="d-flex flex-wrap gap-4 small mt-3">
+            <div><strong>Last fleet ingest</strong><br />@FmtUtc(d.LastFleetIngestUtc)</div>
+            <div><strong>Last agent contact</strong><br />@FmtUtc(d.LastAgentContactUtc)</div>
+            <div><strong>Fleet ingest lag</strong><br />@FmtSpan(d.FleetIngestLag)</div>
+        </div>
+    </section>
+
+    <section class="hd-panel mb-4">
+        <h2 class="h5 mb-2">Recent incidents</h2>
+        @if (d.RecentIncidents.Count == 0)
+        {
+            <p class="text-secondary small mb-0">No recorded incidents yet (probes run every minute after startup).</p>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm table-striped small mb-0">
+                    <thead>
+                        <tr>
+                            <th>Started</th>
+                            <th>Ended</th>
+                            <th>Duration</th>
+                            <th>Source</th>
+                            <th>Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var i in d.RecentIncidents)
+                        {
+                            var dur = i.EndedUtc is null ? (TimeSpan?)null : i.EndedUtc.Value - i.StartedUtc;
+                            <tr>
+                                <td>@FmtUtc(i.StartedUtc)</td>
+                                <td>@FmtUtc(i.EndedUtc)</td>
+                                <td>@FmtSpan(dur)</td>
+                                <td>@i.Source</td>
+                                <td>@(i.Detail ?? "")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
+    <section class="hd-panel mb-4">
+        <h2 class="h5 mb-2">Fleet snapshot gaps</h2>
+        <p class="text-secondary small">
+            Machines with a gap longer than @d.FleetGapAlertMinutes minutes in the last @d.GapLookbackHours hours
+            (often API down, agent offline, or network). Agents queue samples for up to 4 days when the API is unreachable.
+        </p>
+        @if (d.FleetGaps.Count == 0)
+        {
+            <p class="text-secondary small mb-0">No large fleet gaps detected in the lookback window.</p>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm table-striped small mb-0">
+                    <thead>
+                        <tr>
+                            <th>Host</th>
+                            <th>Last seen</th>
+                            <th>Max gap</th>
+                            <th>Gap ended</th>
+                            <th>Note</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var g in d.FleetGaps)
+                        {
+                            <tr>
+                                <td>@(g.FriendlyName ?? g.Hostname)</td>
+                                <td>@FmtUtc(g.LastSeenUtc)</td>
+                                <td>@FmtSpan(g.MaxGap)</td>
+                                <td>@FmtUtc(g.MaxGapAtUtc)</td>
+                                <td>@(g.Note ?? "")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
+    <section class="hd-panel mb-4">
+        <h2 class="h5 mb-2">TUFLOW behaviour gaps</h2>
+        <p class="text-secondary small">
+            Hosts where <code>TuflowRunning</code> fleet time exceeds behaviour-run time — often ingest outage during a long run
+            (streak recovery now bridges up to 3 days). Replay uses queued fleet snapshots when agents reconnect.
+        </p>
+        @if (d.TuflowGaps.Count == 0)
+        {
+            <p class="text-secondary small mb-0">No TUFLOW coverage gaps flagged in the lookback window.</p>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm table-striped small mb-0">
+                    <thead>
+                        <tr>
+                            <th>Host</th>
+                            <th>Fleet TUFLOW (est.)</th>
+                            <th>Behaviour (min)</th>
+                            <th>Runs</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var t in d.TuflowGaps)
+                        {
+                            <tr>
+                                <td>@(t.FriendlyName ?? t.Hostname)</td>
+                                <td>@t.FleetTuflowMinutes.ToString("0") min</td>
+                                <td>@t.BehaviourMinutes.ToString("0") min</td>
+                                <td>@t.BehaviourRunCount</td>
+                                <td>@t.Reason</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
+    <section class="hd-panel mb-4">
+        <h2 class="h5 mb-2">ApiHeal watchdog log</h2>
+        <p class="text-secondary small">Scheduled task <code>HeimdallApiHeal</code> — logs under <code>@d.ApiHealLogsDir</code></p>
+        @if (d.RecentHealLogLines.Count == 0)
+        {
+            <p class="text-secondary small mb-0">No heal log lines yet.</p>
+        }
+        else
+        {
+            <pre class="small bg-dark text-light p-2 rounded mb-0">@string.Join(Environment.NewLine, d.RecentHealLogLines)</pre>
+        }
+    </section>
+}

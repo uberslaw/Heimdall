@@ -46,6 +46,8 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
     public DbSet<TuflowBehaviourSample> TuflowBehaviourSamples => Set<TuflowBehaviourSample>();
     public DbSet<CustomTheme> CustomThemes => Set<CustomTheme>();
     public DbSet<SiteUsageEvent> SiteUsageEvents => Set<SiteUsageEvent>();
+    public DbSet<ApiHealthSample> ApiHealthSamples => Set<ApiHealthSample>();
+    public DbSet<ApiHealthIncident> ApiHealthIncidents => Set<ApiHealthIncident>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -402,6 +404,17 @@ public class HeimdallDbContext(DbContextOptions<HeimdallDbContext> options) : Db
             e.HasIndex(x => new { x.Path, x.OccurredUtc });
             e.HasIndex(x => x.PageViewId);
             e.HasIndex(x => x.SessionId);
+        });
+
+        modelBuilder.Entity<ApiHealthSample>(e =>
+        {
+            e.HasIndex(x => x.SampledAtUtc);
+        });
+
+        modelBuilder.Entity<ApiHealthIncident>(e =>
+        {
+            e.HasIndex(x => x.StartedUtc);
+            e.HasIndex(x => x.EndedUtc);
         });
     }
 }

@@ -75,17 +75,21 @@ public sealed class Worker(
                 "Heimdall",
                 "queue.db")
             : configuredQueue;
-        _queue = new OfflineQueue(queuePath);
+        _queue = new OfflineQueue(
+            queuePath,
+            ResolveQueueMaxBytes(configuration),
+            ResolveQueueMaxRetentionDays(configuration));
         _weeklyInventoryPath = Path.Combine(
             Path.GetDirectoryName(queuePath) ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Heimdall"),
             "weekly-inventory.json");
         _weeklyInventory = WeeklyInventoryState.LoadOrCreate(_weeklyInventoryPath);
 
         logger.LogInformation(
-            "Heimdall agent starting on {Hostname}; offline queue {Queue} (cap {CapMb} MB gzip)",
+            "Heimdall agent starting on {Hostname}; offline queue {Queue} (cap {CapMb} MB, retain {RetainDays}d gzip)",
             hostname,
             queuePath,
-            OfflineQueue.DefaultMaxBytes / (1024 * 1024));
+            _queue.MaxBytes / (1024 * 1024),
+            _queue.MaxRetentionDays);
         RefreshHardware(hostname, force: true);
 
         while (!stoppingToken.IsCancellationRequested)
@@ -1103,6 +1107,17 @@ public sealed class Worker(
             return null;
         }
     }
+
+    private static long ResolveQueueMaxBytes(IConfiguration configuration)
+    {
+        var mb = configuration.GetValue("Heimdall:OfflineQueue:MaxBytesMb", 0);
+        if (mb > 0)
+            return (long)mb * 1024 * 1024;
+        return OfflineQueue.DefaultMaxBytes;
+    }
+
+    private static int ResolveQueueMaxRetentionDays(IConfiguration configuration) =>
+        Math.Max(1, configuration.GetValue("Heimdall:OfflineQueue:MaxRetentionDays", OfflineQueue.DefaultMaxRetentionDays));
 
     private static AgentConfigDto DefaultConfig() => new()
     {

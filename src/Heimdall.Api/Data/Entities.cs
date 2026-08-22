@@ -1011,6 +1011,27 @@ public class SiteUsageEvent
     public string? Referrer { get; set; }
 }
 
+/// <summary>Periodic in-process API health probe (DB latency + ok flag) for uptime dashboard.</summary>
+public class ApiHealthSample
+{
+    public long Id { get; set; }
+    public DateTimeOffset SampledAtUtc { get; set; }
+    public bool Ok { get; set; }
+    public int? DbLatencyMs { get; set; }
+    public string? Detail { get; set; }
+}
+
+/// <summary>Detected API outage or heal restart window.</summary>
+public class ApiHealthIncident
+{
+    public long Id { get; set; }
+    public DateTimeOffset StartedUtc { get; set; }
+    public DateTimeOffset? EndedUtc { get; set; }
+    /// <summary>probe | api-heal | startup</summary>
+    public required string Source { get; set; }
+    public string? Detail { get; set; }
+}
+
 /// <summary>Named TUFLOW run queue (per machine, fleet/unassigned, or saved template).</summary>
 public class TuflowQueue
 {

@@ -18,6 +18,10 @@ public sealed class TuflowBehaviourOptions
     public int SampleRetentionDays { get; set; } = TuflowBehaviourDefaults.SampleRetentionDays;
     /// <summary>Unused: Live Active-column stop stamps persist until the next run (see GetDisplayByMachineAsync).</summary>
     public int RecentStopDisplayHours { get; set; } = TuflowBehaviourDefaults.RecentStopDisplayHours;
+    /// <summary>How far back to walk fleet snapshots when recovering a TUFLOW streak start.</summary>
+    public int StreakLookbackHours { get; set; } = TuflowBehaviourDefaults.StreakLookbackHours;
+    /// <summary>Max hours between samples while TuflowRunning before streak recovery stops.</summary>
+    public int MaxSilentGapHours { get; set; } = TuflowBehaviourDefaults.MaxSilentGapHours;
     public bool Enabled { get; set; } = true;
 }
 
@@ -245,25 +249,21 @@ public sealed class TuflowBehaviourService(
         DateTimeOffset sampledAt,
         CancellationToken ct)
     {
-        var lookback = sampledAt.AddHours(-36);
-        // SQLite EF: avoid DateTimeOffset ORDER BY — sort in memory.
+        var opts = options.Value;
+        var lookback = sampledAt.AddHours(-Math.Max(1, opts.StreakLookbackHours));
         var recent = await db.FleetMetricSnapshots.AsNoTracking()
-            .Where(s => s.MachineId == machineId)
+            .Where(s => s.MachineId == machineId && s.SampledAtUtc >= lookback && s.SampledAtUtc <= sampledAt)
             .OrderByDescending(s => s.Id)
-            .Take(8000)
             .Select(s => new { s.SampledAtUtc, s.TuflowRunning })
             .ToListAsync(ct);
 
         var ordered = recent
-            .Where(s => s.SampledAtUtc >= lookback && s.SampledAtUtc <= sampledAt)
             .OrderByDescending(s => s.SampledAtUtc)
             .ToList();
 
         var streakStart = sampledAt;
         DateTimeOffset? prev = null;
-        // Bridge ingest outages (hours) while Tuflow stayed up; stop on a clear not-running sample
-        // or a very long empty gap that likely spans a different job day.
-        const double maxSilentGapHours = 6;
+        var maxSilentGapHours = Math.Max(1, opts.MaxSilentGapHours);
         foreach (var s in ordered)
         {
             if (!s.TuflowRunning)

@@ -1943,6 +1943,29 @@ public static class SeedData
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SiteUsageEvents_PageViewId ON SiteUsageEvents(PageViewId)");
         await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_SiteUsageEvents_SessionId ON SiteUsageEvents(SessionId)");
 
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS ApiHealthSamples (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                SampledAtUtc TEXT NOT NULL,
+                Ok INTEGER NOT NULL,
+                DbLatencyMs INTEGER NULL,
+                Detail TEXT NULL
+            )
+            """);
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_ApiHealthSamples_SampledAtUtc ON ApiHealthSamples(SampledAtUtc)");
+
+        await TryExec(db, """
+            CREATE TABLE IF NOT EXISTS ApiHealthIncidents (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                StartedUtc TEXT NOT NULL,
+                EndedUtc TEXT NULL,
+                Source TEXT NOT NULL,
+                Detail TEXT NULL
+            )
+            """);
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_ApiHealthIncidents_StartedUtc ON ApiHealthIncidents(StartedUtc)");
+        await TryExec(db, "CREATE INDEX IF NOT EXISTS IX_ApiHealthIncidents_EndedUtc ON ApiHealthIncidents(EndedUtc)");
+
         // TUFLOW behaviour analytics (CPU start/stop detection + sample series).
         // ExecuteSqlRaw treats single braces as format placeholders — use '{{}}' for a literal '{}'.
         await TryExec(db, """

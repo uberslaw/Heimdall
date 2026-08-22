@@ -12,7 +12,10 @@ param(
     [string]$ApiKey = "heimdall-poc-key",
     [switch]$NoPrompt,
     # Keep existing Program Files appsettings.json (and siblings) when present.
-    [switch]$PreserveConfig
+    [switch]$PreserveConfig,
+    # Register HeimdallApiHeal scheduled task + Windows service failure recovery (default on).
+    [bool]$EnableApiHealWatchdog = $true,
+    [switch]$DisableApiHealWatchdog
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,7 +30,69 @@ if (Test-Path -LiteralPath $timingHelper) {
     . $timingHelper
 }
 
-$script:InstallProgressTotalSteps = 9
+$script:InstallProgressTotalSteps = 11
+
+function Ensure-Dir([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) {
+        New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    }
+}
+
+function Sync-ApiHealWatchdogFiles {
+    $srcHeal = Join-Path $PSScriptRoot "Heimdall-ApiHeal.ps1"
+    if (-not (Test-Path -LiteralPath $srcHeal)) {
+        Write-Log "ApiHeal script missing at $srcHeal" -Level ERROR
+        return $false
+    }
+    $destRoot = Join-Path $env:ProgramData "Heimdall\heal"
+    Ensure-Dir $destRoot
+    $destHeal = Join-Path $destRoot "Heimdall-ApiHeal.ps1"
+    Copy-Item -LiteralPath $srcHeal -Destination $destHeal -Force
+    return (Test-Path -LiteralPath $destHeal)
+}
+
+function Test-ApiHealWatchdogRegistered {
+    try {
+        $t = Get-ScheduledTask -TaskName "HeimdallApiHeal" -ErrorAction SilentlyContinue
+        return $null -ne $t
+    }
+    catch {
+        return $false
+    }
+}
+
+function Register-ApiHealWatchdogTask {
+    param([int]$HealPort = 5080)
+    if (-not (Sync-ApiHealWatchdogFiles)) {
+        throw "Cannot register HeimdallApiHeal — heal script sync failed"
+    }
+    $healPs1 = Join-Path $env:ProgramData "Heimdall\heal\Heimdall-ApiHeal.ps1"
+    $psExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    if (-not (Test-Path -LiteralPath $psExe)) { $psExe = "powershell.exe" }
+    $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$healPs1`" -Port $HealPort"
+    $action = New-ScheduledTaskAction -Execute $psExe -Argument $arg
+    $triggerStartup = New-ScheduledTaskTrigger -AtStartup
+    try { $triggerStartup.Delay = "PT5M" } catch { }
+    $triggerInterval = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1))
+    $triggerInterval.RepetitionInterval = (New-TimeSpan -Minutes 5)
+    try { $triggerInterval.RepetitionDuration = [TimeSpan]::FromDays(3650) } catch { $triggerInterval.RepetitionDuration = [TimeSpan]::MaxValue }
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+    Register-ScheduledTask -TaskName "HeimdallApiHeal" -Action $action -Trigger @($triggerStartup, $triggerInterval) -Principal $principal -Settings $settings -Force | Out-Null
+    if (-not (Test-ApiHealWatchdogRegistered)) {
+        throw "Register-ScheduledTask reported success but HeimdallApiHeal not found"
+    }
+    Write-Log "Registered scheduled task HeimdallApiHeal (AtStartup+5m, every 5m)" -Level OK
+}
+
+function Configure-HeimdallApiFailureRecovery {
+    Write-Log "sc.exe failure HeimdallApi reset=86400 actions= restart/60000/restart/60000/restart/60000"
+    $out = & sc.exe failure HeimdallApi reset= 86400 actions= restart/60000/restart/60000/restart/60000 2>&1
+    $out | ForEach-Object { Write-Log "  $_" }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "sc.exe failure returned exit $LASTEXITCODE (non-fatal)" -Level WARN
+    }
+}
 
 function Write-Log {
     param(
@@ -488,6 +553,7 @@ try {
         }
         $desc = & sc.exe description HeimdallApi "Heimdall ingest API and dashboard" 2>&1
         $desc | ForEach-Object { Write-Log "  $_" }
+        Configure-HeimdallApiFailureRecovery
     }
 
     Invoke-Logged "Start HeimdallApi" -ProgressStep 7 -ProgressLabel "Starting service" {
@@ -525,6 +591,20 @@ try {
         }
         catch {
             Write-Log "Health probe failed (service may still be starting): $($_.Exception.Message)" -Level WARN
+        }
+    }
+
+    $apiHealEnabled = $EnableApiHealWatchdog -and -not $DisableApiHealWatchdog
+    if ($apiHealEnabled) {
+        Invoke-Logged "Register ApiHeal watchdog" -ProgressStep 10 -ProgressLabel "ApiHeal task" {
+            Register-ApiHealWatchdogTask -HealPort $Port
+        }
+    }
+    else {
+        Write-Log "ApiHeal watchdog not requested (use -EnableApiHealWatchdog to register)" -Level INFO
+        if (Test-ApiHealWatchdogRegistered) {
+            Write-Log "HeimdallApiHeal task already registered — refreshing heal script only" -Level INFO
+            [void](Sync-ApiHealWatchdogFiles)
         }
     }
 

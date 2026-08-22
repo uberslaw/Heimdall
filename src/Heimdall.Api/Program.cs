@@ -107,7 +107,10 @@ builder.Services.AddScoped<TuflowScratchSettingsService>();
 builder.Services.AddScoped<TuflowQueueService>();
 builder.Services.Configure<TuflowBehaviourOptions>(
     builder.Configuration.GetSection(TuflowBehaviourOptions.SectionName));
+builder.Services.Configure<ApiHealthOptions>(
+    builder.Configuration.GetSection(ApiHealthOptions.SectionName));
 builder.Services.AddScoped<TuflowBehaviourService>();
+builder.Services.AddScoped<ApiHealthService>();
 builder.Services.AddScoped<RemoteAccessGroupService>();
 builder.Services.AddScoped<LiveSamplingService>();
 builder.Services.AddScoped<SessionDrilldownService>();
@@ -126,6 +129,7 @@ builder.Services.AddHostedService<SiteUsageRetentionHostedService>();
 builder.Services.AddHostedService<ClientUpdateStuckHostedService>();
 builder.Services.AddHostedService<SpecReviewHostedService>();
 builder.Services.AddHostedService<StorageScanHostedService>();
+builder.Services.AddHostedService<ApiHealthProbeHostedService>();
 
 var app = builder.Build();
 
@@ -662,21 +666,50 @@ app.MapPost("/api/sessions/drilldown/{hostname}/viewer/leave", async (string hos
     return Results.Ok();
 });
 
-app.MapGet("/api/health", () =>
+app.MapGet("/api/health", async (HeimdallDbContext db) =>
 {
     var asm = System.Reflection.Assembly.GetExecutingAssembly();
     var productVersion =
         asm.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
         ?? asm.GetName().Version?.ToString()
         ?? "unknown";
+    var started = ApiHealthService.ProcessStartedUtcForHealth;
+    var dbOk = false;
+    int? dbMs = null;
+    try
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await db.Database.ExecuteSqlRawAsync("SELECT 1;");
+        sw.Stop();
+        dbOk = true;
+        dbMs = (int)sw.ElapsedMilliseconds;
+    }
+    catch
+    {
+        // Exposed in payload for external monitors.
+    }
+
     return Results.Ok(new
     {
-        status = "ok",
+        status = dbOk ? "ok" : "degraded",
         service = "Heimdall",
         productVersion,
         machineName = Environment.MachineName,
-        utc = DateTime.UtcNow
+        utc = DateTime.UtcNow,
+        dbOk,
+        dbLatencyMs = dbMs,
+        processUptimeSeconds = (int)(DateTimeOffset.UtcNow - started).TotalSeconds
     });
+});
+
+app.MapPost("/api/ops/heal-event", async (HttpContext ctx, ApiHealthHealEventDto body, ApiHealthService health, CancellationToken ct) =>
+{
+    if (!IsAuthorized(ctx.Request))
+        return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(body.Action))
+        return Results.BadRequest();
+    await health.RecordHealEventAsync(body.Action.Trim(), body.Source, body.Detail, ct);
+    return Results.Ok();
 });
 
 // --- First-party site usage (browser beacons; no agent API key) ---

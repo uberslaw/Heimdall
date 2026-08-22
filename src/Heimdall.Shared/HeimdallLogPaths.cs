@@ -23,6 +23,12 @@ public static class HeimdallLogPaths
     /// <summary>Append-only admin/ops actions: ops-yyyyMMdd.log</summary>
     public static string OpsLogsDir => Path.Combine(LogsRoot, "ops");
 
+    /// <summary>ApiHeal scheduled-task watchdog: api-heal-yyyyMMdd.log</summary>
+    public static string ApiHealLogsDir => Path.Combine(LogsRoot, "api-heal");
+
+    public static string ApiHealLogFileName(DateTime localDate) =>
+        $"api-heal-{localDate:yyyyMMdd}.log";
+
     public static string ApiLogFileName(DateTime utcDate) =>
         $"heimdall-api-{utcDate:yyyyMMdd}.log";
 
