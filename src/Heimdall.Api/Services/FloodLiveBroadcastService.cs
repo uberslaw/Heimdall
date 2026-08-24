@@ -1,4 +1,5 @@
 using Heimdall.Api.Data;
+using Heimdall.Shared.Contracts;
 using Microsoft.EntityFrameworkCore;
 
 namespace Heimdall.Api.Services;
@@ -76,19 +77,17 @@ public sealed class FloodLiveBroadcastService(
         var cmEnabled = codeMeterOptions.Value.Enabled;
 
         var rowDtos = rows.Select(r => MapRow(r, licenseSnap)).ToList();
-        var active = rows
-            .Where(r => r.Status == FleetDashboardService.FleetStatus.Active)
-            .ToList();
+        var chartRows = rows.Where(ShouldIncludeChart).ToList();
 
         var charts = new List<FloodLiveChartDto>();
-        if (active.Count > 0)
+        if (chartRows.Count > 0)
         {
-            // Load from each run's detected start (no rolling cap) — series is downsampled to MaxSeriesPoints.
-            var fromUtc = active
-                .Select(r => (r.DetectedRunStartedUtc ?? now - FallbackWindow).AddMinutes(-1))
+            // Back-fill from stored fleet snapshots for the full run window (downsampled to MaxSeriesPoints).
+            var fromUtc = chartRows
+                .Select(r => (ResolveChartStart(r, now).AddMinutes(-1)))
                 .Min();
 
-            var ids = active.Select(r => r.MachineId).ToList();
+            var ids = chartRows.Select(r => r.MachineId).Distinct().ToList();
             var snaps = await FleetSnapshotQuery.LoadForMachinesAsync(db, ids, fromUtc, now, ct);
             var byMachine = snaps.GroupBy(s => s.MachineId).ToDictionary(g => g.Key, g => g.ToList());
             var ramGbByMachine = await db.Machines.AsNoTracking()
@@ -96,21 +95,25 @@ public sealed class FloodLiveBroadcastService(
                 .Select(m => new { m.Id, m.HardwareRamGb })
                 .ToDictionaryAsync(x => x.Id, x => x.HardwareRamGb, ct);
 
-            foreach (var r in active.OrderBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase))
+            foreach (var r in chartRows.OrderBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase))
             {
-                var start = r.DetectedRunStartedUtc ?? now - FallbackWindow;
+                var start = ResolveChartStart(r, now);
+                var end = ResolveChartEnd(r, now);
                 byMachine.TryGetValue(r.MachineId, out var list);
                 list ??= [];
                 ramGbByMachine.TryGetValue(r.MachineId, out var ramGb);
-                var series = BuildSeries(list, start, now, ramGb);
-                // Chart x-axis starts at first logged point so the graph always matches data.
+                var series = BuildSeries(list, start, end, ramGb);
+                // Chart x-axis matches logged data (first point → run end / now).
                 var chartStartUnix = series.Count > 0 ? series[0].T : start.ToUnixTimeSeconds();
+                var chartEndUnix = string.Equals(r.DetectedRunState, TuflowBehaviourStates.Ended, StringComparison.OrdinalIgnoreCase)
+                    ? end.ToUnixTimeSeconds()
+                    : now.ToUnixTimeSeconds();
                 charts.Add(new FloodLiveChartDto(
                     r.MachineId,
                     r.DisplayName,
                     r.Username,
                     chartStartUnix,
-                    now.ToUnixTimeSeconds(),
+                    chartEndUnix,
                     series));
             }
         }
@@ -291,5 +294,36 @@ public sealed class FloodLiveBroadcastService(
         }
 
         return result;
+    }
+
+    internal static bool ShouldIncludeChart(FleetDashboardService.LiveFleetRow row)
+    {
+        if (row.Status == FleetDashboardService.FleetStatus.Active)
+            return true;
+
+        if (string.Equals(row.DetectedRunState, TuflowBehaviourStates.Active, StringComparison.OrdinalIgnoreCase)
+            && row.DetectedRunStartedUtc is not null)
+            return true;
+
+        if (string.Equals(row.DetectedRunState, TuflowBehaviourStates.Watching, StringComparison.OrdinalIgnoreCase)
+            && row.DetectedRunStartedUtc is not null)
+            return true;
+
+        // Completed detection: back-fill chart until the next run opens (same as red stop stamp).
+        return string.Equals(row.DetectedRunState, TuflowBehaviourStates.Ended, StringComparison.OrdinalIgnoreCase)
+            && row.DetectedRunStartedUtc is not null
+            && row.DetectedRunEndedUtc is not null;
+    }
+
+    internal static DateTimeOffset ResolveChartStart(FleetDashboardService.LiveFleetRow row, DateTimeOffset now)
+        => row.DetectedRunStartedUtc ?? now - FallbackWindow;
+
+    internal static DateTimeOffset ResolveChartEnd(FleetDashboardService.LiveFleetRow row, DateTimeOffset now)
+    {
+        if (string.Equals(row.DetectedRunState, TuflowBehaviourStates.Ended, StringComparison.OrdinalIgnoreCase)
+            && row.DetectedRunEndedUtc is { } ended)
+            return ended;
+
+        return now;
     }
 }

@@ -285,9 +285,10 @@
             Tooltips show the HPC/Classic product breakdown. Matching is by machine <code>LastIp</code> only (HA servers de-duplicated — max per IP, never summed).
             Cells show <code>CodeMeter/claim</code> when the agent reports process <code>-nt</code>/GPU estimates; CodeMeter remains source of truth.
             Updates via a <strong>shared live stream</strong> (one server rebuild ≈ every 30s for all viewers — browsers share one rebuild; they do not each re-query Live).
-            <strong>Active</strong> machines show a multi-metric chart in the row under that machine’s name and stats (GPU / CPU / RAM% on the left axis; Disk W / Net Tx MB/s on the right).
+            <strong>Active</strong> machines (and rows with a recent detected stop stamp) show a multi-metric chart in the row under that machine’s name and stats (GPU / CPU / RAM% on the left axis; Disk W / Net Tx MB/s on the right).
+            Charts back-fill from stored ~30s fleet snapshots for the full detected run window (up to ~90 days retention; downsampled to 500 points). Gaps from API/agent outages cannot be reconstructed.
             Use the chart checkboxes to hide series; RAM% needs known hardware RAM on the machine.
-            Use <strong>Show GPU / Hide GPU</strong> on the machine row to expand or collapse that chart (charts start collapsed; Show GPU pulses while a run is Active).
+            Use <strong>Show GPU / Hide GPU</strong> on the machine row to expand or collapse that chart (charts start collapsed; Show GPU pulses while a run is still open).
             Open Live to the team via Access lists (Flood Live only).</li>
         <li><strong>Active vs Idle</strong> — while TUFLOW is running: Active if <em>TUFLOW process</em> GPU &gt; 5%, CPU &gt; 10%, or disk read/write &gt; 5 MB/s; otherwise Idle. Not Running when TUFLOW is not detected.</li>
         <li><strong>Historical</strong> — fleet summary cards for enrolled machines, Totals (today / week / month / 30d / 3m / 6m / year) or Averages (daily / 7-day / monthly / all-time), plus rankings (GPU, CPU, RAM, disk I/O, most active). Full Flood only.</li>

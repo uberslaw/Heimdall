@@ -464,7 +464,15 @@
       el.innerHTML = licenseStripHtml(lic);
     }
 
-    function ensureGpuToggle(tr, hasChart) {
+    function isOpenRunChart(row) {
+      if (!row) return false;
+      var state = (row.detectedRunState || "").toLowerCase();
+      if (state === "ended") return false;
+      if (state === "active" || state === "watching") return true;
+      return (row.status || "").toLowerCase() === "active";
+    }
+
+    function ensureGpuToggle(tr, hasChart, row) {
       var cell = tr.querySelector('[data-live="status"]');
       if (!cell) return;
       var btn = cell.querySelector("[data-gpu-toggle]");
@@ -480,13 +488,13 @@
         btn.className =
           "btn btn-sm btn-outline-secondary hd-run-gpu-toggle hd-live-gpu-toggle";
         btn.setAttribute("data-gpu-toggle", "");
-        btn.title = "Show or hide this machine’s live utilization chart";
+        btn.title = "Show or hide this machine’s utilization chart for the current/last run";
         cell.appendChild(btn);
       }
       btn.setAttribute("aria-pressed", show ? "true" : "false");
       btn.textContent = show ? "Hide GPU" : "Show GPU";
-      // Bright + periodic pulse only while collapsed and a run chart is available.
-      btn.classList.toggle("is-entice", !show);
+      // Pulse only for open runs — ended runs keep the chart but stay quiet.
+      btn.classList.toggle("is-entice", !show && isOpenRunChart(row));
     }
 
     function applyRows(payload) {
@@ -520,7 +528,7 @@
           return;
         }
         patchRow(tr, row);
-        ensureGpuToggle(tr, !!chartIds[id]);
+        ensureGpuToggle(tr, !!chartIds[id], row);
         if (chartRow) {
           var showChart = !!chartIds[id] && chartVisible[id] === true;
           chartRow.hidden = !showChart;
@@ -558,7 +566,10 @@
           'tr[data-machine-id="' + c.machineId + '"]'
         );
         if (!main || main.hidden) return;
-        ensureGpuToggle(main, true);
+        var row = (lastPayload && lastPayload.rows || []).find(function (r) {
+          return r.machineId === c.machineId;
+        });
+        ensureGpuToggle(main, true, row);
         var card = tbody.querySelector(
           'tr[data-live-chart-machine="' + c.machineId + '"]'
         );
