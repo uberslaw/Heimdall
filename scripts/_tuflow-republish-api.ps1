@@ -116,6 +116,13 @@ function Stop-HeimdallApiForRedeploy {
     }
     if ($svc.Status -eq 'Stopped') {
         Write-RepublishLog 'HeimdallApi already stopped'
+        # SCM can show Stopped while Heimdall.Api.exe still holds DLL locks (orphan / wedged process).
+        $orphans = @(Get-Process -Name 'Heimdall.Api' -ErrorAction SilentlyContinue)
+        if ($orphans.Count -gt 0) {
+            Write-RepublishLog ("Killing orphaned Heimdall.Api process(es): " + ($orphans.Id -join ', ')) -Level WARN
+            $orphans | Stop-Process -Force -ErrorAction SilentlyContinue
+            Wait-RepublishSeconds 2
+        }
         return
     }
 

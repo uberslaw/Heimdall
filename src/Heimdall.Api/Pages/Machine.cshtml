@@ -159,6 +159,12 @@ else if (d is not null)
                     <span>Agent version unknown</span>
                 }
             </div>
+            @if (Model.TrackingBeganUtc is DateTimeOffset agentSince)
+            {
+                <div class="text-secondary small" title="First agent heartbeat — session and util history start here">
+                    Agent since @MachineModel.FormatTrackingBegan(agentSince)
+                </div>
+            }
         </div>
         <div class="hd-stat">
             <div class="label">Last user</div>
@@ -215,12 +221,16 @@ else if (d is not null)
     <div class="hd-grid mb-3">
         <a class="hd-stat hd-stat-dense hd-stat-link"
            href="@Url.Page("/Sessions", new { hosts = d.Hostname, statsDuration = Model.StatsDuration, hideSystem = "true" })"
-           title="Open sessions for @d.Hostname · @Model.StatsDurationLabel">
+           title="Open sessions for @d.Hostname · @Model.StatsDurationLabel@(Model.TrackingBeganUtc is DateTimeOffset tb ? $" · tracked since {MachineModel.FormatTrackingBegan(tb)}" : "")">
             <div class="label">Sessions</div>
             <div class="value">@sess.TotalCount</div>
             <div class="hd-stat-lines text-secondary small mt-1">
                 <div>Local @sess.LocalCount · Inbound RDP @sess.RdpCount</div>
                 <div>Open now @sess.OpenCount</div>
+                @if (Model.TrackingBeganUtc is DateTimeOffset trackedSince)
+                {
+                    <div title="WTS sessions observed by the agent since first check-in — not Windows profile folders">Tracked since @MachineModel.FormatTrackingBegan(trackedSince)</div>
+                }
             </div>
         </a>
         <div class="hd-stat hd-stat-dense">
