@@ -447,6 +447,66 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
             .OrderByDescending(r => r.TotalOpenSeconds)
             .ToList();
 
+        // SQLite cannot ORDER BY DateTimeOffset — filter/sort in memory.
+        var catalogEntries = (await db.ProcessCatalogEntries.AsNoTracking()
+                .Where(e => e.ProcessName == process)
+                .ToListAsync(ct))
+            .OrderByDescending(e => e.LastSeenUtc)
+            .ToList();
+
+        var assignment = await db.ProcessGroupAssignments.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.ProcessName == process, ct);
+
+        var soeHit = await db.SoeApps.AsNoTracking()
+            .AnyAsync(s => s.ProcessName == process, ct);
+        var userMap = new Dictionary<string, AppGroup>(StringComparer.OrdinalIgnoreCase);
+        if (assignment is not null)
+            userMap[process] = assignment.Group;
+        var classCtx = new ProcessClassificationContext
+        {
+            UserAssignments = userMap,
+            SoeProcessNames = soeHit
+                ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) { process }
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        };
+        var classification = ProcessClassification.Classify(process, classCtx).Group;
+
+        var catalogPaths = catalogEntries
+            .Select(e => new AppCatalogPathRow(
+                e.Id,
+                string.IsNullOrWhiteSpace(e.ExecutablePath) ? null : e.ExecutablePath,
+                e.FileVersion ?? e.ProductVersion ?? e.ManualVersion,
+                e.CompanyName,
+                e.FileDescription,
+                e.LastSeenUtc,
+                e.SeenCount))
+            .ToList();
+
+        // Also surface recent run paths not yet in catalog.
+        var knownPaths = catalogPaths
+            .Select(p => p.ExecutablePath ?? "")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in runs
+            .Select(r => r.ExecutablePath)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(p => !knownPaths.Contains(p!))
+            .Take(10))
+        {
+            catalogPaths.Add(new AppCatalogPathRow(0, path, null, null, null, null, 0));
+        }
+
+        var description = FirstNonEmpty(
+            assignment?.Description,
+            catalogEntries.Select(e => e.Description));
+        var fileDescription = FirstNonEmpty(null, catalogEntries.Select(e => e.FileDescription));
+        var companyName = FirstNonEmpty(null, catalogEntries.Select(e => e.CompanyName));
+        var category = FirstNonEmpty(null, catalogEntries.Select(e => e.Category));
+        var subcategory = FirstNonEmpty(null, catalogEntries.Select(e => e.Subcategory));
+        var suggested = catalogEntries.FirstOrDefault(e => e.SuggestedGroup is not null);
+        var suggestedGroup = suggested?.SuggestedGroup;
+        var suggestionReason = suggested?.SuggestionReason;
+
         return new ApplicationDetailSnapshot(
             ProcessName: process,
             DisplayName: displayNames.GetValueOrDefault(process, process),
@@ -461,7 +521,16 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
             Users: userRows,
             MachineFilterOptions: machineFilterOptions,
             FromUtc: fromUtc,
-            ToUtc: toUtc);
+            ToUtc: toUtc,
+            CatalogPaths: catalogPaths,
+            Description: description,
+            FileDescription: fileDescription,
+            CompanyName: companyName,
+            Category: category,
+            Subcategory: subcategory,
+            Classification: classification,
+            SuggestedGroup: suggestedGroup,
+            SuggestionReason: suggestionReason);
     }
 
     /// <summary>
@@ -982,6 +1051,20 @@ public sealed class StatsQueryService(HeimdallDbContext db, ConfigService config
         return $"{domain.Trim()}\\{username.Trim()}";
     }
 
+    private static string? FirstNonEmpty(string? preferred, IEnumerable<string?>? candidates = null)
+    {
+        if (!string.IsNullOrWhiteSpace(preferred))
+            return preferred.Trim();
+        if (candidates is null)
+            return null;
+        foreach (var c in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(c))
+                return c.Trim();
+        }
+        return null;
+    }
+
     /// <summary>
     /// Period cards on Machine page: session mix, top users, top CPU/GPU apps, top disk apps + machine net.
     /// </summary>
@@ -1271,7 +1354,25 @@ public sealed record ApplicationDetailSnapshot(
     IReadOnlyList<AppUserUsageRow> Users,
     IReadOnlyList<string> MachineFilterOptions,
     DateTimeOffset FromUtc,
-    DateTimeOffset ToUtc);
+    DateTimeOffset ToUtc,
+    IReadOnlyList<AppCatalogPathRow> CatalogPaths,
+    string? Description,
+    string? FileDescription,
+    string? CompanyName,
+    string? Category,
+    string? Subcategory,
+    AppGroup Classification,
+    AppGroup? SuggestedGroup,
+    string? SuggestionReason);
+
+public sealed record AppCatalogPathRow(
+    int CatalogEntryId,
+    string? ExecutablePath,
+    string? Version,
+    string? CompanyName,
+    string? FileDescription,
+    DateTimeOffset? LastSeenUtc,
+    int SeenCount);
 
 public sealed record AppMachineUsageRow(
     string Hostname,

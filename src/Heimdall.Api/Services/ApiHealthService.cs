@@ -90,8 +90,19 @@ public sealed class ApiHealthService(
         var opts = options.Value;
         var sampleCutoff = DateTimeOffset.UtcNow.AddDays(-Math.Max(1, opts.SampleRetentionDays));
         var incidentCutoff = DateTimeOffset.UtcNow.AddDays(-Math.Max(7, opts.IncidentRetentionDays));
-        await db.ApiHealthSamples.Where(s => s.SampledAtUtc < sampleCutoff).ExecuteDeleteAsync(ct);
-        await db.ApiHealthIncidents.Where(i => i.StartedUtc < incidentCutoff).ExecuteDeleteAsync(ct);
+        // SQLite EF cannot filter DateTimeOffset in SQL reliably — prune in memory.
+        var oldSamples = (await db.ApiHealthSamples.ToListAsync(ct))
+            .Where(s => s.SampledAtUtc < sampleCutoff)
+            .ToList();
+        if (oldSamples.Count > 0)
+            db.ApiHealthSamples.RemoveRange(oldSamples);
+        var oldIncidents = (await db.ApiHealthIncidents.ToListAsync(ct))
+            .Where(i => i.StartedUtc < incidentCutoff)
+            .ToList();
+        if (oldIncidents.Count > 0)
+            db.ApiHealthIncidents.RemoveRange(oldIncidents);
+        if (oldSamples.Count > 0 || oldIncidents.Count > 0)
+            await db.SaveChangesAsync(ct);
     }
 
     public async Task<ApiHealthDashboard> BuildDashboardAsync(CancellationToken ct)
@@ -102,29 +113,38 @@ public sealed class ApiHealthService(
         var lookbackGap = now.AddHours(-Math.Max(1, opts.GapLookbackHours));
         var gapThreshold = TimeSpan.FromMinutes(Math.Max(2, opts.FleetGapAlertMinutes));
 
-        var samples7 = await db.ApiHealthSamples.AsNoTracking()
+        var samples7 = (await db.ApiHealthSamples.AsNoTracking().ToListAsync(ct))
             .Where(s => s.SampledAtUtc >= lookback7)
             .Select(s => new { s.Ok, s.SampledAtUtc, s.DbLatencyMs })
-            .ToListAsync(ct);
+            .ToList();
 
         var uptime7 = samples7.Count == 0
             ? 100.0
             : 100.0 * samples7.Count(s => s.Ok) / samples7.Count;
 
-        var lastFleetIngest = await db.FleetMetricSnapshots.AsNoTracking()
-            .MaxAsync(s => (DateTimeOffset?)s.SampledAtUtc, ct);
+        // Max(DateTimeOffset) is unsupported on SQLite — read Id-ordered tails and take max in memory.
+        var lastFleetIngest = (await db.FleetMetricSnapshots.AsNoTracking()
+                .OrderByDescending(s => s.Id)
+                .Select(s => (DateTimeOffset?)s.SampledAtUtc)
+                .Take(1)
+                .ToListAsync(ct))
+            .FirstOrDefault();
 
-        var lastIngest = await db.Machines.AsNoTracking()
-            .MaxAsync(m => (DateTimeOffset?)m.LastSeenUtc, ct);
-
-        var incidents = await db.ApiHealthIncidents.AsNoTracking()
+        var incidents = (await db.ApiHealthIncidents.AsNoTracking()
+                .OrderByDescending(i => i.Id)
+                .Take(50)
+                .ToListAsync(ct))
             .OrderByDescending(i => i.StartedUtc)
             .Take(25)
-            .ToListAsync(ct);
+            .ToList();
 
         var machines = await db.Machines.AsNoTracking()
             .Select(m => new { m.Id, m.Hostname, m.FriendlyName, m.LastSeenUtc })
             .ToListAsync(ct);
+
+        DateTimeOffset? lastIngest = machines.Count == 0
+            ? null
+            : machines.Max(m => m.LastSeenUtc);
 
         var onlineCutoff = now.Add(-RemoteMachineService.OnlineWindow);
         var recentMachines = machines.Where(m => m.LastSeenUtc >= lookbackGap).ToList();
@@ -132,12 +152,11 @@ public sealed class ApiHealthService(
 
         var snapshots = machineIds.Count == 0
             ? []
-            : await db.FleetMetricSnapshots.AsNoTracking()
-                .Where(s => machineIds.Contains(s.MachineId) && s.SampledAtUtc >= lookbackGap)
+            : (await FleetSnapshotQuery.LoadForMachinesAsync(db, machineIds, lookbackGap, toUtc: null, ct))
+                .Select(s => new { s.MachineId, s.SampledAtUtc, s.TuflowRunning })
                 .OrderBy(s => s.MachineId)
                 .ThenBy(s => s.SampledAtUtc)
-                .Select(s => new { s.MachineId, s.SampledAtUtc, s.TuflowRunning })
-                .ToListAsync(ct);
+                .ToList();
 
         var snapsByMachine = snapshots.GroupBy(s => s.MachineId).ToDictionary(g => g.Key, g => g.ToList());
 
@@ -196,10 +215,13 @@ public sealed class ApiHealthService(
 
         var behaviourRuns = machineIds.Count == 0
             ? []
-            : await db.TuflowBehaviourRuns.AsNoTracking()
-                .Where(r => machineIds.Contains(r.MachineId) && r.ProcessFirstSeenUtc >= lookbackGap)
+            : (await db.TuflowBehaviourRuns.AsNoTracking()
+                    .Where(r => machineIds.Contains(r.MachineId))
+                    .Select(r => new { r.MachineId, r.State, r.DetectedStartUtc, r.DetectedEndUtc, r.SampleCount, r.ProcessFirstSeenUtc })
+                    .ToListAsync(ct))
+                .Where(r => r.ProcessFirstSeenUtc >= lookbackGap)
                 .Select(r => new { r.MachineId, r.State, r.DetectedStartUtc, r.DetectedEndUtc, r.SampleCount })
-                .ToListAsync(ct);
+                .ToList();
 
         var runsByMachine = behaviourRuns.GroupBy(r => r.MachineId).ToDictionary(g => g.Key, g => g.ToList());
 
@@ -294,7 +316,7 @@ public sealed class ApiHealthService(
         {
             var open = await db.ApiHealthIncidents
                 .Where(i => i.EndedUtc == null)
-                .OrderByDescending(i => i.StartedUtc)
+                .OrderByDescending(i => i.Id)
                 .FirstOrDefaultAsync(ct);
             if (open is null) return;
             open.EndedUtc = endedUtc;

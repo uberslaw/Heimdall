@@ -1431,6 +1431,60 @@ public sealed class AppListService(HeimdallDbContext db, ProcessGroupService pro
         return addedItems.Count;
     }
 
+    /// <summary>Remove processes from a non-system app list by process name.</summary>
+    public async Task<int> RemoveEntriesFromListAsync(
+        int appListId,
+        IEnumerable<string> processNames,
+        CancellationToken ct)
+    {
+        var list = await db.AppLists.Include(a => a.Entries).FirstOrDefaultAsync(a => a.Id == appListId, ct)
+            ?? throw new InvalidOperationException("App list not found.");
+        if (list.IsSystem)
+            throw new InvalidOperationException("Cannot edit system classification lists this way — use Discovery classification instead.");
+
+        var names = processNames
+            .Select(ConfigService.NormalizeProcessName)
+            .Where(n => n.Length > 0)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (names.Count == 0)
+            return 0;
+
+        var remove = list.Entries.Where(e => names.Contains(e.ProcessName)).ToList();
+        if (remove.Count == 0)
+            return 0;
+
+        db.AppListEntries.RemoveRange(remove);
+        list.UpdatedUtc = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+        await AuditAsync("updated",
+            $"Removed {remove.Count} app(s) from “{list.Name}”.",
+            list.Id, list.Name, ct: ct);
+        return remove.Count;
+    }
+
+    /// <summary>Which app lists (system + custom) contain this process name.</summary>
+    public async Task<IReadOnlyList<AppListMembershipRow>> GetMembershipForProcessAsync(
+        string processName,
+        CancellationToken ct)
+    {
+        var proc = ConfigService.NormalizeProcessName(processName);
+        if (proc.Length == 0)
+            return [];
+
+        return await db.AppListEntries.AsNoTracking()
+            .Where(e => e.ProcessName == proc)
+            .Select(e => new AppListMembershipRow(
+                e.AppListId,
+                e.AppList.Name,
+                e.AppList.IsSystem,
+                e.AppList.SystemKey))
+            .OrderBy(r => r.IsSystem ? 0 : 1)
+            .ThenBy(r => r.Name)
+            .ToListAsync(ct);
+    }
+
+    public record AppListMembershipRow(int Id, string Name, bool IsSystem, string? SystemKey);
+
     /// <summary>Remove processes from Specialization classification and re-sync the system Spec list.</summary>
     public async Task<int> RemoveFromSpecializationAsync(IEnumerable<string> processNames, CancellationToken ct)
     {

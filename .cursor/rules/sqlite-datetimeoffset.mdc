@@ -1,0 +1,48 @@
+---
+description: Heimdall SQLite + EF — never ORDER BY / filter DateTimeOffset in LINQ-to-SQL
+globs: src/Heimdall.Api/**/*.cs
+alwaysApply: false
+---
+
+# SQLite DateTimeOffset (hard rule)
+
+Heimdall API uses **SQLite + EF Core**. This has bitten production repeatedly (~30×): pages 500, fleet ingest errors, health probes fail.
+
+## Never in `IQueryable` (LINQ that hits SQLite)
+
+- `OrderBy` / `OrderByDescending` on `DateTimeOffset` / `DateTimeOffset?`
+- `Where` comparing `DateTimeOffset` (`>=`, `<=`, `<`, `>`) unless you use the approved raw-SQL helpers
+- `MaxAsync` / `MinAsync` on `DateTimeOffset` columns
+
+Typical runtime errors:
+
+- `SQLite does not support expressions of type 'DateTimeOffset' in ORDER BY clauses`
+- `The LINQ expression '… SampledAtUtc >= …' could not be translated`
+
+## Do instead
+
+1. **Order by `Id`** (insert order) in SQL, then sort/filter times **in memory**:
+
+```csharp
+// ❌ BAD
+.OrderByDescending(e => e.LastSeenUtc)
+.Where(s => s.SampledAtUtc >= fromUtc)
+
+// ✅ GOOD
+var rows = await db.ProcessCatalogEntries.AsNoTracking()
+    .Where(e => e.ProcessName == name)
+    .ToListAsync(ct);
+rows = rows.OrderByDescending(e => e.LastSeenUtc).ToList();
+```
+
+2. **Fleet snapshots** — use `FleetSnapshotQuery.LoadForMachinesAsync` / `PurgeOlderThanAsync` (TEXT compare via `ToSqliteText`). Do not reinvent DateTimeOffset filters on `FleetMetricSnapshots`.
+
+3. **Bounded lookbacks** — `OrderByDescending(s => s.Id).Take(n)`, then filter `SampledAtUtc` in memory (see `TuflowBehaviourService.ResolveStreakStartUtcAsync`).
+
+4. Before finishing API data-access changes, mentally check every new LINQ chain for `Utc` / `DateTimeOffset` in `OrderBy`/`Where`/`Max`.
+
+## OK in LINQ-to-SQL
+
+- Equality / contains on strings, ints, bools
+- `OrderBy(x => x.Id)`
+- `Where(x => x.EndedUtc == null)` (null check only — still avoid range compares on the offset)

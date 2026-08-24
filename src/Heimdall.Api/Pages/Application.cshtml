@@ -1,5 +1,7 @@
 @page
 @model ApplicationModel
+@using Heimdall.Api.Services
+@using Heimdall.Shared.Contracts
 @{
     ViewData["Title"] = string.IsNullOrWhiteSpace(Model.Process) ? "Application" : Model.Detail?.DisplayName ?? Model.Process;
     var d = Model.Detail;
@@ -12,8 +14,19 @@
     {
         <span> · </span>
         <a asp-page="/Stats" asp-route-ScopeKind="All" asp-route-Days="@Model.RangeDays" asp-route-View="apps-time">Open in Stats</a>
+        <span> · </span>
+        <a asp-page="/Discovery" asp-route-q="@d.ProcessName">Open in Discovery</a>
     }
 </p>
+
+@if (TempData["Message"] is string toastMsg)
+{
+    <div class="hd-toast hd-toast-success mb-3" role="status">@toastMsg</div>
+}
+@if (TempData["Error"] is string toastErr)
+{
+    <div class="hd-toast hd-toast-error mb-3" role="alert">@toastErr</div>
+}
 
 @if (Model.MissingProcess)
 {
@@ -23,14 +36,246 @@
 }
 else if (d is not null)
 {
-    <h1 class="hd-title">@d.DisplayName</h1>
-    <p class="hd-sub">
-        @Model.RangeLabel usage
-        @if (!string.Equals(d.DisplayName, d.ProcessName, StringComparison.OrdinalIgnoreCase))
+    <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-1">
+        <div>
+            <h1 class="hd-title mb-0">@d.DisplayName</h1>
+            <p class="hd-sub mb-0">
+                @Model.RangeLabel usage
+                @if (!string.Equals(d.DisplayName, d.ProcessName, StringComparison.OrdinalIgnoreCase))
+                {
+                    <span>· process <code>@d.ProcessName</code></span>
+                }
+                else
+                {
+                    <span>· <code>@d.ProcessName</code></span>
+                }
+            </p>
+        </div>
+        <a class="hd-btn hd-btn-silver"
+           href="@Model.GoogleSearchUrl"
+           target="_blank"
+           rel="noopener noreferrer"
+           title="Search Google for this application">
+            Google this app
+        </a>
+    </div>
+
+    <section class="hd-panel mb-3">
+        <h2 class="hd-section-title">Identity</h2>
+        <div class="row g-3 small mb-3">
+            <div class="col-md-6">
+                <div class="text-secondary">Executable</div>
+                <div><code>@d.ProcessName</code></div>
+            </div>
+            <div class="col-md-6">
+                <div class="text-secondary">Publisher</div>
+                <div>@(string.IsNullOrWhiteSpace(d.CompanyName) ? "—" : d.CompanyName)</div>
+            </div>
+            <div class="col-md-6">
+                <div class="text-secondary">File description (from binary)</div>
+                <div>@(string.IsNullOrWhiteSpace(d.FileDescription) ? "—" : d.FileDescription)</div>
+            </div>
+            <div class="col-md-6">
+                <div class="text-secondary">Classification</div>
+                <div>
+                    <strong>@ProcessClassification.GroupLabel(d.Classification)</strong>
+                    @if (d.SuggestedGroup is AppGroup sug && sug != d.Classification)
+                    {
+                        <span class="text-secondary"> · suggested @ProcessClassification.GroupLabel(sug)</span>
+                    }
+                </div>
+                @if (!string.IsNullOrWhiteSpace(d.SuggestionReason))
+                {
+                    <div class="text-secondary mt-1">@d.SuggestionReason</div>
+                }
+            </div>
+        </div>
+
+        @if (d.CatalogPaths.Count == 0)
         {
-            <span>· process <code>@d.ProcessName</code></span>
+            <p class="text-secondary small mb-0">No install paths recorded yet for this process.</p>
         }
-    </p>
+        else
+        {
+            <table class="hd-table table-sm small mb-0">
+                <thead>
+                    <tr>
+                        <th>Full path</th>
+                        <th>Version</th>
+                        <th>Seen</th>
+                        <th>Last seen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var p in d.CatalogPaths)
+                {
+                    <tr>
+                        <td>
+                            @if (string.IsNullOrWhiteSpace(p.ExecutablePath))
+                            {
+                                <span class="text-secondary">path unknown</span>
+                            }
+                            else
+                            {
+                                <code style="word-break:break-all">@p.ExecutablePath</code>
+                            }
+                        </td>
+                        <td>@(p.Version ?? "—")</td>
+                        <td>@(p.SeenCount > 0 ? p.SeenCount.ToString() : "—")</td>
+                        <td>
+                            @(p.LastSeenUtc is DateTimeOffset ls
+                                ? IndexModel.FormatLocalTimestamp(ls)
+                                : "—")
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section class="hd-panel mb-3">
+        <h2 class="hd-section-title">Categorization &amp; lists</h2>
+        <p class="text-secondary small mb-3">
+            Edit category labels and classification here (same data as Discovery). App-list membership controls which lists include this process for tracking.
+        </p>
+
+        <form method="post" asp-page-handler="SaveIdentity" class="mb-4">
+            <input type="hidden" name="Process" value="@d.ProcessName" />
+            <input type="hidden" name="Range" value="@Model.Range" />
+            <input type="hidden" name="Hostname" value="@Model.Hostname" />
+            <div class="row g-3 align-items-end">
+                <div class="col-lg-6">
+                    <label class="form-label" for="edit-description">Description</label>
+                    <textarea class="form-control form-control-sm" id="edit-description" name="EditDescription"
+                              rows="3" maxlength="2000"
+                              placeholder="What this app is / how it is used">@d.Description</textarea>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="edit-category">Category</label>
+                    <input class="form-control form-control-sm" list="app-category-options"
+                           id="edit-category" name="EditCategory" value="@d.Category" maxlength="100" />
+                    <datalist id="app-category-options">
+                        @foreach (var opt in Model.CategoryOptions)
+                        {
+                            <option value="@opt"></option>
+                        }
+                    </datalist>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="edit-subcategory">Subcategory</label>
+                    <input class="form-control form-control-sm" list="app-subcategory-options"
+                           id="edit-subcategory" name="EditSubcategory" value="@d.Subcategory" maxlength="100" />
+                    <datalist id="app-subcategory-options">
+                        @foreach (var opt in Model.SubcategoryOptions)
+                        {
+                            <option value="@opt"></option>
+                        }
+                    </datalist>
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="hd-btn hd-btn-gold">Save labels</button>
+                </div>
+            </div>
+        </form>
+
+        <form method="post" asp-page-handler="SetClassification" class="row g-2 align-items-end mb-4">
+            <input type="hidden" name="Process" value="@d.ProcessName" />
+            <input type="hidden" name="Range" value="@Model.Range" />
+            <input type="hidden" name="Hostname" value="@Model.Hostname" />
+            <div class="col-md-4 col-lg-3">
+                <label class="form-label" for="edit-group">Classification</label>
+                <select class="form-select form-select-sm" id="edit-group" name="EditGroup">
+                    @foreach (AppGroup g in Enum.GetValues<AppGroup>())
+                    {
+                        if (d.Classification == g)
+                        {
+                            <option value="@g" selected>@ProcessClassification.GroupLabel(g)</option>
+                        }
+                        else
+                        {
+                            <option value="@g">@ProcessClassification.GroupLabel(g)</option>
+                        }
+                    }
+                </select>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="hd-btn hd-btn-silver">Set classification</button>
+            </div>
+        </form>
+
+        <h3 class="h6 mb-2">App lists</h3>
+        @if (Model.ListMembership.Count == 0)
+        {
+            <p class="text-secondary small">Not on any app list yet.</p>
+        }
+        else
+        {
+            <ul class="list-unstyled small mb-3">
+                @foreach (var m in Model.ListMembership)
+                {
+                    <li class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                        <a asp-page="/AppLists" asp-route-editId="@m.Id">@m.Name</a>
+                        @if (m.IsSystem)
+                        {
+                            <span class="badge text-bg-secondary">system</span>
+                        }
+                        else
+                        {
+                            <form method="post" asp-page-handler="RemoveFromList" class="d-inline">
+                                <input type="hidden" name="Process" value="@d.ProcessName" />
+                                <input type="hidden" name="Range" value="@Model.Range" />
+                                <input type="hidden" name="Hostname" value="@Model.Hostname" />
+                                <input type="hidden" name="RemoveAppListId" value="@m.Id" />
+                                <button type="submit" class="hd-btn hd-btn-silver hd-btn-sm py-0 px-2"
+                                        style="font-size:0.7rem;line-height:1.4"
+                                        onclick="return confirm('Remove @d.ProcessName from @m.Name?');">
+                                    Remove
+                                </button>
+                            </form>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+
+        @if (Model.EditableLists.Count > 0)
+        {
+            <form method="post" asp-page-handler="AddToList" class="row g-2 align-items-end">
+                <input type="hidden" name="Process" value="@d.ProcessName" />
+                <input type="hidden" name="Range" value="@Model.Range" />
+                <input type="hidden" name="Hostname" value="@Model.Hostname" />
+                <div class="col-md-6 col-lg-4">
+                    <label class="form-label" for="add-list">Add to list</label>
+                    <select class="form-select form-select-sm" id="add-list" name="AddAppListId">
+                        <option value="0">— choose —</option>
+                        @foreach (var list in Model.EditableLists)
+                        {
+                            var already = Model.ListMembership.Any(m => m.Id == list.Id);
+                            if (already)
+                            {
+                                <option value="@list.Id" disabled>@list.Name (already)</option>
+                            }
+                            else
+                            {
+                                <option value="@list.Id">@list.Name (@list.EntryCount)</option>
+                            }
+                        }
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="hd-btn hd-btn-gold">Add</button>
+                </div>
+            </form>
+        }
+        else
+        {
+            <p class="text-secondary small mb-0">
+                No custom app lists yet — create one under <a asp-page="/AppLists">App lists</a>.
+                System lists (Core Windows / SOE / Specialization) follow classification above.
+            </p>
+        }
+    </section>
 
     <div class="hd-grid mb-3">
         <div class="hd-stat">

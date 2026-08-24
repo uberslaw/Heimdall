@@ -251,13 +251,18 @@ public sealed class TuflowBehaviourService(
     {
         var opts = options.Value;
         var lookback = sampledAt.AddHours(-Math.Max(1, opts.StreakLookbackHours));
+        // SQLite EF: avoid DateTimeOffset filters/ORDER BY — load by Id (insert order), filter in memory.
+        // ~10s cadence × 96h ≈ 35k rows; cap keeps the walk bounded.
+        var take = Math.Clamp(opts.StreakLookbackHours * 400, 8_000, 50_000);
         var recent = await db.FleetMetricSnapshots.AsNoTracking()
-            .Where(s => s.MachineId == machineId && s.SampledAtUtc >= lookback && s.SampledAtUtc <= sampledAt)
+            .Where(s => s.MachineId == machineId)
             .OrderByDescending(s => s.Id)
+            .Take(take)
             .Select(s => new { s.SampledAtUtc, s.TuflowRunning })
             .ToListAsync(ct);
 
         var ordered = recent
+            .Where(s => s.SampledAtUtc >= lookback && s.SampledAtUtc <= sampledAt)
             .OrderByDescending(s => s.SampledAtUtc)
             .ToList();
 

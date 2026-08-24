@@ -29,5 +29,8 @@ Heimdall is a **.NET 10** solution (`Heimdall.slnx`). Standard build/run/config 
 - Expected, benign warnings on Linux: many `CA1416` "only supported on: windows" warnings from the Agent/API Windows code paths, and one `NU1903` advisory for the transitive `SQLitePCLRaw.lib.e_sqlite3` package. Neither blocks build or run.
 - Quick health check while the API runs: `curl http://localhost:5080/api/health`.
 
+### Hard gotcha: SQLite + DateTimeOffset
+- EF LINQ **must not** `OrderBy` / range-`Where` / `Max` on `DateTimeOffset` columns — SQLite cannot translate them (500s / ingest errors). Order by `Id`, filter times in memory, or use `FleetSnapshotQuery` for fleet snapshot bounds. Project rule: `.cursor/rules/sqlite-datetimeoffset.mdc`.
+
 ### .NET SDK
 - The .NET 10 SDK lives in `~/.dotnet` and is on `PATH` via `~/.bashrc`. If `dotnet` is not found in a non-login shell, use `~/.dotnet/dotnet` or `export PATH="$HOME/.dotnet:$PATH"`.
