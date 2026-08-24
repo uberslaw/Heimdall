@@ -186,6 +186,10 @@ app.UseRouting();
 if (staffAccessOpts.RequireWindowsAuth)
     app.UseAuthentication();
 app.UseAuthorization();
+// After auth: challenge Negotiate on HTML/dashboard so Flood nav / admin gates see Windows identity
+// (Access Lists already did this per-page; other routes left User anonymous and hid Flood).
+if (staffAccessOpts.RequireWindowsAuth)
+    app.UseMiddleware<WindowsAuthDashboardMiddleware>();
 app.UseMiddleware<SiteUsageAnalyticsMiddleware>();
 app.MapRazorPages();
 

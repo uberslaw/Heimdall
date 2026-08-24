@@ -23,6 +23,9 @@
         : null;
     var showFloodNav = FloodAccess.CanAccessFloodLive(Context);
     var floodFullAccess = FloodAccess.CanAccessFlood(Context);
+    // Flood nav needs Windows identity (AdminEmails / Flood allowlists). Dashboard middleware
+    // challenges Negotiate on HTML GETs when RequireWindowsAuth — without that, only pages that
+    // call EnsureWindowsAuthAsync (e.g. Access Lists) showed Flood.
     var helpFragment = HelpNav.ResolveFragment(Context.Request, ViewData[HelpNav.ViewDataKey]);
     var usageOpts = UsageAnalyticsOptions.Value;
     var usageEnabled = usageOpts.Enabled;
