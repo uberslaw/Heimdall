@@ -83,14 +83,10 @@ public sealed class FloodLiveBroadcastService(
         var charts = new List<FloodLiveChartDto>();
         if (active.Count > 0)
         {
+            // Load from each run's detected start (no rolling cap) — series is downsampled to MaxSeriesPoints.
             var fromUtc = active
-                .Select(r => r.DetectedRunStartedUtc ?? now - FallbackWindow)
-                .DefaultIfEmpty(now - FallbackWindow)
+                .Select(r => (r.DetectedRunStartedUtc ?? now - FallbackWindow).AddMinutes(-1))
                 .Min();
-            // Floor a bit earlier so series includes start.
-            fromUtc = fromUtc.AddMinutes(-1);
-            if (fromUtc < now - FallbackWindow)
-                fromUtc = now - FallbackWindow;
 
             var ids = active.Select(r => r.MachineId).ToList();
             var snaps = await FleetSnapshotQuery.LoadForMachinesAsync(db, ids, fromUtc, now, ct);
@@ -107,11 +103,13 @@ public sealed class FloodLiveBroadcastService(
                 list ??= [];
                 ramGbByMachine.TryGetValue(r.MachineId, out var ramGb);
                 var series = BuildSeries(list, start, now, ramGb);
+                // Chart x-axis starts at first logged point so the graph always matches data.
+                var chartStartUnix = series.Count > 0 ? series[0].T : start.ToUnixTimeSeconds();
                 charts.Add(new FloodLiveChartDto(
                     r.MachineId,
                     r.DisplayName,
                     r.Username,
-                    start.ToUnixTimeSeconds(),
+                    chartStartUnix,
                     now.ToUnixTimeSeconds(),
                     series));
             }

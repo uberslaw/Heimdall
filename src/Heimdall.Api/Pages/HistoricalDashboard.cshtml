@@ -1,6 +1,7 @@
 @page
 @model HistoricalDashboardModel
 @using Heimdall.Api.Services
+@using Heimdall.Shared.Contracts
 @{
     ViewData["Title"] = "Historical Dashboard";
     ViewData["HelpFragment"] = "historical-dashboard";
@@ -368,7 +369,7 @@
                             title="Workload user: prefer TUFLOW behaviour-run / non-ops session over a transient ops.* console fixer. Empty when no better signal exists. Click to sort.">User</th>
                         <th class="hd-col-active hd-th-tip" data-sort="num" scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
-                            title="Detected run: HH:mm on top, dd/MM under (green = launch, red = stop — stop time stays until the next run starts). Elevated = CPU &gt; 20% or GPU &gt; 5% for 2 samples. Otherwise Active/Idle/N/A from busy thresholds. Click to sort.">Active</th>
+                            title="Detected run: HH:mm on top, dd/MM under (green = launch, red = stop — stop time stays until the next run starts). Elevated = CPU &gt; @TuflowBehaviourDefaults.CpuPercentThreshold.ToString("0")% or GPU &gt; @TuflowBehaviourDefaults.GpuPercentThreshold.ToString("0")% for @TuflowBehaviourDefaults.ConfirmIntervals samples. Otherwise Active/Idle/N/A from busy thresholds. Click to sort.">Active</th>
                         <th class="hd-th-tip" data-sort="num" scope="col"
                             data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-custom-class="hd-th-tooltip"
                             title="CodeMeter HPC seats matched only by this machine’s LastIp (product 926). Not by session username. Number is CodeMeter; /N appears only when the agent claim disagrees. HA servers are de-duplicated (max per IP, not sum). Click to sort.">HPC</th>

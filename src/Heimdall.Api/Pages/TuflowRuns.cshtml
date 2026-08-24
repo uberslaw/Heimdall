@@ -1,5 +1,6 @@
 @page
 @model Heimdall.Api.Pages.TuflowRunsModel
+@using Heimdall.Shared.Contracts
 @{
     ViewData["Title"] = "TUFLOW Runs";
     ViewData["HelpFragment"] = "tuflow-runs";
@@ -180,7 +181,7 @@ else
     <div class="hd-panel mb-3">
         <h3 class="h6 mb-2">Recent detected runs</h3>
         <p class="text-secondary small mb-2">
-            CPU-threshold detection (tuflow.exe &gt; 20% for 2 samples → start; ≤ 20% or gone for 2 → stop).
+            CPU-threshold detection (tuflow.exe &gt; @TuflowBehaviourDefaults.CpuPercentThreshold.ToString("0")% for @TuflowBehaviourDefaults.ConfirmIntervals samples → start; ≤ @TuflowBehaviourDefaults.CpuPercentThreshold.ToString("0")% or gone for @TuflowBehaviourDefaults.ConfirmIntervals → stop).
             Independent of Heimdall-queued launches above. Sample series retained for behaviour analysis.
         </p>
         <div class="table-responsive">

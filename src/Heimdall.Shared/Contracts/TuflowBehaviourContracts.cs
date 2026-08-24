@@ -2,13 +2,13 @@ namespace Heimdall.Shared.Contracts;
 
 /// <summary>
 /// TUFLOW run start/stop detection thresholds (fleet snapshot ingest).
-/// Defaults: process CPU &gt; 20% or process/system GPU &gt; 5% for 2 consecutive samples = start;
+/// Defaults: process CPU &gt; 1% or process/system GPU &gt; 5% for 2 consecutive samples = start;
 /// both below those bars (or process gone) for 2 = stop. GPU covers GPU-bound TUFLOW that sits
 /// under the CPU threshold while still busy (Fleet Live Active column).
 /// </summary>
 public static class TuflowBehaviourDefaults
 {
-    public const double CpuPercentThreshold = 20.0;
+    public const double CpuPercentThreshold = 1.0;
     /// <summary>Aligns with <see cref="FleetActiveThresholds.GpuPercentMin"/> so GPU-busy runs stay Active.</summary>
     public const double GpuPercentThreshold = 5.0;
     public const int ConfirmIntervals = 2;
