@@ -79,7 +79,7 @@ public partial class App : Application
             [
                 "Closing this window does not stop Heimdall services.",
                 "Redeploy / Pack progress appears in this console (follow launch-control-live.log).",
-                "Server migration: expand that group and run steps 1→7 in order when moving the API host.",
+                "Server migration: steps 1–2 & 4–7 RUN ON your PC; step 3 RUN ON the NEW API PC. ENTER HOST = old/new API hostname in each dialog.",
                 "Scroll up to read history — console stays put until you scroll back to the bottom.",
                 "Expand Diagnostics / Recovery when needed. Log colors: blue = steps, green = OK, amber = warn, red = failures."
             ],
@@ -100,13 +100,13 @@ public partial class App : Application
                 Mode("Push pack zip to network share…", "PushPackZip", "Setup"),
                 Mode("Deposit pack via API…", "DepositPack", "Setup"),
                 // Server migration — run top to bottom when moving the API host
-                Mode("1 · Backup database from OLD API host…", "BackupApiDatabase", "Server migration"),
-                Mode("2 · Backup config from OLD API host…", "BackupApiConfig", "Server migration"),
-                Mode("3 · Install API on NEW host (run LC on that PC)…", "MigrationInstallApi", "Server migration"),
-                Mode("4 · Copy DB + secrets onto NEW host…", "MigrationRestoreData", "Server migration"),
-                Mode("5 · Verify new API /api/health…", "MigrationVerifyHealth", "Server migration"),
-                Mode("6 · Retarget agents (open Client version)…", "MigrationRetargetAgents", "Server migration"),
-                Mode("7 · Stop HeimdallApi on OLD host…", "MigrationStopOldApi", "Server migration"),
+                Mode("1 · Backup database (your PC)…", "BackupApiDatabase", "Server migration"),
+                Mode("2 · Backup config (your PC)…", "BackupApiConfig", "Server migration"),
+                Mode("3 · Install API (NEW API PC)…", "MigrationInstallApi", "Server migration"),
+                Mode("4 · Copy DB + secrets (your PC → NEW host)…", "MigrationRestoreData", "Server migration"),
+                Mode("5 · Verify health (your PC)…", "MigrationVerifyHealth", "Server migration"),
+                Mode("6 · Retarget agents (your PC)…", "MigrationRetargetAgents", "Server migration"),
+                Mode("7 · Stop old API (your PC → OLD host)…", "MigrationStopOldApi", "Server migration"),
                 // Diagnostics (collapsed) — includes refresh / follow logs
                 new("Refresh status", w => { _ = w.RequestStatusRefreshAsync(); }, "Diagnostics"),
                 new("Follow logs (toggle)", w => w.ToggleFollowLogs(), "Diagnostics"),
@@ -122,8 +122,8 @@ public partial class App : Application
                     w.AppendLog($"Opened {url}", "OK");
                 }, "Diagnostics"),
                 // Recovery — routine backups + demos
-                Mode("Backup API database…", "BackupApiDatabase", "Recovery"),
-                Mode("Backup API config (appsettings)…", "BackupApiConfig", "Recovery"),
+                Mode("Backup API database (your PC)…", "BackupApiDatabase", "Recovery"),
+                Mode("Backup API config (your PC)…", "BackupApiConfig", "Recovery"),
                 Mode("Remove seed/demo machines…", "RemoveSeedDemos", "Recovery"),
             ]
         });

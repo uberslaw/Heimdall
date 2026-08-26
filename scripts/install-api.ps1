@@ -61,6 +61,54 @@ function Test-ApiHealWatchdogRegistered {
     }
 }
 
+function Set-ScheduledTaskTriggerRepetition {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Trigger,
+        [int]$IntervalMinutes = 5,
+        [int]$DurationDays = 3650
+    )
+    $interval = New-TimeSpan -Minutes $IntervalMinutes
+    $duration = New-TimeSpan -Days $DurationDays
+    if ($Trigger.PSObject.Properties.Match('RepetitionInterval').Count -gt 0) {
+        $Trigger.RepetitionInterval = $interval
+        if ($Trigger.PSObject.Properties.Match('RepetitionDuration').Count -gt 0) {
+            try { $Trigger.RepetitionDuration = $duration } catch { $Trigger.RepetitionDuration = [TimeSpan]::MaxValue }
+        }
+        return
+    }
+    if ($null -ne $Trigger.Repetition) {
+        $Trigger.Repetition.Interval = "PT${IntervalMinutes}M"
+        $Trigger.Repetition.Duration = "P${DurationDays}D"
+        $Trigger.Repetition.StopAtDurationEnd = $false
+        return
+    }
+    throw "Scheduled task trigger does not support repetition on this OS build"
+}
+
+function New-RepeatingScheduledTaskTrigger {
+    param(
+        [int]$IntervalMinutes = 5,
+        [int]$StartDelayMinutes = 1
+    )
+    $at = (Get-Date).AddMinutes($StartDelayMinutes)
+    foreach ($kind in @('Once', 'Daily')) {
+        try {
+            $trigger = if ($kind -eq 'Once') {
+                New-ScheduledTaskTrigger -Once -At $at
+            } else {
+                New-ScheduledTaskTrigger -Daily -At $at
+            }
+            Set-ScheduledTaskTriggerRepetition -Trigger $trigger -IntervalMinutes $IntervalMinutes
+            return $trigger
+        }
+        catch {
+            $last = $_
+        }
+    }
+    throw $last
+}
+
 function Register-ApiHealWatchdogTask {
     param([int]$HealPort = 5080)
     if (-not (Sync-ApiHealWatchdogFiles)) {
@@ -73,9 +121,7 @@ function Register-ApiHealWatchdogTask {
     $action = New-ScheduledTaskAction -Execute $psExe -Argument $arg
     $triggerStartup = New-ScheduledTaskTrigger -AtStartup
     try { $triggerStartup.Delay = "PT5M" } catch { }
-    $triggerInterval = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1))
-    $triggerInterval.RepetitionInterval = (New-TimeSpan -Minutes 5)
-    try { $triggerInterval.RepetitionDuration = [TimeSpan]::FromDays(3650) } catch { $triggerInterval.RepetitionDuration = [TimeSpan]::MaxValue }
+    $triggerInterval = New-RepeatingScheduledTaskTrigger -IntervalMinutes 5 -StartDelayMinutes 1
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
     Register-ScheduledTask -TaskName "HeimdallApiHeal" -Action $action -Trigger @($triggerStartup, $triggerInterval) -Principal $principal -Settings $settings -Force | Out-Null
@@ -596,8 +642,13 @@ try {
 
     $apiHealEnabled = $EnableApiHealWatchdog -and -not $DisableApiHealWatchdog
     if ($apiHealEnabled) {
-        Invoke-Logged "Register ApiHeal watchdog" -ProgressStep 10 -ProgressLabel "ApiHeal task" {
+        Write-Log ">>> Register ApiHeal watchdog" -Level STEP
+        try {
             Register-ApiHealWatchdogTask -HealPort $Port
+            Write-Log "<<< Register ApiHeal watchdog - done" -Level OK
+        }
+        catch {
+            Write-Log "<<< Register ApiHeal watchdog - FAILED (non-fatal; sc.exe failure recovery is active): $($_.Exception.Message)" -Level WARN
         }
     }
     else {
