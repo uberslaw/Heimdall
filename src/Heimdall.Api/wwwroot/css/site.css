@@ -2731,6 +2731,11 @@ table.hd-table.hd-live-fleet-table.hd-sortable th.sorted-desc::after {
   letter-spacing: 0.02em;
 }
 
+.hd-live-meta [data-live-meta-ok] {
+  color: #ffffff;
+  font-weight: 600;
+}
+
 .hd-live-license-strip {
   color: var(--hd-silver-bright, #e8ecf2);
   font-variant-numeric: tabular-nums;
@@ -2867,6 +2872,13 @@ html[data-theme="light-clean"] .hd-live-meta {
 
 html[data-theme="light-clean"] .hd-live-meta [data-live-meta-countdown] {
   color: var(--hd-gold-deep, #7a6528);
+}
+
+html[data-theme="light-clean"] .hd-live-meta [data-live-meta-ok] {
+  color: #ffffff;
+  background: #1c2530;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
 }
 
 .hd-live-fleet-panel {

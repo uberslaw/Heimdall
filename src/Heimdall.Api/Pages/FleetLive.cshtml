@@ -205,6 +205,8 @@
               data-filtered="@Model.FilteredLiveRows.Count" data-total="@Model.MachineCount">
             <span data-live-meta-count>@Model.FilteredLiveRows.Count / @Model.MachineCount machines</span>
             <span class="hd-live-meta-sep" aria-hidden="true">·</span>
+            <span data-live-meta-ok hidden>Update completed successfully.</span>
+            <span class="hd-live-meta-sep" data-live-meta-ok-sep aria-hidden="true" hidden>·</span>
             <span data-live-meta-countdown>Next update in 30s</span>
         </span>
     </div>
@@ -449,8 +451,10 @@
   }
 
   const REFRESH_MS = 30000;
+  const UPDATE_OK_HOLD_MS = 5000;
   let timer = null;
   let countdownTimer = null;
+  let okHideTimer = null;
   let nextRefreshAt = Date.now() + REFRESH_MS;
   let refreshing = false;
 
@@ -468,6 +472,19 @@
     if (!el) return;
     const remaining = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
     el.textContent = 'Next update in ' + remaining + 's';
+  }
+
+  function showUpdateOk() {
+    const ok = root.querySelector('[data-live-meta-ok]');
+    const sep = root.querySelector('[data-live-meta-ok-sep]');
+    if (!ok) return;
+    ok.hidden = false;
+    if (sep) sep.hidden = false;
+    if (okHideTimer) clearTimeout(okHideTimer);
+    okHideTimer = setTimeout(() => {
+      ok.hidden = true;
+      if (sep) sep.hidden = true;
+    }, UPDATE_OK_HOLD_MS);
   }
 
   function resetCountdown() {
@@ -492,6 +509,7 @@
       if (!patchFromHtml(html)) return;
       if (window.HeimdallOpsTabs && typeof window.HeimdallOpsTabs.invalidate === 'function')
         window.HeimdallOpsTabs.invalidate('live');
+      showUpdateOk();
       resetCountdown();
       schedule();
     } catch (_) {
