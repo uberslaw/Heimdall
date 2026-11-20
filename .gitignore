@@ -17,10 +17,20 @@ artifacts/
 *.swp
 *~
 
-# Publish output
+# Publish output. `publish/` does not match `_publish/`.
 publish/
 **/publish/
+_publish/
 dist/
+
+# Scratch copies of dotnet publish output (DLLs, not source)
+.tmp-*/
+.buildcheck-*/
+tmp-util-verify/
+tmp-disk-check/
+
+# Node (package.json / gitcli). Restore with npm ci.
+node_modules/
 
 # SQLite databases (never commit live data)
 *.db
