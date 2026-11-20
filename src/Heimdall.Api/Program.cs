@@ -10,10 +10,30 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
+// Written before the host exists so a crash on the way to SCM still leaves a line in
+// %ProgramData%\Heimdall\logs\ops (Launch Control only shows Win32 1053).
+OpsFileLog.Write("api-startup", $"process enter pid {Environment.ProcessId}");
+AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+{
+    if (args.ExceptionObject is Exception ex)
+        OpsFileLog.Write("api-startup", $"unhandled {ex.GetType().Name}: {ex.Message}");
+    else
+        OpsFileLog.Write("api-startup", "unhandled non-Exception");
+};
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Required for SCM registration; without this, Windows service start times out (Error 1053).
+// Database ensure/seed must NOT run before app.Run(): WindowsServiceLifetime answers SCM
+// only once the host starts. A full-table repair before that exceeds ServicesPipeTimeout (30s)
+// and Start-Service fails with Win32 1053 even though the process is still working.
 builder.Host.UseWindowsService(options => options.ServiceName = "HeimdallApi");
+builder.Services.Configure<HostOptions>(options =>
+{
+    // Host budget for schema ensure after SCM has already been answered. Default 30s is
+    // tight once both live and sandbox databases run the additive patch list.
+    options.StartupTimeout = TimeSpan.FromMinutes(3);
+});
 
 // Negotiate/NTLM keeps handshake state on the TCP connection. HTTP/2 multiplexing can send an
 // anonymous request on the same connection mid-handshake and Kestrel then throws
@@ -95,6 +115,9 @@ builder.Services.AddScoped<MachineSoftwareCapabilityService>();
 builder.Services.AddScoped<AccessAllowlistService>();
 builder.Services.AddScoped<FloodAccessGuard>();
 builder.Services.AddSingleton<FloodLiveHub>();
+// First hosted service we register: schema ensure finishes (or logs and continues) before
+// the other background loops. SCM is already answered inside app.Run(), before this runs.
+builder.Services.AddHostedService<DatabaseBootstrapHostedService>();
 builder.Services.AddHostedService<FloodLiveBroadcastService>();
 builder.Services.Configure<CodeMeterOptions>(
     builder.Configuration.GetSection(CodeMeterOptions.SectionName));
@@ -132,15 +155,6 @@ builder.Services.AddHostedService<StorageScanHostedService>();
 builder.Services.AddHostedService<ApiHealthProbeHostedService>();
 
 var app = builder.Build();
-
-foreach (var mode in new[] { HeimdallDatabaseMode.Live, HeimdallDatabaseMode.Sandbox })
-{
-    var conn = HeimdallDatabaseMode.GetConnectionStringForMode(app.Configuration, mode);
-    var optionsBuilder = new DbContextOptionsBuilder<HeimdallDbContext>();
-    optionsBuilder.UseSqlite(conn);
-    await using var db = new HeimdallDbContext(optionsBuilder.Options);
-    await SeedData.EnsureSeededAsync(db);
-}
 
 RdpProtocolHandler.EnsureRegistered(app.Logger);
 

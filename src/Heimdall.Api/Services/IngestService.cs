@@ -1067,10 +1067,14 @@ public static class SeedData
     ];
 
     private const string DemoMachinesOfferedFlag = "DemoMachinesOffered";
+    /// <summary>Historical session-type repair. Not safe to repeat: the second statement moves time buckets.</summary>
+    private const string SessionTypeRepairFlag = "Maint.SessionTypeRepair.v1";
+    /// <summary>One-time null of GPU Engine counter glitches. Ingest already drops new insane values.</summary>
+    private const string GpuGlitchNullFlag = "Maint.GpuGlitchNull.v1";
 
-    public static async Task EnsureSeededAsync(HeimdallDbContext db)
+    public static async Task EnsureSeededAsync(HeimdallDbContext db, CancellationToken ct = default)
     {
-        await db.Database.EnsureCreatedAsync();
+        await db.Database.EnsureCreatedAsync(ct);
         await EnsureSchemaPatchesAsync(db);
 
         if (!await db.KnownApps.AnyAsync())
@@ -1248,14 +1252,87 @@ public static class SeedData
             });
         }
 
-        // One-shot / every-start cleanup: drop TEMP/.tmp/non-exe junk from discovery catalog.
-        var catalogJunk = (await db.ProcessCatalogEntries.ToListAsync())
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Historical data repairs and catalog junk purge. Must run only after
+    /// <see cref="EnsureSeededAsync"/> and must not block Windows service start:
+    /// scanning FleetMetricSnapshots on every boot exceeded SCM's 30s pipe timeout (Win32 1053).
+    /// </summary>
+    public static async Task<bool> RepairLegacySessionsOnceAsync(HeimdallDbContext db, CancellationToken ct = default)
+    {
+        if (await HasSystemFlagAsync(db, SessionTypeRepairFlag))
+            return false;
+
+        db.Database.SetCommandTimeout(600);
+        await ExecAsync(db, """
+            UPDATE Sessions
+            SET SessionType = 1
+            WHERE SessionType = 0
+              AND (
+                    (ClientName IS NOT NULL AND TRIM(ClientName) != '')
+                 OR (ClientAddress IS NOT NULL AND TRIM(ClientAddress) != ''
+                     AND ClientAddress NOT IN ('0.0.0.0', '::', '::1'))
+              )
+            """, ct);
+        await ExecAsync(db, """
+            UPDATE Sessions
+            SET SessionType = 1,
+                InboundRdpActiveSeconds = InboundRdpActiveSeconds + LocalActiveSeconds,
+                InboundRdpDisconnectedSeconds = InboundRdpDisconnectedSeconds + LocalDisconnectedSeconds,
+                LocalActiveSeconds = 0,
+                LocalDisconnectedSeconds = 0
+            WHERE SessionType = 0
+              AND ActiveSeconds = 0
+              AND DisconnectedSeconds > 0
+              AND (ClientName IS NULL OR TRIM(ClientName) = '')
+              AND (
+                    ClientAddress IS NULL
+                 OR TRIM(ClientAddress) = ''
+                 OR ClientAddress IN ('0.0.0.0', '::', '::1')
+              )
+            """, ct);
+        await SetSystemFlagAsync(db, SessionTypeRepairFlag, "1");
+        return true;
+    }
+
+    /// <summary>
+    /// Null GPU percents outside 0–1000 on existing snapshot rows, once.
+    /// New samples are sanitized in <see cref="FleetDashboardService.IngestSnapshotAsync"/>.
+    /// </summary>
+    public static async Task<bool> NullInsaneGpuPercentsOnceAsync(HeimdallDbContext db, CancellationToken ct = default)
+    {
+        if (await HasSystemFlagAsync(db, GpuGlitchNullFlag))
+            return false;
+
+        db.Database.SetCommandTimeout(600);
+        await ExecAsync(db, """
+            UPDATE FleetMetricSnapshots
+            SET GpuPercent = NULL
+            WHERE GpuPercent IS NOT NULL AND (GpuPercent < 0 OR GpuPercent > 1000)
+            """, ct);
+        await ExecAsync(db, """
+            UPDATE FleetMetricSnapshots
+            SET ProcessGpuPercent = NULL
+            WHERE ProcessGpuPercent IS NOT NULL AND (ProcessGpuPercent < 0 OR ProcessGpuPercent > 1000)
+            """, ct);
+        await SetSystemFlagAsync(db, GpuGlitchNullFlag, "1");
+        return true;
+    }
+
+    /// <summary>Drop TEMP/.tmp/non-exe junk from the discovery catalog. Safe to repeat.</summary>
+    public static async Task<int> PurgeIneligibleCatalogAsync(HeimdallDbContext db, CancellationToken ct = default)
+    {
+        var catalogJunk = (await db.ProcessCatalogEntries.ToListAsync(ct))
             .Where(e => DiscoveryCatalogFilter.IsIneligibleCatalogEntry(e.ProcessName, e.ExecutablePath))
             .ToList();
-        if (catalogJunk.Count > 0)
-            db.ProcessCatalogEntries.RemoveRange(catalogJunk);
+        if (catalogJunk.Count == 0)
+            return 0;
 
-        await db.SaveChangesAsync();
+        db.ProcessCatalogEntries.RemoveRange(catalogJunk);
+        await db.SaveChangesAsync(ct);
+        return catalogJunk.Count;
     }
 
     /// <summary>SQLite EnsureCreated does not migrate; patch new columns/tables for existing POC DBs.</summary>
@@ -1277,38 +1354,8 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE Sessions ADD COLUMN LocalDisconnectedSeconds INTEGER NOT NULL DEFAULT 0");
         await TryExec(db, "ALTER TABLE Sessions ADD COLUMN InboundRdpActiveSeconds INTEGER NOT NULL DEFAULT 0");
         await TryExec(db, "ALTER TABLE Sessions ADD COLUMN InboundRdpDisconnectedSeconds INTEGER NOT NULL DEFAULT 0");
-        // Misclassified inbound RDP stored as Local (Console short-circuit) — flip type when remote client is present.
-        // Time buckets stay 0 until a new agent republishes; Socratize falls back to SessionType for legacy rows.
-        await TryExec(db, """
-            UPDATE Sessions
-            SET SessionType = 1
-            WHERE SessionType = 0
-              AND (
-                    (ClientName IS NOT NULL AND TRIM(ClientName) != '')
-                 OR (ClientAddress IS NOT NULL AND TRIM(ClientAddress) != ''
-                     AND ClientAddress NOT IN ('0.0.0.0', '::', '::1'))
-              )
-            """);
-        // Orphaned disconnects: agent first saw the session after WTS cleared client fields (rack RDP-to-console).
-        // Pattern: Local + empty/loopback client + never Active while tracked + some disconnected time.
-        // Moves Local time buckets into Inbound RDP so Socratize/stats match the corrected type.
-        await TryExec(db, """
-            UPDATE Sessions
-            SET SessionType = 1,
-                InboundRdpActiveSeconds = InboundRdpActiveSeconds + LocalActiveSeconds,
-                InboundRdpDisconnectedSeconds = InboundRdpDisconnectedSeconds + LocalDisconnectedSeconds,
-                LocalActiveSeconds = 0,
-                LocalDisconnectedSeconds = 0
-            WHERE SessionType = 0
-              AND ActiveSeconds = 0
-              AND DisconnectedSeconds > 0
-              AND (ClientName IS NULL OR TRIM(ClientName) = '')
-              AND (
-                    ClientAddress IS NULL
-                 OR TRIM(ClientAddress) = ''
-                 OR ClientAddress IN ('0.0.0.0', '::', '::1')
-              )
-            """);
+        // Session type repair used to run here on every boot (full Sessions scan) and blocked SCM.
+        // It now runs once from DatabaseBootstrapHostedService after the service has reported Running.
         await TryExec(db, """
             CREATE TABLE IF NOT EXISTS MetricPolicies (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1782,17 +1829,8 @@ public static class SeedData
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ClaimedHpcSeats INTEGER NULL");
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN ClaimedClassicSeats INTEGER NULL");
         await TryExec(db, "ALTER TABLE FleetMetricSnapshots ADD COLUMN TuflowClaimDetail TEXT NULL");
-        // GPU Engine perf counter glitches (1e13+%) blow up Today GPU h — null them out.
-        await TryExec(db, """
-            UPDATE FleetMetricSnapshots
-            SET GpuPercent = NULL
-            WHERE GpuPercent IS NOT NULL AND (GpuPercent < 0 OR GpuPercent > 1000)
-            """);
-        await TryExec(db, """
-            UPDATE FleetMetricSnapshots
-            SET ProcessGpuPercent = NULL
-            WHERE ProcessGpuPercent IS NOT NULL AND (ProcessGpuPercent < 0 OR ProcessGpuPercent > 1000)
-            """);
+        // GPU glitch null-out used to scan FleetMetricSnapshots on every boot and held the write
+        // lock past ServicesPipeTimeout (Win32 1053). One-shot: NullInsaneGpuPercentsOnceAsync.
 
         // Machines list redesign — friendly names + team sections
         await TryExec(db, "ALTER TABLE Machines ADD COLUMN FriendlyName TEXT NULL");
@@ -2152,6 +2190,9 @@ public static class SeedData
             EnabledByDefault = true
         });
     }
+
+    private static Task<int> ExecAsync(HeimdallDbContext db, string sql, CancellationToken ct) =>
+        db.Database.ExecuteSqlRawAsync(sql, Array.Empty<object>(), ct);
 
     private static async Task TryExec(HeimdallDbContext db, string sql)
     {
